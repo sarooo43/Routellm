@@ -1,0 +1,138 @@
+# Project: RouteLLM — Intelligent Multi-Model AI Router
+
+You (the AI agent) are the lead engineer building this project. Follow the PRD/TRD/Architecture docs located in `/docs`. Do not deviate from documented specs without asking first.
+
+---
+
+## 🧠 Project Summary
+
+RouteLLM is a self-healing LLM gateway. It classifies incoming tasks, scores available models based on task-fit/cost/reliability/latency, calls the best one, and automatically falls back through a ranked chain if a model fails, times out, hits a rate limit, or runs out of credits. Everything is logged and visualized on a real-time animated dashboard.
+
+---
+
+## ⚙️ Engineering Rules (Non-Negotiable)
+
+1. All backend code must be **async** (`async def`, `httpx.AsyncClient`) — no blocking calls.
+2. **Never hardcode API keys** — always load from `.env` via `pydantic-settings` (`config.py`).
+3. Every LLM provider **must implement the `ModelProvider` abstract base class** (Strategy Pattern) — no exceptions, no one-off provider logic scattered elsewhere.
+4. Every provider call must be wrapped in try/except and return a structured `ProviderResponse` (`success`, `text`, `error`, `latency_ms`, `tokens_used`) — **never let a provider failure raise an unhandled exception up the stack**.
+5. Write/update **pytest tests immediately** after building each module — do not move to the next phase with failing or missing tests.
+6. Mock all external API calls in tests — **never burn real API credits during testing**.
+7. Keep changes **phase-sized**. Do not attempt to build multiple phases in one pass even if asked loosely — confirm scope first.
+8. If a requirement is ambiguous, **ask a clarifying question** instead of guessing and building the wrong thing.
+9. Add docstrings to every public function/class.
+10. Follow the exact DB schema and API response shapes defined in `/docs/TRD.md` — do not invent new fields without approval.
+
+---
+
+## 🧩 Design Patterns to Use
+
+- **Strategy Pattern** → `ModelProvider` interface, one class per provider
+- **Chain of Responsibility** → fallback execution loop tries ranked models in order
+- **Circuit Breaker Pattern** → isolate failing providers automatically (CLOSED → OPEN → HALF_OPEN)
+- **Observer-style logging** → every routing decision emits a structured log event
+
+---
+
+## 🤖 Model Provider Registry
+
+RouteLLM integrates providers chosen deliberately for **their known strengths per task type**, plus generous free tiers to keep this project runnable without a budget. Build adapters for all of these — the router's intelligence comes from having real diversity to choose from.
+
+| Provider | Model(s) | Known Strength | Best Task Types | Tier |
+|---|---|---|---|---|
+| **Anthropic** | Claude 3.5 Sonnet / Haiku | Reasoning, code quality, long-context understanding, safe/structured output | `code`, `reasoning`, `creative_writing` | Paid (small free trial credit) |
+| **OpenAI** | GPT-4o / GPT-4o-mini | Strong general-purpose, function calling, versatility | `general`, `qa`, `summarization` | Paid (GPT-4o-mini is cheap) |
+| **Google** | Gemini 2.0 Flash | Extremely fast, huge context window, multimodal-ready | `summarization`, `qa`, `general` | **Free tier (generous)** |
+| **Groq** | Llama 3.3 70B / Mixtral / Gemma2 (hosted at extreme inference speed) | Ultra-low latency inference — best when speed matters most | `qa`, `general`, fast fallback option | **Free tier (very generous)** |
+| **DeepSeek** | DeepSeek-V3 / DeepSeek-Coder | Excellent code generation, cheap/free pricing, strong reasoning | `code`, `reasoning` | **Free/very cheap tier** |
+| **Zhipu AI** | GLM-4-Flash | Solid general + code performance, cost-efficient | `general`, `code` | **Free tier** |
+| **Mistral AI** | Mistral Small / Mixtral | Good multilingual + code, open-weight friendly | `code`, `general` | **Free tier** |
+| **OpenRouter** | Aggregator — routes to free community-hosted models (Llama-3-8b-free, Mistral-7b-free, etc.) | Acts as a **meta-fallback layer** — if all primary providers fail, OpenRouter's free pool is the last-resort safety net | `general` (last-resort fallback) | **Free tier (multiple free models)** |
+
+### Task-Type → Preferred Provider Priority (used by the Scorer as a starting capability_match table — tune with real stats later)
+
+```python
+CAPABILITY_MATCH = {
+    "code": ["deepseek", "claude", "glm", "mistral"],
+    "reasoning": ["claude", "deepseek", "openai"],
+    "creative_writing": ["claude", "openai", "glm"],
+    "summarization": ["gemini", "openai", "groq"],
+    "qa": ["groq", "gemini", "openai"],
+    "general": ["groq", "gemini", "glm", "mistral", "openrouter"]  # free-tier first to control cost
+}
+```
+
+### Cost/Speed Tiering (used in scorer's cost + latency normalization)
+
+```python
+TIER_INFO = {
+    "groq":        {"cost": "free",  "speed": "fastest"},
+    "gemini":      {"cost": "free",  "speed": "fast"},
+    "glm":         {"cost": "free",  "speed": "medium"},
+    "mistral":     {"cost": "free",  "speed": "medium"},
+    "openrouter":  {"cost": "free",  "speed": "variable"},   # last-resort fallback pool
+    "deepseek":    {"cost": "cheap", "speed": "medium"},
+    "claude":      {"cost": "paid",  "speed": "medium"},
+    "openai":      {"cost": "paid",  "speed": "medium"},
+}
+```
+
+**Routing philosophy:** free-tier providers (Groq, Gemini, GLM, Mistral) should generally rank higher for simple/general tasks to minimize cost. Paid providers (Claude, OpenAI) should rank higher specifically for `code` and `reasoning` tasks where quality matters more than cost. OpenRouter's free model pool is the final fallback tier — always last in the chain, used only if everything else fails.
+
+---
+
+## 📁 Provider Adapters to Build
+
+```
+providers/
+├── base.py                  # abstract ModelProvider class
+├── claude_provider.py       # Anthropic
+├── openai_provider.py       # OpenAI
+├── gemini_provider.py       # Google
+├── groq_provider.py         # Groq
+├── deepseek_provider.py     # DeepSeek
+├── glm_provider.py          # Zhipu AI
+├── mistral_provider.py      # Mistral AI
+└── openrouter_provider.py   # OpenRouter (free-model fallback pool)
+```
+
+Each adapter reads its API key from `config.py` settings (`.env` vars: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `GLM_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`).
+
+Not every provider needs to be built in Phase 1 — start with **3 providers minimum** (recommend: **Groq + Gemini + DeepSeek**, since they're fast, free, and together cover `qa`/`general`/`code` well) to prove the routing/fallback logic works, then expand the registry in a later phase.
+
+---
+
+## 🛠️ Tech Stack (Reference)
+
+**Backend:** Python, FastAPI, httpx (async), SQLModel, PostgreSQL, Redis, Pydantic v2
+**Frontend:** React (Vite), TailwindCSS, Framer Motion, Recharts, Zustand
+**Testing:** Pytest, pytest-asyncio, httpx-mock, Vitest, React Testing Library
+**DevOps:** Docker, docker-compose, GitHub Actions
+
+---
+
+## 📄 Reference Docs (Read Before Building)
+
+- `/docs/PRD.md` — product requirements, scope, success metrics
+- `/docs/TRD.md` — API specs, DB schema, scoring formula, failure triggers
+- `/docs/ARCHITECTURE.md` — system diagram, design patterns
+- `/docs/DESIGN.md` — dashboard UI/UX spec (Hermes-inspired dark theme, animations)
+- `/docs/TESTING.md` — full test case matrix
+
+---
+
+## 📍 Current Phase
+
+> **Update this line manually before every session so the agent knows where to pick up.**
+
+`Phase: [e.g. "Phase 1 — Building Groq, Gemini, DeepSeek provider adapters"]`
+
+---
+
+## ✅ Definition of Done (per phase)
+
+A phase is NOT complete until:
+- [ ] Code follows the rules above (async, typed, documented)
+- [ ] Unit/integration tests written and passing
+- [ ] No hardcoded secrets
+- [ ] Brief summary given of what was built + any assumptions made (for README/portfolio notes later)

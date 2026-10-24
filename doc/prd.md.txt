@@ -1,0 +1,30 @@
+PRD (Product Requirements Document)
+Project Name: RouteLLM — Intelligent Multi-Model AI Router
+
+Problem
+Apps using multiple LLM providers break when one model fails, rate-limits, or runs out of credits. No system intelligently picks the right model per task AND self-heals on failure.
+
+Solution
+A routing engine that classifies incoming tasks, scores available models (GLM, Gemini Flash, Groq, etc.) by fit/cost/reliability, executes the best one, and automatically falls back through a ranked chain on any failure — with a live dashboard to visualize routing decisions.
+
+Users
+
+Developers integrating multiple LLMs
+You (portfolio reviewer / recruiter demo)
+MVP Scope
+
+Task classifier (rule-based first)
+Model registry (3 providers minimum)
+Scoring engine → ranked fallback chain + confidence %
+Execution engine with auto-retry/fallback
+Circuit breaker + quota tracker
+PostgreSQL logging
+Hermes-style animated dashboard showing live routing decisions, success rates, cost saved, model health
+Out of Scope (v1)
+Billing, multi-tenant auth, fine-tuning, streaming responses.
+
+Success Metrics
+
+Request success rate (with fallback) ≥ 98% in demo
+Routing overhead < 200ms
+Dashboard updates in near real-time (polling or WS)

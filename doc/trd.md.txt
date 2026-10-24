@@ -1,0 +1,81 @@
+TRD (Technical Requirements Document)
+Core Flow
+text
+
+Client → FastAPI /route → Task Classifier → Scoring Engine (ranks models)
+      → Executor (tries model #1 → fallback #2 → #3)
+      → Circuit Breaker + Quota Check before each attempt
+      → Logger (Postgres) → Response → Dashboard (reads logs via API)
+Scoring Formula
+text
+
+Score(model, task) = 
+   w1 * capability_match
+ + w2 * historical_success_rate
+ + w3 * (1 - normalized_cost)
+ + w4 * (1 - normalized_latency)
+ + w5 * availability (0 if circuit-broken)
+
+confidence_% = historical_success_rate(model, task_type) * capability_match
+Failure Triggers
+Trigger	Detection
+API error	status ≠ 200 / SDK exception
+Timeout	async timeout (15s)
+Quota exhausted	429 or internal counter
+Bad output	empty/garbage/schema mismatch
+Crash	unhandled exception caught
+Circuit Breaker
+N fails in T minutes → OPEN (unavailable) → cooldown → HALF_OPEN (test) → CLOSED (healthy)
+API Endpoints
+text
+
+POST /api/v1/route            → main routing call
+GET  /api/v1/models           → model registry + live health
+GET  /api/v1/logs             → recent routing decisions (paginated)
+GET  /api/v1/analytics        → success rate, cost saved, usage %
+GET  /api/v1/health           → service health check
+WS   /ws/live-feed            → (optional) real-time dashboard stream
+Database Schema (Postgres)
+SQL
+
+models(id, name, provider, cost_per_1k_tokens, max_rpm, max_tpm, supported_tasks[], status)
+task_logs(id, request_id, task_type, selected_model, confidence_score, status,
+          latency_ms, tokens_used, error_message, fallback_chain jsonb, created_at)
+model_stats(model_id, task_type, total_requests, successful_requests, avg_latency, success_rate)
+usage_tracking(model_id, date, requests_count, tokens_used, credit_used, credit_limit)
+Non-Functional
+Async everywhere (httpx.AsyncClient)
+Routing overhead < 200ms excluding provider latency
+Secrets in .env, never committed
+Dockerized, deployable to Railway/Render + Vercel
+2.2 Routing Algorithm
+
+Score(model, task) =
+   w1 * capability_match(model, task_type)
+ + w2 * historical_success_rate(model, task_type)
+ + w3 * (1 - normalized_cost(model))
+ + w4 * (1 - normalized_latency(model))
+ + w5 * availability_status(model)   # 0 if circuit broken, 1 if healthy
+
+Default weights: w1=0.35, w2=0.30, w3=0.15, w4=0.10, w5=0.10
+
+confidence_% = historical_success_rate(model, task_type) * capability_match_factor
+
+### 2.2.1 MVP Provider Lineup (Phase 1)
+
+| Provider | Model | Role | Cost Tier |
+|---|---|---|---|
+| Groq | Llama 3.3 70B | Fastest responder, primary for `qa`/`general` | Free |
+| Gemini | Gemini 2.0 Flash | Large context, strong for `summarization`/`general` | Free |
+| DeepSeek | DeepSeek-V3 / DeepSeek-Coder | Strongest of the three for `code`/`reasoning` | Free/cheap |
+
+### 2.2.2 Capability Match Table (Phase 1 scope)
+
+```python
+CAPABILITY_MATCH = {
+    "code":        {"deepseek": 1.0, "groq": 0.5, "gemini": 0.4},
+    "reasoning":   {"deepseek": 0.9, "gemini": 0.6, "groq": 0.5},
+    "summarization": {"gemini": 1.0, "groq": 0.6, "deepseek": 0.5},
+    "qa":          {"groq": 1.0, "gemini": 0.8, "deepseek": 0.6},
+    "general":     {"groq": 0.9, "gemini": 0.9, "deepseek": 0.7},
+}

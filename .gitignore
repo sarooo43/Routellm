@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Builds
+dist/
+coverage/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Databases (local demo/dev artifacts)
+*.db
+*.sqlite3
+
+# Logs & caches
+*.log
+.vite/
+node_modules/.vite/
+
+# OS noise
+Thumbs.db
+.DS_Store

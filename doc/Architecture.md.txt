@@ -1,0 +1,33 @@
+Architecture Document
+text
+
+┌─────────────────────────────────────────────────────────┐
+│                     FRONTEND (React)                     │
+│  Hermes-style Dashboard — live routing feed, charts,      │
+│  model health cards, cost analytics                      │
+└───────────────────────┬───────────────────────────────────┘
+                         │ REST (axios) / WS
+┌───────────────────────▼───────────────────────────────────┐
+│                   BACKEND (FastAPI)                        │
+│  ┌───────────┐ ┌────────────┐ ┌───────────┐ ┌───────────┐ │
+│  │Classifier │→│  Scorer    │→│ Executor  │→│ Circuit   │ │
+│  │           │ │(ranks all) │ │(calls API)│ │ Breaker   │ │
+│  └───────────┘ └────────────┘ └─────┬─────┘ └───────────┘ │
+│                                     │                      │
+│                           ┌─────────▼─────────┐            │
+│                           │  Provider Adapters │            │
+│                           │ GLM | Gemini | Groq│            │
+│                           └────────────────────┘            │
+└───────────────────────┬────────────────────┬───────────────┘
+                         │                    │
+                  ┌──────▼──────┐     ┌───────▼──────┐
+                  │ PostgreSQL  │     │    Redis      │
+                  │ (logs/stats)│     │ (circuit state│
+                  │             │     │  quota cache) │
+                  └─────────────┘     └───────────────┘
+Design Patterns Used (mention these in your resume — recruiters love this):
+
+Strategy Pattern → each provider is a swappable ModelProvider implementation
+Circuit Breaker Pattern → resilience engineering
+Chain of Responsibility → fallback execution chain
+Observer/Event Logging → every routing decision emits a log event

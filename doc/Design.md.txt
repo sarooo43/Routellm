@@ -1,0 +1,34 @@
+Design Doc — UI/UX (Hermes-inspired Dashboard)
+4.1 Visual Language
+Element	Spec
+Theme	Dark mode, luxury SaaS feel
+Primary BG	#0D0D0D → #141414 gradient
+Card BG	Glassmorphism: rgba(255,255,255,0.04) + backdrop-blur-xl + 1px border rgba(255,255,255,0.08)
+Accent	Hermes orange #E87722 / gold #D4AF37 for highlights, active states, success
+Danger	#FF4D4D (failures, circuit-open)
+Success	#3DDC97
+Font	Inter or Satoshi for body, General Sans for headings
+Corners	rounded-2xl everywhere
+Shadows	Soft glow shadows on hover (shadow-orange-500/20)
+4.2 Animation Spec (Framer Motion)
+Interaction	Animation
+Page load	Staggered fade+slide-up for cards (staggerChildren: 0.08)
+Live request feed (new row)	Slide-in from top + highlight pulse (amber glow fading to transparent over 1.5s)
+Model health card status change	Color morph animation (green→red) + subtle shake if circuit opens
+Confidence % bar	Animated fill (width tween, ease: easeOut, 0.6s)
+Chart data update	Smooth line/area transition (Recharts isAnimationActive)
+Hover on cards	Scale 1.02 + border glow transition
+Fallback chain visualization	Animated connector line drawing between model nodes (like a flowchart) sequentially as fallback happens
+Loading states	Skeleton shimmer, not spinners
+4.3 Pages/Screens
+Overview Dashboard — KPI cards (success rate, total requests, cost saved, avg latency) + live request feed ticker
+Model Health — cards per model showing status (healthy/circuit-open/degraded), success rate ring chart, request volume sparkline
+Routing Explorer — table of past requests → click row → expands to show full fallback chain animation + confidence scoring breakdown
+Analytics — time-series charts (requests/day, cost/day, model usage pie chart)
+Settings — manage model registry, quotas, thresholds (circuit breaker config)
+4.4 Component List
+text
+
+<KpiCard />  <ModelHealthCard />  <LiveFeedTicker />  
+<FallbackChainGraph />  <ConfidenceBar />  <RoutingTable />
+<AnalyticsChart />  <StatusBadge />  <Sidebar />  <Topbar />

@@ -1,0 +1,20 @@
+# /app/.dockerignore — keep the image lean; nothing dev-only ships.
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+tests/
+scripts/
+demo.db
+*.db
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.git/
+.gitignore
+Dockerfile
+.dockerignore

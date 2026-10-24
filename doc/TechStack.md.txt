@@ -1,0 +1,10 @@
+Tech Stack
+Layer	Stack
+Backend	Python, FastAPI, httpx (async), Pydantic v2
+DB	PostgreSQL + SQLModel/SQLAlchemy + Alembic migrations
+Cache/State	Redis
+Models	GLM-4-Flash (Zhipu), Gemini 2.0 Flash, Groq (Llama)
+Frontend	React (Vite) + TailwindCSS + Framer Motion + Recharts + Zustand (state)
+Testing	Pytest, pytest-asyncio, httpx-mock, Vitest + React Testing Library (frontend)
+DevOps	Docker, docker-compose, GitHub Actions (CI), Railway/Render + Vercel
+Monitoring	structlog, /health endpoint

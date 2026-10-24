@@ -1,0 +1,15 @@
+Testing Doc
+ID	Test	Expected
+T1	Normal request	Returns from top-ranked model
+T2	Primary returns 429	Falls back to model #2
+T3	Primary times out	Falls back within threshold
+T4	Empty/garbage output	Detected, triggers fallback
+T5	All models fail	Clean error, full chain logged
+T6	5 fails in a row	Circuit breaker opens
+T7	Cooldown expires	Half-open → closed if success
+T8	Quota exceeded	Model skipped proactively
+T9	Ambiguous prompt	Defaults to general_qa
+T10	Confidence calc	Matches formula exactly
+T11 (Frontend)	New log arrives	Live feed animates in correctly
+T12 (Frontend)	Model goes unhealthy	Health card animates color change
+Mock all provider calls in tests — never burn real API credits.

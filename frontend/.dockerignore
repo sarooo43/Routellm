@@ -1,0 +1,14 @@
+# /frontend/.dockerignore — node_modules never enters the build context;
+# the final image contains only nginx + the static dist output.
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.vite
+coverage
+*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore

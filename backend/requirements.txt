@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+sqlmodel
+asyncpg
+greenlet
+redis
+fakeredis
+aiosqlite
+structlog
+slowapi
+pytest
+pytest-asyncio
+pytest-cov
+respx
