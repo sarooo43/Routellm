@@ -183,6 +183,29 @@ CI (`.github/workflows/ci.yml`) runs both suites on every push/PR to `main`,
 with the backend job booting PostgreSQL and Redis as GitHub Actions services
 and pytest reporting coverage.
 
+## 📊 Benchmark Results
+
+Methodology: 37 prompts across 5 task types, run twice under identical
+conditions — once simulating a naive single-model setup (no fallback), once
+through RouteLLM's full routing system — with Gemini artificially taken
+offline mid-run via Chaos Mode to simulate a real provider outage.
+Full methodology and reproduction steps: [`benchmark/README.md`](./benchmark/README.md).
+
+| Scenario | Naive (single model) | RouteLLM |
+|---|---|---|
+| Normal conditions — success rate | [X]% | [X]% |
+| **Simulated outage — success rate** | **[X]%** | **[X]%** |
+| Avg latency | [X]ms | [X]ms |
+| Total cost (37 requests) | $[X] | $[X] |
+
+![Success Rate Comparison](./benchmark/results/success_rate_comparison.png)
+![Cost Comparison](./benchmark/results/cost_comparison.png)
+
+> During the simulated outage, the naive baseline's success rate dropped to
+> [X]% (every request to the downed provider failed outright with no recovery),
+> while RouteLLM maintained [X]% success by automatically rerouting to
+> healthy providers — demonstrating the practical value of the fallback system.
+
 ## Production notes (deliberate MVP simplifications)
 
 - **Migrations**: tables are created via `init_db()` (SQLModel `create_all`)

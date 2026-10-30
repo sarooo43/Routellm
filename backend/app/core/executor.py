@@ -299,6 +299,118 @@ def _deepseek_kwargs(task_type: str) -> dict:
 
 
 # --------------------------------------------------------------------------
+# Naive single-provider execution (benchmark baseline)
+# --------------------------------------------------------------------------
+
+
+async def _execute_forced_single_provider(
+    provider_name: str,
+    prompt: str,
+    db_session: AsyncSession,
+    resolved_task_type: str,
+    request_id: str,
+    start: float,
+    chaos: Optional[ChaosController],
+) -> ExecutionResult:
+    """The naive alternative RouteLLM is benchmarked against: one hardcoded
+    model, zero resilience infrastructure — no scoring/ranking, no quota or
+    circuit pre-flight gates, no retry/fallback, and (deliberately) no
+    breaker/quota side effects since a naive deployment has neither.
+
+    Chaos injections STILL apply: an outage is a property of the provider,
+    so the simulation must hit this path identically to the full system.
+    """
+    if provider_name not in PROVIDER_REGISTRY:
+        raise ValueError(
+            f"unknown force_provider '{provider_name}' "
+            f"(known: {sorted(PROVIDER_REGISTRY)})"
+        )
+
+    kwargs = _deepseek_kwargs(resolved_task_type) if provider_name == "deepseek" else {}
+
+    # ---- Chaos gate (DEV/DEMO ONLY): same simulated outage as the full path.
+    chaos_injected = False
+    if settings.CHAOS_MODE_ENABLED and await _chaos_active(chaos, provider_name):
+        logger.warning(
+            "chaos_failure_injected_forced_provider",
+            request_id=request_id,
+            provider=provider_name,
+            task_type=resolved_task_type,
+        )
+        response = ProviderResponse(
+            success=False,
+            text="",
+            tokens_used=0,
+            latency_ms=50.0,
+            error="chaos_injected_failure",
+            provider_name=provider_name,
+            model_name="n/a",
+        )
+        chaos_injected = True
+    else:
+        provider = PROVIDER_REGISTRY[provider_name]
+        try:
+            response = await provider.generate(prompt, **kwargs)
+        except Exception as e:
+            # Naive deployments have no error net at all: a raised exception
+            # would crash the caller. This catch ONLY converts it into the
+            # structured response shape so the benchmark can record it.
+            logger.error(
+                "forced_provider_raised_unexpectedly",
+                request_id=request_id,
+                provider=provider_name,
+                error=str(e),
+            )
+            response = ProviderResponse(
+                success=False,
+                text="",
+                tokens_used=0,
+                latency_ms=0.0,
+                error=f"unexpected_error: {e}",
+                provider_name=provider_name,
+                model_name="unknown",
+            )
+
+    result = ExecutionResult(
+        success=response.success,
+        result_text=response.text if response.success else "",
+        model_used=provider_name if response.success else None,
+        confidence_score=0.0,  # no ranking happened — no confidence to report
+        fallback_chain_attempted=[
+            AttemptLog(
+                provider_name=provider_name,
+                success=response.success,
+                error=response.error,
+                latency_ms=response.latency_ms,
+                chaos_injected=chaos_injected,
+            )
+        ],
+        total_latency_ms=(time.perf_counter() - start) * 1000.0,
+        tokens_used=response.tokens_used,
+        error=None if response.success else response.error,
+        request_id=request_id,
+    )
+    await _persist_result(
+        db_session, request_id, resolved_task_type, [], result
+    )
+    if response.success:
+        logger.info(
+            "execution_succeeded_forced",
+            request_id=request_id,
+            provider=provider_name,
+            task_type=resolved_task_type,
+        )
+    else:
+        logger.error(
+            "forced_provider_failed_no_fallback",
+            request_id=request_id,
+            provider=provider_name,
+            error=response.error,
+        )
+    return result
+
+
+# --------------------------------------------------------------------------
 # Main orchestration
 # --------------------------------------------------------------------------
 
@@ -312,6 +424,7 @@ async def execute_with_fallback(
     quota_tracker: Optional[QuotaTracker] = None,
     weights: Optional[dict] = None,
     chaos_controller: Optional[ChaosController] = None,
+    force_provider: Optional[str] = None,
 ) -> ExecutionResult:
     """Execute a prompt across ranked providers with automatic fallback.
 
@@ -319,6 +432,10 @@ async def execute_with_fallback(
     logging writes). Skipped providers (quota/circuit) are logged in the
     chain but do not consume the max_fallbacks budget — only real provider
     calls count as attempts.
+
+    force_provider (benchmarks only): skips scoring/ranking and pre-flight
+    gating entirely; attempts ONLY that provider with zero fallback — the
+    naive "hardcoded single model, no resilience system" baseline.
     """
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
@@ -329,8 +446,21 @@ async def execute_with_fallback(
         chaos_controller if chaos_controller is not None else _ensure_shared_clients()[2]
     )
 
-    max_attempts = max(1, max_fallbacks)
     resolved_task_type = task_type if task_type else classify_task(prompt or "")
+
+    # ---- Benchmark baseline branch: naive single-provider execution ----
+    if force_provider is not None:
+        return await _execute_forced_single_provider(
+            force_provider,
+            prompt,
+            db_session,
+            resolved_task_type=resolved_task_type,
+            request_id=request_id,
+            start=start,
+            chaos=chaos,
+        )
+
+    max_attempts = max(1, max_fallbacks)
 
     stats_snapshot = await _build_stats_snapshot(resolved_task_type, breaker, db_session)
     ranked = rank_models(

@@ -115,6 +115,9 @@ class RouteRequest(BaseModel):
     prompt: str
     task_type: Optional[str] = None
     max_fallbacks: int = 3
+    # Benchmark-only naive baseline: route to a single fixed provider with
+    # zero fallback, bypassing scoring/ranking entirely.
+    force_provider: Optional[str] = None
 
 
 class AttemptResponse(BaseModel):
@@ -197,11 +200,21 @@ async def route_prompt(
 ):
     try:
         start = time.perf_counter()
+        if body.force_provider is not None and body.force_provider not in PROVIDER_REGISTRY:
+            logger.warning(
+                "route_rejected_unknown_force_provider",
+                force_provider=body.force_provider,
+            )
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"unknown force_provider '{body.force_provider}'"},
+            )
         result: ExecutionResult = await execute_with_fallback(
             body.prompt,
             db_session,
             task_type=body.task_type,
             max_fallbacks=body.max_fallbacks,
+            force_provider=body.force_provider,
         )
         logger.info(
             "route_endpoint_handled",

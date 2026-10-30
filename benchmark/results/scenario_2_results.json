@@ -1,0 +1,835 @@
+{
+  "scenario": "chaos_simulated_outage",
+  "chaos_injected": true,
+  "baseline_provider": "gemini",
+  "run_name": "scenario_2_results",
+  "prompts_file": "C:\\Users\\lk975\\Desktop\\RouteLLM\\benchmark\\test_prompts.json",
+  "total_prompts": 37,
+  "completed_at": "2026-10-30T21:24:29.872942+00:00",
+  "runs": {
+    "naive_baseline": {
+      "arm": "naive_baseline",
+      "total_prompts": 37,
+      "success_count": 0,
+      "success_rate": 0.0,
+      "avg_latency_ms": 39.72,
+      "total_estimated_cost": 0.0,
+      "per_task_type_breakdown": {
+        "code": {
+          "total_prompts": 10,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 33.93
+        },
+        "general": {
+          "total_prompts": 6,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 42.24
+        },
+        "qa": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 43.92
+        },
+        "reasoning": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 38.6
+        },
+        "summarization": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 42.75
+        }
+      },
+      "per_prompt_results": [
+        {
+          "id": 1,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 39.45,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 2,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 35.6,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 3,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 27.45,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 4,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 32.1,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 5,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 36.35,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 6,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 36.69,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 7,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 38.29,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 8,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 33.82,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 9,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 31.73,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 10,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 27.84,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 11,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 59.48,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 12,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 30.81,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 13,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 38.07,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 14,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 32.25,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 15,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 34.59,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 16,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 36.93,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 17,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 38.09,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 18,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 45.65,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 19,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 46.34,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 20,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 32.46,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 21,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 36.91,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 22,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 43.77,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 23,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 61.08,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 24,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 33.07,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 25,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 45.26,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 26,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 45.36,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 27,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 35.24,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 28,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 46.68,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 29,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 42.82,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 30,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 42.56,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 31,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 49.54,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 32,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 39.48,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 33,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 42.99,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 34,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 43.5,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 35,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 45.15,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 36,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 38.43,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        },
+        {
+          "id": 37,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 43.91,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "chaos_injected_failure"
+        }
+      ]
+    },
+    "routellm_full": {
+      "arm": "routellm_full",
+      "total_prompts": 37,
+      "success_count": 0,
+      "success_rate": 0.0,
+      "avg_latency_ms": 170.3,
+      "total_estimated_cost": 0.0,
+      "per_task_type_breakdown": {
+        "code": {
+          "total_prompts": 10,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 374.66
+        },
+        "general": {
+          "total_prompts": 6,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 91.71
+        },
+        "qa": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 80.08
+        },
+        "reasoning": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 39.99
+        },
+        "summarization": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 166.25
+        }
+      },
+      "per_prompt_results": [
+        {
+          "id": 1,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 1075.27,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 2,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 607.79,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 3,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 624.7,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 4,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 584.27,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 5,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 650.54,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 6,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 33.56,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 7,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 48.86,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 8,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 48.63,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 9,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 41.43,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 10,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 31.55,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 11,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 39.96,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 12,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 41.29,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 13,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 45.55,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 14,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 38.0,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 15,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 31.68,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 16,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 52.15,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 17,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 31.28,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 18,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 33.41,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 19,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 52.64,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 20,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 42.68,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 21,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 405.93,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 22,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 295.12,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 23,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 147.94,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 24,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 186.02,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 25,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 155.11,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 26,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 55.17,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 27,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 102.96,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 28,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 61.11,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 29,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 54.64,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 30,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 56.56,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 31,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 75.0,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 32,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 94.66,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 33,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 114.14,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 34,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 172.1,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 35,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 55.92,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 36,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 64.82,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 37,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 48.62,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        }
+      ]
+    }
+  }
+}

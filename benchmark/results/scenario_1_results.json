@@ -1,0 +1,835 @@
+{
+  "scenario": "normal_conditions",
+  "chaos_injected": false,
+  "baseline_provider": "gemini",
+  "run_name": "scenario_1_results",
+  "prompts_file": "C:\\Users\\lk975\\Desktop\\RouteLLM\\benchmark\\test_prompts.json",
+  "total_prompts": 37,
+  "completed_at": "2026-10-30T21:23:23.216168+00:00",
+  "runs": {
+    "naive_baseline": {
+      "arm": "naive_baseline",
+      "total_prompts": 37,
+      "success_count": 0,
+      "success_rate": 0.0,
+      "avg_latency_ms": 2187.97,
+      "total_estimated_cost": 0.0,
+      "per_task_type_breakdown": {
+        "code": {
+          "total_prompts": 10,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 4498.01
+        },
+        "general": {
+          "total_prompts": 6,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 2309.03
+        },
+        "qa": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 678.68
+        },
+        "reasoning": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 1954.81
+        },
+        "summarization": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 526.61
+        }
+      },
+      "per_prompt_results": [
+        {
+          "id": 1,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 10472.5,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 2,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 405.55,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 3,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 421.96,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 4,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 961.36,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 5,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 10145.19,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 6,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 395.11,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 7,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 10164.03,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 8,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 945.58,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 9,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 10151.05,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 10,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 917.79,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 11,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 395.89,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 12,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 407.33,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 13,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 409.88,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 14,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 930.35,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 15,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 942.05,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 16,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 415.88,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 17,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 10182.31,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 18,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 429.53,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 19,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 907.27,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 20,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 449.92,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 21,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 411.01,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 22,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 469.56,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 23,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 576.96,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 24,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 442.04,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 25,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 1025.19,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 26,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 452.57,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 27,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 482.25,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 28,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 931.16,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 29,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 962.22,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 30,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 420.24,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 31,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 477.16,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 32,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 10190.21,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: "
+        },
+        {
+          "id": 33,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 431.63,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 34,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 406.75,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 35,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 924.22,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 36,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 425.33,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        },
+        {
+          "id": 37,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 1476.04,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "unexpected_error: HTTP 400"
+        }
+      ]
+    },
+    "routellm_full": {
+      "arm": "routellm_full",
+      "total_prompts": 37,
+      "success_count": 0,
+      "success_rate": 0.0,
+      "avg_latency_ms": 501.39,
+      "total_estimated_cost": 0.0,
+      "per_task_type_breakdown": {
+        "code": {
+          "total_prompts": 10,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 1730.32
+        },
+        "general": {
+          "total_prompts": 6,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 46.25
+        },
+        "qa": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 45.56
+        },
+        "reasoning": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 45.51
+        },
+        "summarization": {
+          "total_prompts": 7,
+          "success_count": 0,
+          "success_rate": 0.0,
+          "avg_latency_ms": 47.62
+        }
+      },
+      "per_prompt_results": [
+        {
+          "id": 1,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 1945.74,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 2,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 11013.03,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 3,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 1578.94,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 4,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 1509.61,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 5,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 997.69,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 6,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 37.25,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 7,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 60.43,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 8,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 50.74,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 9,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 48.38,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 10,
+          "expected_task_type": "code",
+          "success": false,
+          "latency_ms": 61.36,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 11,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 44.81,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 12,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 42.44,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 13,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 39.1,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 14,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 45.78,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 15,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 58.19,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 16,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 43.33,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 17,
+          "expected_task_type": "reasoning",
+          "success": false,
+          "latency_ms": 44.95,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 18,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 51.49,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 19,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 65.98,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 20,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 45.92,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 21,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 40.6,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 22,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 41.3,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 23,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 41.96,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 24,
+          "expected_task_type": "summarization",
+          "success": false,
+          "latency_ms": 46.11,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 25,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 36.74,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 26,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 43.8,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 27,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 42.83,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 28,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 57.59,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 29,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 50.18,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 30,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 48.38,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 31,
+          "expected_task_type": "qa",
+          "success": false,
+          "latency_ms": 39.39,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 32,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 59.99,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 33,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 43.21,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 34,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 43.56,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 35,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 43.63,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 36,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 39.65,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        },
+        {
+          "id": 37,
+          "expected_task_type": "general",
+          "success": false,
+          "latency_ms": 47.47,
+          "tokens_used": 0,
+          "model_used": null,
+          "estimated_cost": 0.0,
+          "error": "all_providers_failed"
+        }
+      ]
+    }
+  }
+}

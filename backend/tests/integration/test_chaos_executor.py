@@ -240,6 +240,41 @@ async def test_chaos_gate_inert_when_mode_disabled(
     assert all(entry.error is None for entry in chain)
 
 
+async def test_chaos_injected_forced_provider_fails_without_fallback(
+    install_stubs, breaker, tracker, db_session, monkeypatch, redis_client
+):
+    """The benchmark's naive arm: force_provider onto a chaos-downed provider
+    fails outright (zero fallback), while the healthy providers stay intact."""
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", True)
+    from app.core.chaos import ChaosController
+    from app.core.executor import execute_with_fallback
+
+    chaos_controller = ChaosController(redis_client)
+    gemini = StubProvider("gemini", ok("gemini"))
+    groq = StubProvider("groq", ok("groq"))
+    install_stubs(gemini=gemini, groq=groq)
+    await chaos_controller.inject_failure("gemini", duration_seconds=60)
+
+    result = await execute_with_fallback(
+        "Say hi",
+        db_session=db_session,
+        task_type="qa",
+        max_fallbacks=3,
+        circuit_breaker=breaker,
+        quota_tracker=tracker,
+        chaos_controller=chaos_controller,
+        force_provider="gemini",
+    )
+
+    assert result.success is False
+    assert result.model_used is None
+    assert result.error == "chaos_injected_failure"
+    assert gemini.calls == 0  # failure synthesized, not a real API call
+    assert groq.calls == 0  # naive mode never falls back
+    assert len(result.fallback_chain_attempted) == 1
+    assert result.fallback_chain_attempted[0].chaos_injected is True
+
+
 # --------------------------------------------------------------------------
 # API: /api/v1/admin/chaos/* gating
 # --------------------------------------------------------------------------
