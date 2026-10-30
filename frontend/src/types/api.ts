@@ -10,6 +10,8 @@ export interface AttemptLog {
   success: boolean
   error: string | null
   latency_ms: number
+  /** DEV/DEMO ONLY — chaos-injected fallback step (renders purple on graph). */
+  chaos_injected?: boolean
 }
 
 export interface RouteRequest {
@@ -37,6 +39,42 @@ export interface ProviderStatus {
   requests_today: number
   daily_quota_limit: number
   quota_percentage_used: number
+  /** DEV/DEMO ONLY — true while a chaos injection is active on this provider. */
+  chaos_active?: boolean
+}
+
+/**
+ * GET /api/v1/models envelope — the top-level flag lets the frontend skip all
+ * chaos UI on deployments where CHAOS_MODE_ENABLED is off.
+ */
+export interface ModelsResponse {
+  chaos_mode_enabled: boolean
+  providers: ProviderStatus[]
+}
+
+// DEV/DEMO ONLY — chaos admin endpoints (exist only when backend flag is on).
+export interface ChaosInjectRequest {
+  provider_name: string
+  duration_seconds?: number
+}
+
+export interface ChaosInjectResponse {
+  status: string
+  provider_name: string
+  expires_in_seconds: number
+}
+
+export interface ChaosClearRequest {
+  provider_name: string
+}
+
+export interface ChaosClearResponse {
+  status: string
+  provider_name: string
+}
+
+export interface ChaosStatusResponse {
+  active_chaos: string[]
 }
 
 export interface FallbackChainEntry {
@@ -44,6 +82,7 @@ export interface FallbackChainEntry {
   success: boolean
   error: string | null
   latency_ms: number
+  chaos_injected?: boolean
 }
 
 export interface TaskLog {

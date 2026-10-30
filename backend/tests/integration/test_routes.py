@@ -96,9 +96,16 @@ async def test_post_route_success_exact_shape(client, install_stubs):
     assert data["request_id"]
     assert len(data["fallback_chain_attempted"]) == 1
     attempt = data["fallback_chain_attempted"][0]
-    assert set(attempt.keys()) == {"provider_name", "success", "error", "latency_ms"}
+    assert set(attempt.keys()) == {
+        "provider_name",
+        "success",
+        "error",
+        "latency_ms",
+        "chaos_injected",
+    }
     assert attempt["provider_name"] == "groq"
     assert attempt["success"] is True
+    assert attempt["chaos_injected"] is False
 
 
 async def test_post_route_missing_prompt_returns_422(client):
@@ -150,8 +157,13 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
     resp = await client.get("/api/v1/models")
     assert resp.status_code == 200
 
-    items = {item["name"]: item for item in resp.json()}
+    body = resp.json()
+    assert set(body.keys()) == {"chaos_mode_enabled", "providers"}
+    assert body["chaos_mode_enabled"] is False  # flag off in the test env
+
+    items = {item["name"]: item for item in body["providers"]}
     assert set(items.keys()) == {"groq", "gemini", "deepseek"}
+    assert all(item["chaos_active"] is False for item in items.values())
 
     assert items["groq"]["status"] == "healthy"
     assert items["groq"]["requests_today"] == 0

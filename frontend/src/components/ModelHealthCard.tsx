@@ -2,6 +2,7 @@ import { motion, useAnimationControls } from 'framer-motion'
 import { useEffect, useRef } from 'react'
 import type { ProviderStatusValue } from '../types/api'
 import { formatCount } from '../lib/format'
+import { ChaosControl } from './ChaosControl'
 
 const STATUS_META: Record<
   ProviderStatusValue,
@@ -42,6 +43,11 @@ interface ModelHealthCardProps {
   successRate: number // 0..1
   requestsToday: number
   quotaPercentageUsed: number
+  /** DEV/DEMO ONLY — render the chaos controls at all? */
+  chaosEnabled?: boolean
+  chaosActive?: boolean
+  onChaosInjected?: (providerName: string, expiresInSeconds: number) => void
+  onChaosCleared?: (providerName: string) => void
 }
 
 const RING_RADIUS = 26
@@ -58,6 +64,10 @@ export function ModelHealthCard({
   successRate,
   requestsToday,
   quotaPercentageUsed,
+  chaosEnabled = false,
+  chaosActive = false,
+  onChaosInjected,
+  onChaosCleared,
 }: ModelHealthCardProps) {
   const meta = STATUS_META[status]
   const shakeControls = useAnimationControls()
@@ -152,6 +162,15 @@ export function ModelHealthCard({
             </div>
           </div>
         </div>
+
+        {chaosEnabled && (
+          <ChaosControl
+            providerName={name}
+            chaosActive={chaosActive}
+            onInjected={onChaosInjected}
+            onCleared={onChaosCleared}
+          />
+        )}
       </motion.div>
     </motion.div>
   )

@@ -32,7 +32,9 @@ from app.core.executor import (
     execute_with_fallback,
 )
 from app.core.quota_tracker import QuotaTracker
+from app.core.chaos import ChaosController
 from app.core.scorer import COST_PER_1K_TOKENS
+from app.api.chaos_routes import chaos_router
 from app.db.session import get_session
 from app.models import ModelStatsDB, TaskLog
 from app.providers.registry import PROVIDER_REGISTRY
@@ -41,6 +43,12 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+# DEV/DEMO ONLY: chaos routes exist only when the flag is explicitly true.
+# When off they are never registered — /api/v1/admin/chaos/* answers the
+# native 404 exactly like any unknown path (and stays out of /docs).
+if settings.CHAOS_MODE_ENABLED:
+    router.include_router(chaos_router)
 
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
@@ -51,6 +59,10 @@ def _get_breaker() -> CircuitBreaker:
 
 def _get_quota() -> QuotaTracker:
     return _ensure_shared_clients()[1]
+
+
+def _get_chaos() -> ChaosController:
+    return _ensure_shared_clients()[2]
 
 
 # --------------------------------------------------------------------------
@@ -110,6 +122,7 @@ class AttemptResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     latency_ms: float
+    chaos_injected: bool = False
 
 
 class RouteResponse(BaseModel):
@@ -131,6 +144,15 @@ class ProviderStatusResponse(BaseModel):
     requests_today: int
     daily_quota_limit: int
     quota_percentage_used: float
+    # DEV/DEMO ONLY — True while this provider has an active chaos injection.
+    chaos_active: bool = False
+
+
+class ModelsResponse(BaseModel):
+    # Top-level switch mirrors settings.CHAOS_MODE_ENABLED so the frontend
+    # only renders chaos controls when the backend actually allows them.
+    chaos_mode_enabled: bool = False
+    providers: list[ProviderStatusResponse]
 
 
 class TaskLogResponse(BaseModel):
@@ -212,12 +234,20 @@ async def route_prompt(
 # --------------------------------------------------------------------------
 
 
-@router.get("/models", response_model=list[ProviderStatusResponse])
+@router.get("/models", response_model=ModelsResponse)
 async def get_models(db_session: AsyncSession = Depends(get_session)):
     try:
         breaker = _get_breaker()
         quota = _get_quota()
         items: list[ProviderStatusResponse] = []
+
+        # DEV/DEMO ONLY: which providers currently have a forced failure.
+        active_chaos: set[str] = set()
+        if settings.CHAOS_MODE_ENABLED:
+            try:
+                active_chaos = set(await _get_chaos().get_all_active_chaos())
+            except Exception as e:
+                logger.warning("models_chaos_state_unavailable", error=str(e))
 
         for name in PROVIDER_REGISTRY:
             try:
@@ -273,9 +303,12 @@ async def get_models(db_session: AsyncSession = Depends(get_session)):
                     requests_today=int(summary["requests_today"]),
                     daily_quota_limit=int(summary["daily_limit"]),
                     quota_percentage_used=float(summary["percentage_used"]),
+                    chaos_active=name in active_chaos,
                 )
             )
-        return items
+        return ModelsResponse(
+            chaos_mode_enabled=settings.CHAOS_MODE_ENABLED, providers=items
+        )
     except Exception as e:
         logger.error("models_endpoint_unexpected_error", error=str(e))
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})

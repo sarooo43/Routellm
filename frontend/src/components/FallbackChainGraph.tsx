@@ -8,11 +8,24 @@ const FIRST_CENTER_X = 30
 
 const SEGMENT_STAGGER_S = 0.3
 
+const CHAOS_COLOR = '#B388FF' // artificial chaos failure (DEV/DEMO ONLY)
+const REAL_FAILURE_COLOR = '#FF4D4D'
+const SUCCESS_COLOR = '#3DDC97'
+
+function isChaosAttempt(attempt: { error: string | null; chaos_injected?: boolean }): boolean {
+  // Chaotic steps come labeled both by flag and (for older TaskLog rows
+  // persisted before the flag existed) by their sentinel error string.
+  return attempt.chaos_injected === true || attempt.error === 'chaos_injected_failure'
+}
+
 /**
  * Horizontal flowchart of a request's fallback chain: one node per attempt,
  * connected by lines that draw in sequentially — the visual story of
  * "tried this, failed, tried next, succeeded". The final successful node
  * carries a pulsing glow ring.
+ *
+ * Node colors: green = succeeded, red = real failure, purple = artificial
+ * chaos-injected failure (DEV/DEMO ONLY).
  */
 export function FallbackChainGraph({ attempts }: { attempts: FallbackChainEntry[] }) {
   if (attempts.length === 0) {
@@ -33,7 +46,12 @@ export function FallbackChainGraph({ attempts }: { attempts: FallbackChainEntry[
       aria-label="Fallback chain"
     >
       {attempts.map((attempt, index) => {
-        const color = attempt.success ? '#3DDC97' : '#FF4D4D'
+        const chaos = isChaosAttempt(attempt)
+        const color = attempt.success
+          ? SUCCESS_COLOR
+          : chaos
+            ? CHAOS_COLOR
+            : REAL_FAILURE_COLOR
         const cx = centerX(index)
         const isFinalSuccess = index === successIndex
 
@@ -74,7 +92,13 @@ export function FallbackChainGraph({ attempts }: { attempts: FallbackChainEntry[
               cx={cx}
               cy={34}
               r={NODE_R}
-              fill={attempt.success ? 'rgba(61, 220, 151, 0.15)' : 'rgba(255, 77, 77, 0.15)'}
+              fill={
+                attempt.success
+                  ? 'rgba(61, 220, 151, 0.15)'
+                  : chaos
+                    ? 'rgba(179, 136, 255, 0.18)'
+                    : 'rgba(255, 77, 77, 0.15)'
+              }
               stroke={color}
               strokeWidth="2"
               initial={{ opacity: 0, scale: 0.6 }}

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core.circuit_breaker import CircuitBreaker
+from app.core.chaos import ChaosController
 from app.core.classifier import classify_task
 from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import ModelStats, rank_models
@@ -35,6 +36,9 @@ class AttemptLog(BaseModel):
     success: bool
     error: Optional[str] = None
     latency_ms: float = 0.0
+    # True for synthesized chaos failures (DEV/DEMO ONLY) — lets the
+    # dashboard paint them purple instead of "real failure" red.
+    chaos_injected: bool = False
 
 
 class ExecutionResult(BaseModel):
@@ -56,6 +60,7 @@ class ExecutionResult(BaseModel):
 
 _circuit_breaker: Optional[CircuitBreaker] = None
 _quota_tracker: Optional[QuotaTracker] = None
+_chaos_controller: Optional[ChaosController] = None
 
 
 def _get_redis_client():
@@ -71,13 +76,16 @@ def _get_redis_client():
     return FakeAsyncRedis(decode_responses=True)
 
 
-def _ensure_shared_clients() -> tuple[CircuitBreaker, QuotaTracker]:
-    global _circuit_breaker, _quota_tracker
+def _ensure_shared_clients() -> tuple[CircuitBreaker, QuotaTracker, ChaosController]:
+    global _circuit_breaker, _quota_tracker, _chaos_controller
     if _circuit_breaker is None:
         client = _get_redis_client()
         _circuit_breaker = CircuitBreaker(client)
         _quota_tracker = QuotaTracker(client)
-    return _circuit_breaker, _quota_tracker
+        # Chaos keys are inert unless settings.CHAOS_MODE_ENABLED is true:
+        # executor + routes both gate on the flag, never on key existence.
+        _chaos_controller = ChaosController(client)
+    return _circuit_breaker, _quota_tracker, _chaos_controller
 
 
 # --------------------------------------------------------------------------
@@ -267,6 +275,23 @@ async def _circuit_state(circuit_breaker: CircuitBreaker, provider_name: str) ->
         return "CLOSED"
 
 
+async def _chaos_active(
+    chaos_controller: Optional[ChaosController], provider_name: str
+) -> bool:
+    """DEV/DEMO ONLY check — always False with chaos mode off or Redis down."""
+    if chaos_controller is None:
+        return False
+    try:
+        return await chaos_controller.is_chaos_active(provider_name)
+    except Exception as e:
+        logger.warning(
+            "chaos_check_failed_treating_inactive",
+            provider=provider_name,
+            error=str(e),
+        )
+        return False
+
+
 def _deepseek_kwargs(task_type: str) -> dict:
     return {
         "model_variant": "deepseek-coder" if task_type == "code" else "deepseek-chat",
@@ -286,6 +311,7 @@ async def execute_with_fallback(
     circuit_breaker: Optional[CircuitBreaker] = None,
     quota_tracker: Optional[QuotaTracker] = None,
     weights: Optional[dict] = None,
+    chaos_controller: Optional[ChaosController] = None,
 ) -> ExecutionResult:
     """Execute a prompt across ranked providers with automatic fallback.
 
@@ -299,6 +325,9 @@ async def execute_with_fallback(
 
     breaker = circuit_breaker if circuit_breaker is not None else _ensure_shared_clients()[0]
     quota = quota_tracker if quota_tracker is not None else _ensure_shared_clients()[1]
+    chaos = (
+        chaos_controller if chaos_controller is not None else _ensure_shared_clients()[2]
+    )
 
     max_attempts = max(1, max_fallbacks)
     resolved_task_type = task_type if task_type else classify_task(prompt or "")
@@ -358,29 +387,52 @@ async def execute_with_fallback(
             )
             continue
 
-        # ---- Real attempt ----
-        provider = PROVIDER_REGISTRY[provider_name]
-        kwargs = _deepseek_kwargs(resolved_task_type) if provider_name == "deepseek" else {}
-
-        try:
-            response = await provider.generate(prompt, **kwargs)
-        except Exception as e:
-            # Providers promise never to raise; this is the last-resort net.
-            logger.error(
-                "provider_raised_unexpectedly",
+        # ---- Pre-flight gate 3: chaos injection (DEV/DEMO ONLY) ----
+        # A forced failure is NOT a skip: it flows through the same attempt /
+        # telemetry path as a real failed call, so the breaker can trip from
+        # repeated injections and the dashboard shows the purple chain step.
+        chaos_injected = False
+        if settings.CHAOS_MODE_ENABLED and await _chaos_active(chaos, provider_name):
+            logger.warning(
+                "chaos_failure_injected",
                 request_id=request_id,
                 provider=provider_name,
-                error=str(e),
+                task_type=resolved_task_type,
             )
             response = ProviderResponse(
                 success=False,
                 text="",
                 tokens_used=0,
-                latency_ms=0.0,
-                error=f"unexpected_error: {e}",
+                latency_ms=50.0,
+                error="chaos_injected_failure",
                 provider_name=provider_name,
-                model_name="unknown",
+                model_name="n/a",
             )
+            chaos_injected = True
+        else:
+            # ---- Real attempt ----
+            provider = PROVIDER_REGISTRY[provider_name]
+            kwargs = _deepseek_kwargs(resolved_task_type) if provider_name == "deepseek" else {}
+
+            try:
+                response = await provider.generate(prompt, **kwargs)
+            except Exception as e:
+                # Providers promise never to raise; this is the last-resort net.
+                logger.error(
+                    "provider_raised_unexpectedly",
+                    request_id=request_id,
+                    provider=provider_name,
+                    error=str(e),
+                )
+                response = ProviderResponse(
+                    success=False,
+                    text="",
+                    tokens_used=0,
+                    latency_ms=0.0,
+                    error=f"unexpected_error: {e}",
+                    provider_name=provider_name,
+                    model_name="unknown",
+                )
 
         attempts.append(
             AttemptLog(
@@ -388,16 +440,21 @@ async def execute_with_fallback(
                 success=response.success,
                 error=response.error,
                 latency_ms=response.latency_ms,
+                chaos_injected=chaos_injected,
             )
         )
-        attempt_records.append(
-            {
-                "provider_name": provider_name,
-                "success": response.success,
-                "latency_ms": response.latency_ms,
-                "tokens_used": response.tokens_used,
-            }
-        )
+        # Chaos attempts consume the fallback budget but never touch the
+        # provider's permanent history — no API call happened, so ModelStats,
+        # UsageTracking and quota stay honest.
+        if not chaos_injected:
+            attempt_records.append(
+                {
+                    "provider_name": provider_name,
+                    "success": response.success,
+                    "latency_ms": response.latency_ms,
+                    "tokens_used": response.tokens_used,
+                }
+            )
         real_attempts += 1
 
         # ---- Post-attempt telemetry (must not break routing) ----
@@ -405,6 +462,8 @@ async def execute_with_fallback(
             if response.success:
                 await breaker.record_success(provider_name)
             else:
+                # Chaos failures count too: repeated injections SHOULD be able
+                # to trip the real breaker — realistic and demonstrable.
                 await breaker.record_failure(provider_name)
         except Exception as e:
             logger.warning(
@@ -413,16 +472,17 @@ async def execute_with_fallback(
                 provider=provider_name,
                 error=str(e),
             )
-        try:
-            # Failed calls still count: a real 500/timeout often consumed quota.
-            await quota.record_usage(provider_name, response.tokens_used)
-        except Exception as e:
-            logger.warning(
-                "quota_update_failed",
-                request_id=request_id,
-                provider=provider_name,
-                error=str(e),
-            )
+        if not chaos_injected:
+            try:
+                # Failed calls still count: a real 500/timeout often consumed quota.
+                await quota.record_usage(provider_name, response.tokens_used)
+            except Exception as e:
+                logger.warning(
+                    "quota_update_failed",
+                    request_id=request_id,
+                    provider=provider_name,
+                    error=str(e),
+                )
 
         if response.success:
             logger.info(

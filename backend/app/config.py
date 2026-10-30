@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"
+    # DEV/DEMO ONLY: fault-injection endpoints + executor fake failures.
+    # Never enabled by default; must be explicitly set via .env (docker/env).
+    # See core/chaos.py — a Chaos Monkey-style demo control for the dashboard.
+    CHAOS_MODE_ENABLED: bool = False
 
 
 settings = Settings()

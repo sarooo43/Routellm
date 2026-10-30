@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { Coins, Target, Timer, Zap } from 'lucide-react'
 import { KpiCard } from '../components/KpiCard'
 import { LiveFeedTicker } from '../components/LiveFeedTicker'
+import { TryItLive } from '../components/TryItLive'
 import { formatCount, formatDollars, formatMs, formatPercent } from '../lib/format'
 import { useAppStore } from '../store/useAppStore'
 
@@ -84,6 +85,8 @@ export function Overview() {
           />
         </motion.div>
       </motion.div>
+
+      <TryItLive />
 
       <LiveFeedTicker />
     </div>

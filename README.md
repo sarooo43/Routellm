@@ -33,6 +33,72 @@ rate-limited REST API (/api/v1) ┘        │
   Explorer, Analytics) with live polling
 - **Phase 9**: Docker orchestration + GitHub Actions CI
 
+## 🔥 Live Chaos Demo (DEV/DEMO ONLY)
+
+RouteLLM's headline claim is *automatic self-healing fallback*. Instead of
+asking you to read code, the dashboard lets you prove it in ~15 seconds:
+deliberately break a provider and watch the system visibly reroute around it
+— a tiny, demo-safe version of Netflix's Chaos Monkey.
+
+**Safety first:** everything below is gated behind `CHAOS_MODE_ENABLED`, which
+defaults to `false`. With the flag off (any real deployment), the
+`/api/v1/admin/chaos/*` endpoints are not even registered — they answer `404`
+like any unknown path — and the executor never honors a chaos key. This feature
+can never accidentally run in production.
+
+### 1. Enable chaos mode
+
+In `backend/.env` (set before starting the backend; see `backend/.env.example`):
+
+```env
+CHAOS_MODE_ENABLED=true
+```
+
+Then start the stack (Docker: `docker compose up`, or locally:
+`uvicorn app.main:app --reload` from `backend/` + `npm run dev` from `frontend/`).
+
+### 2. Run the demo click-path
+
+1. **Model Health page** → click **"⚡ Simulate Outage"** on a card (e.g. the
+   top-ranked provider). The card immediately gains a pulsing purple
+   **Chaos Injected** badge, the app-top banner shows
+   "Chaos Mode: 1 provider artificially down", and a toast confirms the
+   injection (auto-expires in 60s via TTL — nothing to clean up).
+2. **Overview page** ("Try it Live" panel) → type any prompt → **Send Request**.
+   The request is a real `POST /api/v1/route` through the real executor: the
+   chain graph animates the chaos-injected provider in **purple** (✗), the
+   next provider in **green** (✓) — fallback, live.
+3. **Keep clicking "Send Request"** with chaos still on the same provider:
+   each synthesized failure feeds the REAL circuit breaker. After ~5 repeats
+   the genuine breaker trips and the provider drops into the red
+   **Circuit Open** state — both resilience mechanisms in one demo.
+4. Watch genuine (unchoreographed) rerouting behavior in **Routing Explorer**
+   and **Logs** as the chaos chain entries appear.
+5. Click **"Reset Now"** on the card (or **"Clear All"** on the banner).
+   Even if forgotten, the injection dies silently when its TTL expires.
+
+Backend equivalents (all under `http://localhost:8000`):
+
+```bash
+# Inject a 60s artificial failure (enabled mode only)
+curl -X POST http://localhost:8000/api/v1/admin/chaos/inject \
+  -H "Content-Type: application/json" \
+  -d '{"provider_name": "groq", "duration_seconds": 60}'
+
+# List active chaos injections
+curl http://localhost:8000/api/v1/admin/chaos/status
+
+# Manually reset before the TTL
+curl -X POST http://localhost:8000/api/v1/admin/chaos/clear \
+  -H "Content-Type: application/json" \
+  -d '{"provider_name": "groq"}'
+```
+
+Chaos failures are logged with `error="chaos_injected_failure"` and a
+`chaos_injected` marker, so on the dashboard they are always distinguishable
+from real provider outages — and they never touch the provider's permanent
+success-rate statistics.
+
 ## Quick Start with Docker
 
 Prerequisites: [Docker](https://docs.docker.com/get-docker/) with compose v2
