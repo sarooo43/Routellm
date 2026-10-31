@@ -21,6 +21,7 @@ from app.config import settings
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.chaos import ChaosController
 from app.core.classifier import classify_task
+from app.core.ml_classifier import get_router_classifier
 from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import ModelStats, rank_models
 from app.models import Feedback, ModelStatsDB, TaskLog, UsageTracking
@@ -51,6 +52,19 @@ class ExecutionResult(BaseModel):
     tokens_used: int = 0
     error: Optional[str] = None  # populated only if ALL providers failed
     request_id: str = ""
+    # EXPERIMENTAL transparency: which capability source ranked the
+    # providers for this request ("ml_hybrid" | "rule_based").
+    routing_method: str = "rule_based"
+
+
+def _routing_method_in_effect() -> str:
+    """EXPERIMENTAL visibility label. ml_hybrid only when the flag is on
+    AND a trained model actually loaded; anything else is rule_based."""
+    if settings.ENABLE_ML_ROUTING:
+        classifier = get_router_classifier()
+        if classifier.is_loaded:
+            return "ml_hybrid"
+    return "rule_based"
 
 
 # --------------------------------------------------------------------------
@@ -256,6 +270,7 @@ async def _persist_result(
                     attempt.model_dump()
                     for attempt in result.fallback_chain_attempted
                 ],
+                routing_method=result.routing_method,
             )
         )
         for record in attempt_records:
@@ -495,12 +510,18 @@ async def execute_with_fallback(
 
     max_attempts = max(1, max_fallbacks)
 
+    routing_method = _routing_method_in_effect()
+
     stats_snapshot = await _build_stats_snapshot(resolved_task_type, breaker, db_session)
     ranked = rank_models(
         resolved_task_type,
         list(PROVIDER_REGISTRY.keys()),
         stats_snapshot,
         weights,
+        prompt=prompt,
+        ml_classifier=(
+            get_router_classifier() if routing_method == "ml_hybrid" else None
+        ),
     )
     confidence_by_provider = {r.provider_name: r.confidence_score for r in ranked}
 
@@ -665,6 +686,7 @@ async def execute_with_fallback(
                 total_latency_ms=(time.perf_counter() - start) * 1000.0,
                 tokens_used=response.tokens_used,
                 request_id=request_id,
+                routing_method=routing_method,
             )
             await _persist_result(
                 db_session, request_id, resolved_task_type, attempt_records, result
@@ -692,6 +714,7 @@ async def execute_with_fallback(
         fallback_chain_attempted=attempts,
         total_latency_ms=(time.perf_counter() - start) * 1000.0,
         request_id=request_id,
+        routing_method=routing_method,
     )
     await _persist_result(
         db_session, request_id, resolved_task_type, attempt_records, result

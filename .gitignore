@@ -21,6 +21,11 @@ __pycache__/
 *.db
 *.sqlite3
 
+# ML artifacts (regenerate via scripts; don't ship the 87MB embedder pickle
+# or synthetic/local training data to the repo)
+backend/app/ml_models/*.pkl
+backend/scripts/training_data/
+
 # Logs & caches
 *.log
 .vite/

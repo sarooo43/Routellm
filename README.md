@@ -206,6 +206,56 @@ Full methodology and reproduction steps: [`benchmark/README.md`](./benchmark/REA
 > while RouteLLM maintained [X]% success by automatically rerouting to
 > healthy providers — demonstrating the practical value of the fallback system.
 
+## 🧠 ML-Assisted Routing (EXPERIMENTAL, off by default)
+
+Inspired by the academic [RouteLLM](https://github.com/lm-sys/RouteLLM)
+(UC Berkeley) and commercial router products like Martian: instead of only the
+hand-tuned `CAPABILITY_MATCH` table deciding "how well each provider handles
+each task type", a lightweight trained classifier predicts, **directly from
+the prompt's embedding**, which provider is most likely to produce the best
+response. The learned capability score is blended **60% ML / 40% rule-based**
+over the existing table — the heuristics stay in the loop because the model is
+trained on limited data and must not blindly override them.
+
+Full pipeline (data → labels → embeddings → training → serving → safe fallback):
+
+1. **Judge-scored data collection** — `backend/scripts/collect_training_data.py`
+   calls *every* provider for each test prompt (bypassing routing), then an
+   LLM-as-judge (`app/core/judge.py`, JSON-scored 0.0–1.0 with defensive
+   parsing) rates each response. Output is a resumable JSONL dataset.
+2. **Training** — `backend/scripts/train_router_model.py` embeds prompts with
+   `sentence-transformers all-MiniLM-L6-v2` (small, local, free), trains a
+   `LogisticRegression`, prints honest accuracy vs the majority-class
+   baseline, and saves `app/ml_models/router_classifier.pkl` (joblib).
+3. **Serving** — `app/core/ml_classifier.py` loads the artifact lazily and
+   **never breaks the app**: missing file, missing deps (`requirements-ml.txt`
+   is optional), corrupt pickle, or a below-confidence-threshold prediction
+   (`max predict_proba < 0.45`) all degrade to pure rule-based scoring.
+4. **Hybrid scoring** — `rank_models()` blends the learned per-provider
+   capability with the rule-based one; gated by `ENABLE_ML_ROUTING=false`
+   (default). With the flag off, routing is bit-for-bit identical to before.
+5. **Transparency** — every response/logs row carries
+   `routing_method: "ml_hybrid" | "rule_based"`, shown in the Routing
+   Explorer as 🧠 ML-Assisted / 📋 Rule-Based badges.
+
+**Honesty:** with ~37–150 judge-labeled examples (our benchmark set × 3
+providers), this model will often barely beat (or match) a majority-class
+predictor — and the training script says so out loud, printing the baseline
+alongside accuracy. For a portfolio the point is the complete, working
+ML pipeline with production-grade fallback semantics, not leaderboard
+accuracy on a tiny dataset. Rerun collection with more prompts to grow it.
+
+```bash
+# one-time (heavy: pulls torch)
+backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-ml.txt
+# 1) collect (needs provider API keys in backend/.env; resumable)
+backend/.venv/Scripts/python.exe scripts/collect_training_data.py
+# 2) train + report metrics + save model
+backend/.venv/Scripts/python.exe scripts/train_router_model.py
+# 3) enable in backend/.env, restart
+#    ENABLE_ML_ROUTING=true
+```
+
 ## Production notes (deliberate MVP simplifications)
 
 - **Migrations**: tables are created via `init_db()` (SQLModel `create_all`)

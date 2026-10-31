@@ -87,4 +87,20 @@ describe('RoutingExplorer feedback widget', () => {
     expect(screen.queryByTestId('feedback-up')).not.toBeInTheDocument()
     expect(postFeedback).not.toHaveBeenCalled()
   })
+
+  it('shows the 🧠 ML-Assisted badge for ml_hybrid routing_method', async () => {
+    renderWithLog({ ...successLog, routing_method: 'ml_hybrid' })
+    fireEvent.click(screen.getAllByRole('row')[1])
+    expect(
+      await screen.findByText('🧠 ML-Assisted'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the 📋 Rule-Based badge for rule_based routing_method', async () => {
+    renderWithLog({ ...successLog, routing_method: 'rule_based' })
+    fireEvent.click(screen.getAllByRole('row')[1])
+    expect(
+      await screen.findByText('📋 Rule-Based'),
+    ).toBeInTheDocument()
+  })
 })

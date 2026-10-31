@@ -138,6 +138,9 @@ class RouteResponse(BaseModel):
     tokens_used: int
     request_id: str
     error: Optional[str] = None
+    # EXPERIMENTAL: "ml_hybrid" | "rule_based" — which capability source
+    # ranked the providers for this request.
+    routing_method: str = "rule_based"
 
 
 class ProviderStatusResponse(BaseModel):
@@ -172,6 +175,8 @@ class TaskLogResponse(BaseModel):
     # True when a thumbs rating already exists for this request — lets the
     # UI render the already-rated state on load without a failed API call.
     feedback_given: bool = False
+    # EXPERIMENTAL: "ml_hybrid" | "rule_based" (default keeps old rows valid).
+    routing_method: str = "rule_based"
 
 
 class LogsResponse(BaseModel):
@@ -262,6 +267,7 @@ async def route_prompt(
             tokens_used=result.tokens_used,
             request_id=result.request_id,
             error=result.error,
+            routing_method=result.routing_method,
         )
     except Exception as e:
         logger.error("route_endpoint_unexpected_error", error=str(e))

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # Never enabled by default; must be explicitly set via .env (docker/env).
     # See core/chaos.py — a Chaos Monkey-style demo control for the dashboard.
     CHAOS_MODE_ENABLED: bool = False
+    # EXPERIMENTAL: ML-assisted routing (learned capability scores blended
+    # with the rule-based table, 60/40). Off until the router model is
+    # trained (scripts/train_router_model.py) AND validated. Requires the
+    # model file backend/app/ml_models/router_classifier.pkl to exist.
+    ENABLE_ML_ROUTING: bool = False
 
 
 settings = Settings()

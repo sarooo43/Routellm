@@ -11,6 +11,7 @@ any real production use (versioned, reversible schema changes).
 
 from typing import AsyncGenerator, Optional
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -51,9 +52,17 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Create all tables.
+    """Create all tables, then add any columns created after the table did.
 
     NOTE: replace with Alembic migrations before production use.
     """
     async with get_engine().begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        # create_all() does NOT alter existing tables — add post-v1 columns
+        # defensively (silently skipped if already present or if the table
+        # was just created by create_all with the column included).
+        for statement in ("ALTER TABLE task_logs ADD COLUMN routing_method VARCHAR",):
+            try:
+                await conn.execute(text(statement))
+            except Exception:
+                pass  # column already exists (or dialect-specific no-op)

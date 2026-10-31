@@ -1,0 +1,8 @@
+# ML routing pipeline (OPTIONAL — the app runs fine without these).
+# Needed only for: scripts/collect_training_data.py (no — that uses base deps),
+# scripts/train_router_model.py, and ENABLE_ML_ROUTING=true serving.
+# Note: sentence-transformers pulls torch (~large download).
+sentence-transformers>=3.0
+scikit-learn>=1.4
+joblib>=1.3
+numpy>=1.26

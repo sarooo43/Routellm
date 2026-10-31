@@ -5,9 +5,14 @@ no side effects. This keeps scoring trivially testable and decoupled from
 data access.
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    # Typing-only: the real import is deferred so environments without the
+    # optional ML deps can import scorer freely.
+    from app.core.ml_classifier import MLRouterClassifier
 
 # How well each provider is expected to handle each task type (0.0-1.0).
 # 0.3 fallback applies to any unmapped provider/task combo so it still gets
@@ -44,6 +49,12 @@ AVAILABILITY_SCORES = {
 }
 
 UNMATCHED_CAPABILITY_DEFAULT = 0.3
+
+# EXPERIMENTAL ML routing: how much a learned capability prediction counts
+# over the hand-tuned CAPABILITY_MATCH value when blended (60% ML / 40%
+# rules). The ML model is trained on limited judge-labeled data and should
+# not blindly dominate the proven heuristic.
+ML_CAPABILITY_WEIGHT = 0.6
 
 
 class ModelStats(BaseModel):
@@ -139,14 +150,25 @@ def _score_provider(
     task_type: str,
     stats: dict[str, ModelStats],
     weights: dict,
+    rule_capability: float,
+    ml_capability: Optional[float] = None,
 ) -> RankedModel:
     provider_stats = stats.get(provider_name) or ModelStats(
         provider_name=provider_name, task_type=task_type
     )
 
-    capability_match = CAPABILITY_MATCH.get(task_type, {}).get(
-        provider_name, UNMATCHED_CAPABILITY_DEFAULT
-    )
+    # Hybrid capability: when an ML prediction supplies a learned value for
+    # this provider it is blended 60/40 over the rule-based score — the ML
+    # model is trained on limited data and must not blindly override the
+    # proven heuristic table. No ML value (flag off, model missing, low
+    # confidence, provider unseen) → pure rule-based, exactly as v1.
+    if ml_capability is not None:
+        capability_match = ML_CAPABILITY_WEIGHT * ml_capability + (
+            1 - ML_CAPABILITY_WEIGHT
+        ) * rule_capability
+    else:
+        capability_match = rule_capability
+
     # Feedback-adjusted, NOT raw: a provider getting consistent thumbs-down
     # on a task type ranks lower for that task type even if its raw API
     # success rate (no errors) looks fine.
@@ -179,6 +201,8 @@ def rank_models(
     available_providers: list[str],
     stats: dict[str, ModelStats],
     weights: Optional[dict] = None,
+    prompt: Optional[str] = None,
+    ml_classifier: Optional["MLRouterClassifier"] = None,
 ) -> list[RankedModel]:
     """Score and rank all available providers for a given task type.
 
@@ -188,10 +212,31 @@ def rank_models(
     (optimistic 0.75 success rate). Custom weights are merged over the
     defaults. Providers with an OPEN circuit ALWAYS rank last regardless
     of their raw score.
+
+    EXPERIMENTAL ML routing: when ``prompt`` + ``ml_classifier`` are both
+    provided AND settings.ENABLE_ML_ROUTING is on AND the classifier loaded
+    a trained model, capability scores come from a 60/40 blend of the ML
+    prediction with the rule-based table (see ML_CAPABILITY_WEIGHT). Under
+    any other condition the behavior is bit-for-bit identical to pure
+    rule-based scoring.
     """
     effective_weights = {**DEFAULT_WEIGHTS, **(weights or {})}
+
+    ml_capability_by_provider = _ml_capability_scores(
+        prompt, ml_classifier, task_type, available_providers
+    )
+
     ranked = [
-        _score_provider(name, task_type, stats, effective_weights)
+        _score_provider(
+            name,
+            task_type,
+            stats,
+            effective_weights,
+            rule_capability=CAPABILITY_MATCH.get(task_type, {}).get(
+                name, UNMATCHED_CAPABILITY_DEFAULT
+            ),
+            ml_capability=ml_capability_by_provider.get(name) if ml_capability_by_provider else None,
+        )
         for name in available_providers
     ]
 
@@ -199,3 +244,38 @@ def rank_models(
     # keep everything else (and the OPEN group itself) ordered by score DESC.
     ranked.sort(key=lambda r: (0 if r.circuit_state != "OPEN" else 1, -r.score))
     return ranked
+
+
+def _ml_capability_scores(
+    prompt: Optional[str],
+    ml_classifier: Optional["MLRouterClassifier"],
+    task_type: str,
+    available_providers: list[str],
+) -> Optional[dict[str, float]]:
+    """Optional learned capability scores (EXPERIMENTAL).
+
+    Enabled only when ALL of: a prompt is given, a classifier is supplied,
+    ENABLE_ML_ROUTING is on, and the model is loaded + confident. Ensemble
+    providers missing from the prediction degrade to the rule-based value
+    instead of an arbitrary zero.
+    """
+    if ml_classifier is None or prompt is None:
+        return None
+
+    from app.config import settings  # deferred: keeps scorer import light
+
+    if not settings.ENABLE_ML_ROUTING:
+        return None
+
+    probs = ml_classifier.predict_best_provider(prompt)
+    if probs is None:
+        # Not loaded or below the confidence floor → pure rule-based.
+        return None
+
+    rule_for_missing = lambda name: CAPABILITY_MATCH.get(task_type, {}).get(  # noqa: E731
+        name, UNMATCHED_CAPABILITY_DEFAULT
+    )
+    return {
+        name: probs.get(name, rule_for_missing(name))
+        for name in available_providers
+    }

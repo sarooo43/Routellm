@@ -242,6 +242,120 @@ def test_feedback_zero_totals_in_stats_dict_do_not_crash_ranking():
     assert ranked[0].confidence_score == round(0.75 * 1.0, 3)
 
 
+# --------------------------------------------------------------------------
+# EXPERIMENTAL ML hybrid blending (rank_models + ml_classifier)
+# --------------------------------------------------------------------------
+
+
+class StubMLClassifier:
+    """Minimal stand-in matching MLRouterClassifier's serving interface
+    (including its real semantics: an unloaded model returns None)."""
+
+    def __init__(self, probabilities: dict[str, float] | None, loaded: bool = True):
+        self._probs = probabilities
+        self.is_loaded = loaded
+
+    def predict_best_provider(self, prompt: str):
+        if not self.is_loaded:
+            return None
+        return self._probs
+
+
+ML_OFF_STATS = {
+    "groq": ModelStats(provider_name="groq", task_type="summarization"),
+    "gemini": ModelStats(provider_name="gemini", task_type="summarization"),
+}
+
+
+def test_ml_classifier_none_produces_pure_rule_based_ranking(monkeypatch):
+    """mark_models(prompt=..., ml_classifier=None) == rule-based behavior."""
+    with_ml_off = rank_models("summarization", ["groq", "gemini"], ML_OFF_STATS)
+    result = rank_models(
+        "summarization", ["groq", "gemini"], ML_OFF_STATS,
+        prompt="summarize this", ml_classifier=None,
+    )
+    assert [r.score for r in result] == [r.score for r in with_ml_off]
+    assert [r.provider_name for r in result] == [r.provider_name for r in with_ml_off]
+
+
+def test_flag_off_ignores_ml_classifier(monkeypatch):
+    """ENABLE_ML_ROUTING=False: even a loaded classifier is ignored — the
+    scores are bit-for-bit identical to rule-based-only."""
+    monkeypatch.setattr("app.config.settings.ENABLE_ML_ROUTING", False)
+    baseline = rank_models(
+        "summarization", ["groq", "gemini"], ML_OFF_STATS,
+        prompt="summarize this",
+        ml_classifier=StubMLClassifier({"gemini": 0.9, "groq": 0.1}),
+    )
+    pure = rank_models("summarization", ["groq", "gemini"], ML_OFF_STATS)
+    assert [r.score for r in baseline] == [r.score for r in pure]
+
+
+def test_flag_on_blends_ml_prediction_60_40(monkeypatch):
+    """ENABLE_ML_ROUTING=True: capability = 0.6*ml + 0.4*rule, per provider."""
+    monkeypatch.setattr("app.config.settings.ENABLE_ML_ROUTING", True)
+
+    # summarization rule capabilities: groq 0.6, gemini 1.0.
+    scored = rank_models(
+        "summarization", ["groq", "gemini"], ML_OFF_STATS,
+        CAPABILITY_ONLY_WEIGHTS,  # isolate the capability component fully
+        prompt="summarize this",
+        ml_classifier=StubMLClassifier({"gemini": 0.0, "groq": 1.0}),
+    )
+    by_name = {r.provider_name: r.score for r in scored}
+
+    # groq blended capability: 0.6*1.0 + 0.4*0.6 = 0.84
+    assert by_name["groq"] == pytest.approx(0.84)
+    # gemini blended capability: 0.6*0.0 + 0.4*1.0 = 0.4
+    assert by_name["gemini"] == pytest.approx(0.4)
+    # The ML prediction genuinely flipped the ranking (gemini was #1 rule-based).
+    assert scored[0].provider_name == "groq"
+
+
+def test_unseen_provider_degrades_to_rule_based_capability(monkeypatch):
+    """A provider missing from the ML prediction keeps its rule-based
+    capability (no arbitrary zero)."""
+    monkeypatch.setattr("app.config.settings.ENABLE_ML_ROUTING", True)
+    pure = rank_models("summarization", ["groq", "gemini", "deepseek"], ML_OFF_STATS,
+                       CAPABILITY_ONLY_WEIGHTS)
+    blended = rank_models(
+        "summarization", ["groq", "gemini", "deepseek"], ML_OFF_STATS,
+        CAPABILITY_ONLY_WEIGHTS,
+        prompt="summarize this",
+        ml_classifier=StubMLClassifier({"gemini": 1.0, "groq": 0.0}),  # no deepseek
+    )
+    # deepseek: rule capability 0.5 → same score in both runs.
+    deepseek_pure = next(r for r in pure if r.provider_name == "deepseek")
+    deepseek_blend = next(r for r in blended if r.provider_name == "deepseek")
+    assert deepseek_blend.score == deepseek_pure.score == pytest.approx(0.5)
+
+
+def test_low_confidence_ml_prediction_falls_back_to_rules(monkeypatch):
+    """predict_best_provider()==None (model's own confidence gate) → pure
+    rule-based scores even with the flag on."""
+    monkeypatch.setattr("app.config.settings.ENABLE_ML_ROUTING", True)
+    pure = rank_models("summarization", ["groq", "gemini"], ML_OFF_STATS,
+                       CAPABILITY_ONLY_WEIGHTS)
+    blended = rank_models(
+        "summarization", ["groq", "gemini"], ML_OFF_STATS,
+        CAPABILITY_ONLY_WEIGHTS,
+        prompt="summarize this",
+        ml_classifier=StubMLClassifier(None),  # low-confidence → None
+    )
+    assert [r.score for r in blended] == [r.score for r in pure]
+
+
+def test_unloaded_model_is_ignored_even_with_flag(monkeypatch):
+    monkeypatch.setattr("app.config.settings.ENABLE_ML_ROUTING", True)
+    pure = rank_models("summarization", ["groq", "gemini"], ML_OFF_STATS)
+    with_unloaded = rank_models(
+        "summarization", ["groq", "gemini"], ML_OFF_STATS,
+        prompt="summarize this",
+        ml_classifier=StubMLClassifier({"gemini": 0.9, "groq": 0.1}, loaded=False),
+    )
+    assert [r.score for r in with_unloaded] == [r.score for r in pure]
+
+
 def test_brand_new_provider_gets_optimistic_default():
     fresh = ModelStats(provider_name="deepseek", task_type="code")
     assert fresh.success_rate == 0.75

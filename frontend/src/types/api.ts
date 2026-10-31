@@ -98,6 +98,8 @@ export interface TaskLog {
   created_at: string
   /** True when a thumbs rating already exists — shows the already-rated UI on load. */
   feedback_given?: boolean
+  /** EXPERIMENTAL: "ml_hybrid" | "rule_based" — which capability source ranked providers. */
+  routing_method?: string
 }
 
 // --------------------------------------------------------------------------

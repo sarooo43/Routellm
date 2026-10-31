@@ -298,6 +298,19 @@ function ExplorerRow({
                       <span className="tabular-nums text-text-primary">
                         {log.confidence_score.toFixed(3)}
                       </span>
+                      {log.routing_method && (
+                        <span
+                          className={`ml-2 inline-flex items-center rounded-md border px-2 py-0.5 normal-case tracking-normal text-[11px] ${
+                            log.routing_method === 'ml_hybrid'
+                              ? 'border-purple-400/40 text-purple-300 bg-purple-400/10'
+                              : 'border-border text-text-secondary bg-white/[0.03]'
+                          }`}
+                        >
+                          {log.routing_method === 'ml_hybrid'
+                            ? '🧠 ML-Assisted'
+                            : '📋 Rule-Based'}
+                        </span>
+                      )}
                     </p>
                     <div className="h-2 w-full max-w-sm rounded-full bg-white/5 overflow-hidden">
                       <motion.div

@@ -29,6 +29,9 @@ class TaskLog(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(JSON),
     )
+    # EXPERIMENTAL transparency: "ml_hybrid" | "rule_based" — which
+    # capability source ranked the providers. Default keeps old rows valid.
+    routing_method: str = "rule_based"
     created_at: datetime = Field(
         default_factory=utcnow,
         sa_column=Column(DateTime(timezone=True), index=True),

@@ -25,6 +25,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("database_init_failed", error=str(e))
             raise
+
+    # EXPERIMENTAL ML routing: eagerly warm the model at startup ONLY when
+    # the flag is on, so the expensive sentence-transformer load never adds
+    # latency to a live request. If the model file doesn't exist this logs
+    # and the system quietly stays rule-based.
+    if settings.ENABLE_ML_ROUTING:
+        from app.core.ml_classifier import get_router_classifier
+
+        classifier = get_router_classifier()
+        logger.info(
+            "ml_routing_startup_probe",
+            flag_enabled=True,
+            model_usable=classifier.is_loaded,
+        )
     yield
     logger.info("RouteLLM backend shutting down...")
 

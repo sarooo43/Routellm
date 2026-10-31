@@ -86,7 +86,10 @@ async def test_post_route_success_exact_shape(client, install_stubs):
         "tokens_used",
         "request_id",
         "error",
+        "routing_method",
     }
+    # ML routing flag defaults to off → v1 rule-based label.
+    assert data["routing_method"] == "rule_based"
     assert data["success"] is True
     assert data["result"] == "Hello!"
     assert data["model_used"] == "groq"
