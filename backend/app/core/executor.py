@@ -14,7 +14,7 @@ from typing import Optional
 
 import redis.asyncio as redis_async
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -23,7 +23,7 @@ from app.core.chaos import ChaosController
 from app.core.classifier import classify_task
 from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import ModelStats, rank_models
-from app.models import ModelStatsDB, TaskLog, UsageTracking
+from app.models import Feedback, ModelStatsDB, TaskLog, UsageTracking
 from app.providers.base import ProviderResponse
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
@@ -114,6 +114,27 @@ async def _build_stats_snapshot(
                 error=str(e),
             )
 
+    # ---- Human feedback aggregate (thumbs up/down) per provider/task ----
+    # Sparse by nature (most requests are never rated) but still a genuine
+    # quality signal: populated onto ModelStats so the scorer's
+    # feedback_adjusted_success_rate can blend it with the API success rate.
+    feedback_counts: dict[tuple[str, str], int] = {}
+    if db_session is not None:
+        try:
+            stmt = (
+                select(Feedback.provider_name, Feedback.rating, func.count(Feedback.id))
+                .where(Feedback.task_type == task_type)
+                .group_by(Feedback.provider_name, Feedback.rating)
+            )
+            for provider_name, rating, count in (await db_session.execute(stmt)).all():
+                feedback_counts[(provider_name, rating)] = int(count)
+        except Exception as e:
+            logger.warning(
+                "feedback_query_failed_using_zero_defaults",
+                task_type=task_type,
+                error=str(e),
+            )
+
     for provider_name in PROVIDER_REGISTRY:
         try:
             state = await circuit_breaker.get_state(provider_name)
@@ -134,6 +155,12 @@ async def _build_stats_snapshot(
                 successful_requests=row.successful_requests,
                 avg_latency_ms=row.avg_latency_ms,
                 circuit_state=state,
+                positive_feedback_count=feedback_counts.get(
+                    (provider_name, "positive"), 0
+                ),
+                negative_feedback_count=feedback_counts.get(
+                    (provider_name, "negative"), 0
+                ),
             )
         else:
             # No history yet for this provider/task pair: optimistic defaults
@@ -144,6 +171,12 @@ async def _build_stats_snapshot(
                 total_requests=0,
                 successful_requests=0,
                 circuit_state=state,
+                positive_feedback_count=feedback_counts.get(
+                    (provider_name, "positive"), 0
+                ),
+                negative_feedback_count=feedback_counts.get(
+                    (provider_name, "negative"), 0
+                ),
             )
     return snapshot
 

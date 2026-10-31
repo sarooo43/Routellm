@@ -36,7 +36,7 @@ from app.core.chaos import ChaosController
 from app.core.scorer import COST_PER_1K_TOKENS
 from app.api.chaos_routes import chaos_router
 from app.db.session import get_session
-from app.models import ModelStatsDB, TaskLog
+from app.models import Feedback, ModelStatsDB, TaskLog
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
 
@@ -169,11 +169,37 @@ class TaskLogResponse(BaseModel):
     error_message: Optional[str] = None
     fallback_chain: list
     created_at: datetime
+    # True when a thumbs rating already exists for this request — lets the
+    # UI render the already-rated state on load without a failed API call.
+    feedback_given: bool = False
 
 
 class LogsResponse(BaseModel):
     total: int
     logs: list[TaskLogResponse]
+
+
+class FeedbackRequest(BaseModel):
+    request_id: str
+    rating: str  # must be "positive" or "negative"
+
+
+class FeedbackResponse(BaseModel):
+    status: str
+    request_id: str
+
+
+class FeedbackCounts(BaseModel):
+    positive: int
+    negative: int
+    positive_rate: float
+
+
+class FeedbackSummaryResponse(BaseModel):
+    total_rated: int
+    positive_rate: float
+    by_provider: dict[str, FeedbackCounts]
+    by_task_type: dict[str, FeedbackCounts]
 
 
 class AnalyticsResponse(BaseModel):
@@ -362,9 +388,28 @@ async def get_logs(
             stmt = stmt.where(*conditions)
         rows = (await db_session.execute(stmt)).scalars().all()
 
+        # Which of these (paginated) rows already carry a thumbs rating —
+        # one lightweight query instead of one per row.
+        rated_ids: set[str] = set()
+        if rows:
+            page_ids = [log.request_id for log in rows]
+            rated_stmt = select(Feedback.request_id).where(
+                Feedback.request_id.in_(page_ids)
+            )
+            rated_ids = set(
+                (await db_session.execute(rated_stmt)).scalars().all()
+            )
+
+        log_responses = [
+            TaskLogResponse.model_validate(log, from_attributes=True).model_copy(
+                update={"feedback_given": log.request_id in rated_ids}
+            )
+            for log in rows
+        ]
+
         return LogsResponse(
             total=int(total),
-            logs=[TaskLogResponse.model_validate(row, from_attributes=True) for row in rows],
+            logs=log_responses,
         )
     except Exception as e:
         logger.error("logs_endpoint_unexpected_error", error=str(e))
@@ -451,6 +496,156 @@ async def get_analytics(db_session: AsyncSession = Depends(get_session)):
         )
     except Exception as e:
         logger.error("analytics_endpoint_unexpected_error", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# --------------------------------------------------------------------------
+# POST /api/v1/feedback — human thumbs rating on a single routed response.
+# --------------------------------------------------------------------------
+
+VALID_RATINGS = {"positive", "negative"}
+
+
+@router.post("/feedback", response_model=FeedbackResponse, status_code=201)
+async def submit_feedback(
+    body: FeedbackRequest,
+    db_session: AsyncSession = Depends(get_session),
+):
+    try:
+        if body.rating not in VALID_RATINGS:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "rating must be 'positive' or 'negative'"},
+            )
+
+        log = (
+            await db_session.execute(
+                select(TaskLog).where(TaskLog.request_id == body.request_id)
+            )
+        ).scalars().first()
+        if log is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"unknown request_id '{body.request_id}'"},
+            )
+        if log.status == "failed" or not log.selected_model:
+            # No successful model → no response text exists to judge.
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": "cannot rate a failed request — no response was produced"
+                },
+            )
+
+        existing = (
+            await db_session.execute(
+                select(Feedback).where(Feedback.request_id == body.request_id)
+            )
+        ).scalars().first()
+        if existing is not None:
+            # One rating per request — reject instead of silently overwriting.
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "feedback already exists for this request_id"},
+            )
+
+        db_session.add(
+            Feedback(
+                request_id=log.request_id,
+                provider_name=log.selected_model,
+                task_type=log.task_type,
+                rating=body.rating,
+            )
+        )
+        await db_session.commit()
+        logger.info(
+            "feedback_recorded",
+            request_id=body.request_id,
+            rating=body.rating,
+            provider=log.selected_model,
+            task_type=log.task_type,
+        )
+        return FeedbackResponse(status="recorded", request_id=body.request_id)
+    except Exception as e:
+        logger.error("feedback_endpoint_unexpected_error", error=str(e))
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# --------------------------------------------------------------------------
+# GET /api/v1/feedback/summary — aggregate thumbs stats for the dashboard.
+# --------------------------------------------------------------------------
+
+
+def _counts_block(rows) -> dict[str, FeedbackCounts]:
+    """Rows of (key, rating, count) → {key: {positive, negative, positive_rate}}."""
+    out: dict[str, dict[str, int]] = {}
+    for key, rating, count in rows:
+        bucket = out.setdefault(str(key), {"positive": 0, "negative": 0})
+        if rating == "positive":
+            bucket["positive"] += int(count)
+        elif rating == "negative":
+            bucket["negative"] += int(count)
+    return {
+        key: FeedbackCounts(
+            positive=v["positive"],
+            negative=v["negative"],
+            positive_rate=(
+                round(v["positive"] / (v["positive"] + v["negative"]), 4)
+                if (v["positive"] + v["negative"]) > 0
+                else 0.0
+            ),
+        )
+        for key, v in sorted(out.items())
+    }
+
+
+@router.get("/feedback/summary", response_model=FeedbackSummaryResponse)
+async def get_feedback_summary(db_session: AsyncSession = Depends(get_session)):
+    try:
+        total_rated = int(
+            (await db_session.execute(select(func.count(Feedback.id)))).scalar_one()
+        )
+        if total_rated == 0:
+            return FeedbackSummaryResponse(
+                total_rated=0,
+                positive_rate=0.0,
+                by_provider={},
+                by_task_type={},
+            )
+
+        positive_total = int(
+            (
+                await db_session.execute(
+                    select(func.count(Feedback.id)).where(
+                        Feedback.rating == "positive"
+                    )
+                )
+            ).scalar_one()
+        )
+
+        provider_rows = (
+            await db_session.execute(
+                select(
+                    Feedback.provider_name, Feedback.rating, func.count(Feedback.id)
+                ).group_by(Feedback.provider_name, Feedback.rating)
+            )
+        ).all()
+        task_rows = (
+            await db_session.execute(
+                select(
+                    Feedback.task_type, Feedback.rating, func.count(Feedback.id)
+                ).group_by(Feedback.task_type, Feedback.rating)
+            )
+        ).all()
+
+        return FeedbackSummaryResponse(
+            total_rated=total_rated,
+            positive_rate=round(positive_total / total_rated, 4),
+            by_provider=_counts_block(provider_rows),
+            by_task_type=_counts_block(task_rows),
+        )
+    except Exception as e:
+        logger.error("feedback_summary_endpoint_unexpected_error", error=str(e))
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 

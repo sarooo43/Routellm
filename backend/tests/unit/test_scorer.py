@@ -134,6 +134,114 @@ def test_confidence_score_formula_exact():
     assert ranked[0].confidence_score == 0.4
 
 
+# --------------------------------------------------------------------------
+# Feedback blending (confidence-weighted) and its effect on ranking
+# --------------------------------------------------------------------------
+
+
+def test_zero_feedback_feedback_adjusted_rate_equals_raw_success_rate():
+    stats = ModelStats(
+        provider_name="groq",
+        task_type="summarization",
+        total_requests=10,
+        successful_requests=9,  # raw 0.9
+        positive_feedback_count=0,
+        negative_feedback_count=0,
+    )
+    assert stats.feedback_adjusted_success_rate == stats.success_rate == 0.9
+
+
+def test_small_feedback_sample_is_dampened_toward_raw_rate():
+    # 2 ratings (1 positive, 1 negative → feedback_rate 0.5), raw rate 0.9.
+    # weight = min(0.5, 2/20) = 0.1 → tiny shift toward feedback, NOT 50/50.
+    stats = ModelStats(
+        provider_name="groq",
+        task_type="summarization",
+        total_requests=10,
+        successful_requests=9,
+        positive_feedback_count=1,
+        negative_feedback_count=1,
+    )
+    expected = (1 - 0.1) * 0.9 + 0.1 * 0.5
+    assert stats.feedback_adjusted_success_rate == pytest.approx(expected)
+    # The dampening actually matters: the blended value is much closer to
+    # the raw rate than to the small-sample feedback rate.
+    assert abs(stats.feedback_adjusted_success_rate - 0.9) < 0.04
+
+
+def test_at_least_ten_ratings_hits_50_50_weight_cap_and_stays_there():
+    # weight: min(0.5, total/20) — at exactly 10 ratings total/20 == 0.5.
+    stats = ModelStats(
+        provider_name="gemini",
+        task_type="summarization",
+        total_requests=10,
+        successful_requests=10,  # raw 1.0
+        positive_feedback_count=10,
+        negative_feedback_count=10,  # feedback_rate 0.5, total 20 ≥ cap
+    )
+    expected = 0.5 * 1.0 + 0.5 * 0.5  # capped: exactly 50/50, not more
+    assert stats.feedback_adjusted_success_rate == pytest.approx(expected)
+
+
+def test_massive_negative_feedback_still_capped_at_half_influence():
+    # 1000 ratings: weight still 0.5 (cap), so 100% negative feedback can
+    # only pull an otherwise-perfect rate down to 0.5 — never fully zeros it.
+    stats = ModelStats(
+        provider_name="gemini",
+        task_type="summarization",
+        total_requests=100,
+        successful_requests=100,
+        positive_feedback_count=0,
+        negative_feedback_count=1000,
+    )
+    assert stats.feedback_adjusted_success_rate == pytest.approx(0.5)
+
+
+def test_feedback_ranks_provider_below_identical_peer_with_positive_feedback():
+    """The core value proposition: feedback alone reorders the ranking.
+
+    Two providers with IDENTICAL raw API stats and capability ("general"
+    weights both gemini and groq at 0.9) — the only differing signal is
+    human feedback. The negatively-rated one must rank lower even though
+    its raw API success rate is perfect.
+    """
+    base = dict(
+        task_type="general",
+        total_requests=10,
+        successful_requests=10,  # both raw success_rate = 1.0
+        avg_latency_ms=100.0,
+    )
+    stats = {
+        "gemini": ModelStats(
+            provider_name="gemini",
+            positive_feedback_count=10,
+            negative_feedback_count=10,  # adjusted rate → 0.75
+            **base,
+        ),
+        "groq": ModelStats(
+            provider_name="groq",
+            positive_feedback_count=20,
+            negative_feedback_count=0,  # adjusted rate → 1.0
+            **base,
+        ),
+    }
+    ranked = rank_models("general", ["groq", "gemini"], stats)
+
+    assert ranked[0].provider_name == "groq"
+    assert ranked[1].provider_name == "gemini"
+    assert ranked[0].score > ranked[1].score
+    # And the negative-feedback provider's confidence is genuinely lower:
+    assert ranked[1].confidence_score < ranked[0].confidence_score
+
+
+def test_feedback_zero_totals_in_stats_dict_do_not_crash_ranking():
+    ranked = rank_models("summarization", ["gemini"], {"gemini": ModelStats(
+        provider_name="gemini", task_type="summarization"
+    )})
+    # No feedback + no history → optimistic default, exactly as before this phase.
+    assert ranked[0].confidence_score == round(0.75 * 1.0, 3)
+
+
 def test_brand_new_provider_gets_optimistic_default():
     fresh = ModelStats(provider_name="deepseek", task_type="code")
     assert fresh.success_rate == 0.75

@@ -5,6 +5,9 @@ import type {
   ChaosClearResponse,
   ChaosInjectRequest,
   ChaosInjectResponse,
+  FeedbackRequest,
+  FeedbackResponse,
+  FeedbackSummary,
   LogsQuery,
   LogsResponse,
   ModelsResponse,
@@ -49,5 +52,18 @@ export async function injectChaos(payload: ChaosInjectRequest): Promise<ChaosInj
 
 export async function clearChaos(payload: ChaosClearRequest): Promise<ChaosClearResponse> {
   const { data } = await api.post<ChaosClearResponse>('/api/v1/admin/chaos/clear', payload)
+  return data
+}
+
+// Human thumbs rating on a routed response. The backend rejects duplicates
+// with 409 (one rating per request_id) — callers should render already-rated
+// state using TaskLog.feedback_given instead of clicking twice.
+export async function postFeedback(payload: FeedbackRequest): Promise<FeedbackResponse> {
+  const { data } = await api.post<FeedbackResponse>('/api/v1/feedback', payload)
+  return data
+}
+
+export async function getFeedbackSummary(): Promise<FeedbackSummary> {
+  const { data } = await api.get<FeedbackSummary>('/api/v1/feedback/summary')
   return data
 }

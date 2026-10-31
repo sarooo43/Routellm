@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -12,8 +12,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { getFeedbackSummary } from '../api/client'
 import { GlassCard } from '../components/GlassCard'
 import { useAppStore } from '../store/useAppStore'
+import type { FeedbackSummary } from '../types/api'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -48,12 +50,31 @@ const axisTick = { fontSize: 11, fill: '#A0A0A0' }
 export function Analytics() {
   const analytics = useAppStore((state) => state.analytics)
   const fetchAnalytics = useAppStore((state) => state.fetchAnalytics)
+  const [feedback, setFeedback] = useState<FeedbackSummary | null>(null)
 
   useEffect(() => {
     fetchAnalytics()
     const interval = setInterval(fetchAnalytics, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [fetchAnalytics])
+
+  useEffect(() => {
+    let cancelled = false
+    const pull = async () => {
+      try {
+        const summary = await getFeedbackSummary()
+        if (!cancelled) setFeedback(summary)
+      } catch {
+        /* summary is a nice-to-have; keep the page usable without it */
+      }
+    }
+    pull()
+    const interval = setInterval(pull, POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
 
   const perDay = analytics?.requests_per_day ?? []
   const breakdown = Object.entries(analytics?.model_usage_breakdown ?? {}).map(
@@ -171,6 +192,77 @@ export function Analytics() {
           </GlassCard>
         </motion.div>
       </div>
+
+      <FeedbackQuality summary={feedback} />
     </div>
+  )
+}
+
+/**
+ * Human thumbs quality — overall positive rate plus a small per-provider
+ * horizontal bar breakdown. Bars reuse the provider colors of the usage
+ * pie so the sections read as one dashboard.
+ */
+function FeedbackQuality({ summary }: { summary: FeedbackSummary | null }) {
+  const byProvider = Object.entries(summary?.by_provider ?? {})
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, ease: 'easeOut', delay: 0.16 }}
+    >
+      <GlassCard hoverable={false}>
+        <div className="flex items-baseline justify-between mb-4">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-text-secondary">
+            Feedback quality
+          </h3>
+          <span className="text-xs text-text-secondary">
+            <span className="tabular-nums text-text-primary font-medium">
+              {summary?.total_rated ?? 0}
+            </span>{' '}
+            rated ·{' '}
+            <span
+              className="tabular-nums font-medium"
+              style={{ color: (summary?.positive_rate ?? 0) >= 0.7 ? '#3DDC97' : '#F5A623' }}
+            >
+              {Math.round((summary?.positive_rate ?? 0) * 100)}%
+            </span>{' '}
+            positive
+          </span>
+        </div>
+
+        {byProvider.length === 0 ? (
+          <p className="text-sm text-text-secondary/70 py-6 text-center">
+            No responses rated yet — rate one from the Routing Explorer (expand a
+            successful request).
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {byProvider.map(([provider, counts]) => (
+              <div key={provider} className="flex items-center gap-3">
+                <span className="w-20 text-xs text-text-secondary capitalize">{provider}</span>
+                <div className="flex-1 h-2.5 rounded-full bg-white/5 overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full"
+                    style={{ backgroundColor: MODEL_COLORS[provider] ?? '#A0A0A0' }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${counts.positive_rate * 100}%` }}
+                    transition={{ duration: 0.7, ease: 'easeOut' }}
+                  />
+                </div>
+                <span className="w-24 text-right text-xs tabular-nums text-text-secondary">
+                  {Math.round(counts.positive_rate * 100)}% pos
+                  <span className="text-text-secondary/60">
+                    {' '}
+                    ({counts.positive}/{counts.negative})
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+    </motion.div>
   )
 }

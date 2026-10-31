@@ -53,12 +53,47 @@ class ModelStats(BaseModel):
     successful_requests: int = 0
     avg_latency_ms: float = 0.0
     circuit_state: str = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+    # Human quality signal (thumbs up/down), ALWAYS sparse: most requests
+    # never get rated, while API success/failure is tracked on every call.
+    positive_feedback_count: int = 0
+    negative_feedback_count: int = 0
 
     @property
     def success_rate(self) -> float:
         if self.total_requests == 0:
             return 0.75  # optimistic default for brand-new models with no history
         return self.successful_requests / self.total_requests
+
+    @property
+    def feedback_adjusted_success_rate(self) -> float:
+        """Blends raw API success_rate with human feedback.
+
+        The two signals have wildly different sample sizes (every request
+        has an API outcome; only a small fraction ever gets a thumbs
+        rating), so feedback is blended using a confidence weight that
+        grows with feedback volume:
+
+        - 0 feedback → pure API success_rate, untouched.
+        - The weight rises linearly with the number of ratings but is
+          CAPPED at 0.5, so feedback can never fully override the much
+          larger sample of raw API outcomes — even with hundreds of
+          ratings, the effective rate stays at most 50% feedback-informed.
+        """
+        total_feedback = self.positive_feedback_count + self.negative_feedback_count
+        if total_feedback == 0:
+            return self.success_rate  # no feedback yet, pure API-based rate
+
+        feedback_rate = self.positive_feedback_count / total_feedback
+
+        # Confidence weight grows with feedback volume, capped at 0.5 —
+        # feedback can shift the score by at most 50%, never fully override
+        # the much larger sample of raw API outcomes.
+        feedback_weight = min(0.5, total_feedback / 20)
+
+        return (
+            (1 - feedback_weight) * self.success_rate
+            + feedback_weight * feedback_rate
+        )
 
 
 class RankedModel(BaseModel):
@@ -112,7 +147,10 @@ def _score_provider(
     capability_match = CAPABILITY_MATCH.get(task_type, {}).get(
         provider_name, UNMATCHED_CAPABILITY_DEFAULT
     )
-    success_rate = provider_stats.success_rate
+    # Feedback-adjusted, NOT raw: a provider getting consistent thumbs-down
+    # on a task type ranks lower for that task type even if its raw API
+    # success rate (no errors) looks fine.
+    success_rate = provider_stats.feedback_adjusted_success_rate
     cost_score = 1.0 - normalize_cost(provider_name)
     latency_score = 1.0 - normalize_latency(
         provider_name,

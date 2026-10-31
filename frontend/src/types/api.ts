@@ -96,6 +96,37 @@ export interface TaskLog {
   error_message: string | null
   fallback_chain: FallbackChainEntry[]
   created_at: string
+  /** True when a thumbs rating already exists — shows the already-rated UI on load. */
+  feedback_given?: boolean
+}
+
+// --------------------------------------------------------------------------
+// Human feedback (thumbs quality signal)
+// --------------------------------------------------------------------------
+
+export type FeedbackRating = 'positive' | 'negative'
+
+export interface FeedbackRequest {
+  request_id: string
+  rating: FeedbackRating
+}
+
+export interface FeedbackResponse {
+  status: string
+  request_id: string
+}
+
+export interface FeedbackCounts {
+  positive: number
+  negative: number
+  positive_rate: number
+}
+
+export interface FeedbackSummary {
+  total_rated: number
+  positive_rate: number
+  by_provider: Record<string, FeedbackCounts>
+  by_task_type: Record<string, FeedbackCounts>
 }
 
 export interface LogsResponse {

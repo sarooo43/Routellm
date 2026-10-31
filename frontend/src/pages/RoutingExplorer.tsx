@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { postFeedback } from '../api/client'
 import { FallbackChainGraph } from '../components/FallbackChainGraph'
 import { relativeTime } from '../lib/format'
 import { useAppStore } from '../store/useAppStore'
-import type { TaskLog } from '../types/api'
+import type { FeedbackRating, TaskLog } from '../types/api'
 
 const PAGE_SIZE = 10
 
@@ -15,6 +16,82 @@ function confidenceColor(score: number): string {
   if (score >= 0.7) return '#3DDC97'
   if (score >= 0.4) return '#F5A623'
   return '#FF4D4D'
+}
+
+type FeedbackState = 'idle' | 'sending' | 'done' | 'error'
+
+/**
+ * Thumbs quality widget for a single routed response. Only rendered for
+ * successful requests — there is no response text to judge on failures.
+ * `feedback_given` (from GET /logs) renders the already-rated state on load
+ * so no duplicate submission ever hits the API.
+ */
+function FeedbackWidget({ log }: { log: TaskLog }) {
+  const [state, setState] = useState<FeedbackState>(
+    log.feedback_given ? 'done' : 'idle',
+  )
+  const [error, setError] = useState<string | null>(null)
+
+  if (log.status !== 'success') return null
+
+  const submit = async (rating: FeedbackRating) => {
+    setState('sending')
+    setError(null)
+    try {
+      await postFeedback({ request_id: log.request_id, rating })
+      setState('done')
+    } catch {
+      // 409 duplicates (double-click races) also land here; show a
+      // non-fatal hint rather than breaking the expanded row.
+      setState('error')
+      setError('Feedback could not be saved (it may already exist).')
+    }
+  }
+
+  if (state === 'done') {
+    return (
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+        className="text-xs text-success"
+        data-testid="feedback-thanks"
+      >
+        Thanks for your feedback
+      </motion.p>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] uppercase tracking-widest text-text-secondary">
+        Was this response useful?
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          data-testid="feedback-up"
+          aria-label="Rate positive"
+          disabled={state === 'sending'}
+          onClick={() => submit('positive')}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:border-success hover:text-success disabled:opacity-40 transition-colors"
+        >
+          <ThumbsUp size={14} /> 👍
+        </button>
+        <button
+          type="button"
+          data-testid="feedback-down"
+          aria-label="Rate negative"
+          disabled={state === 'sending'}
+          onClick={() => submit('negative')}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary hover:border-danger hover:text-danger disabled:opacity-40 transition-colors"
+        >
+          <ThumbsDown size={14} /> 👎
+        </button>
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
+    </div>
+  )
 }
 
 const selectClasses =
@@ -242,6 +319,8 @@ function ExplorerRow({
                       </span>
                     </p>
                   )}
+
+                  <FeedbackWidget log={log} />
                 </div>
               </motion.div>
             )}
