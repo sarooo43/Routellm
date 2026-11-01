@@ -534,7 +534,12 @@ Cloudflare build settings:
 |---|---|
 | Root directory | `/` |
 | Build command | `npm run build` |
-| Deploy command | `npx wrangler deploy` |
+| Deploy command | `npm run deploy` |
+
+`npm run deploy` explicitly uses `wrangler.jsonc`, preserves dashboard
+variables/secrets (`--keep-vars`), and disables Wrangler autoconfig. The config
+pins a stable compatibility date (`2025-09-01`) so Cloudflare cannot reject a
+local "today" date as future (error 10021).
 
 Set the Worker variable/secret:
 

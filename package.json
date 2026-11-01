@@ -14,8 +14,9 @@
     "test": "npm run test --workspace frontend",
     "test:watch": "npm run test:watch --workspace frontend",
     "preview": "npm run preview --workspace frontend",
-    "deploy": "wrangler deploy",
-    "deploy:dry-run": "wrangler deploy --dry-run"
+    "deploy": "wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig",
+    "deploy:dry-run": "wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig --dry-run",
+    "test:cloudflare": "node --test cloudflare/*.test.js"
   },
   "devDependencies": {
     "wrangler": "^4.156.0"

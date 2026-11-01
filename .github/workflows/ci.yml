@@ -52,6 +52,29 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
         run: pytest --cov=app --cov-report=term-missing
 
+  cloudflare-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.2"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace dependencies
+        run: npm ci --include=dev
+
+      - name: Test Cloudflare Worker and config
+        run: npm run test:cloudflare
+
+      - name: Build dashboard
+        run: npm run build
+
+      - name: Validate Wrangler deploy config
+        run: npm run deploy:dry-run
+
   frontend-tests:
     runs-on: ubuntu-latest
     defaults:
