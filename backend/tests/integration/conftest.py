@@ -113,6 +113,36 @@ def expected_ranking(task_type: str, weights: dict | None = None) -> list[str]:
     return [r.provider_name for r in ranked]
 
 
+@pytest.fixture(autouse=True)
+async def _reset_cached_db_engine():
+    """Reset the module-level engine/session-maker cache around every test.
+
+    The /health probe (app.api.routes._health_components) uses the GLOBAL
+    app.db.session.get_session_maker(), not the per-test get_session override.
+    When DATABASE_URL is set (CI runs against real Postgres via asyncpg), the
+    first /health call caches an engine whose connection pool is bound to that
+    test's event loop. pytest-asyncio gives each test a fresh loop, so a later
+    /health call reuses the stale pool and asyncpg raises "attached to a
+    different loop" -> health reports database down -> 503 instead of 200.
+
+    Disposing and clearing the cache per test forces a fresh engine on the
+    current loop. Locally (no DATABASE_URL) this is a harmless no-op.
+    """
+    from app.db import session as db_session_module
+
+    async def _reset():
+        if db_session_module._engine is not None:
+            await db_session_module._engine.dispose()
+        db_session_module._engine = None
+        db_session_module._session_maker = None
+
+    await _reset()
+    try:
+        yield
+    finally:
+        await _reset()
+
+
 @pytest.fixture
 async def redis_client():
     client = FakeAsyncRedis(decode_responses=True)
