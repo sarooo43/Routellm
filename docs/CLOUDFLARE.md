@@ -18,11 +18,15 @@ sh: 1: tsc: not found
 ```
 
 happened because Cloudflare installed dependencies at the repository root, while
-the TypeScript/Vite dependencies live in `frontend/`. The root build script now
-installs `frontend/` dependencies before building:
+the TypeScript/Vite dependencies live in `frontend/`.
+
+The repo now uses an npm workspace so Cloudflare's root `npm clean-install`
+installs both Wrangler and the frontend dependencies in one pass. The root build
+script no longer runs a nested `npm ci`, which can hang in CI build environments:
 
 ```json
-"build": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build"
+"workspaces": ["frontend"],
+"build": "npm run build --workspace frontend"
 ```
 
 ---
@@ -74,13 +78,25 @@ The repo includes:
 
 If you are deploying from GitHub, make sure the branch Cloudflare builds contains
 these files. If Cloudflare is still building an older commit, the old root
-`package.json` will still fail with `tsc: not found`.
+`package.json` may fail with `tsc: not found` or hang while running a nested
+`npm --prefix frontend ci`.
 
-Temporary build-command workaround for an older commit:
+For the current workspace-based repo, the build command is simply:
 
 ```bash
-npm --prefix frontend ci --include=dev && npm --prefix frontend run build
+npm run build
 ```
+
+Do not add a nested `npm ci` to the Cloudflare build command. Cloudflare already
+runs `npm clean-install` at the root before the build command.
+
+If a previous build is stuck:
+
+1. Cancel the stuck Cloudflare build.
+2. Make sure the deployed branch includes the workspace `package.json` and root
+   `package-lock.json`.
+3. Retry the build with cache cleared if Cloudflare offers that option.
+4. Keep the deploy command as `npx wrangler deploy`.
 
 ---
 

@@ -544,8 +544,10 @@ ROUTELLM_API_ORIGIN=https://api.example.com
 
 Full guide: [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md).
 
-The root build script installs `frontend/` dependencies before running
-`tsc && vite build`, fixing Cloudflare failures like `sh: 1: tsc: not found`.
+The repo uses an npm workspace so Cloudflare's root install includes the
+`frontend/` dependencies. The root build runs `tsc && vite build` in the
+workspace without a nested `npm ci`, fixing Cloudflare failures like
+`sh: 1: tsc: not found` and CI hangs during nested installs.
 
 ## Production notes (deliberate MVP simplifications)
 
