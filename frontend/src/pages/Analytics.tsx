@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import { getFeedbackSummary } from '../api/client'
 import { GlassCard } from '../components/GlassCard'
+import { PageHeader } from '../components/PageHeader'
 import { useAppStore } from '../store/useAppStore'
 import type { FeedbackSummary } from '../types/api'
 
@@ -83,12 +84,11 @@ export function Analytics() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Analytics</h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          Traffic and routing mix over time — polls every 5 seconds.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Insights"
+        title="Analytics"
+        description="Traffic, model mix, and human feedback quality — refreshed every 5 seconds."
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <motion.div
@@ -97,7 +97,7 @@ export function Analytics() {
           transition={{ duration: 0.45, ease: 'easeOut' }}
           className="lg:col-span-3"
         >
-          <GlassCard hoverable={false}>
+          <GlassCard hoverable={false} className="h-full">
             <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-text-secondary mb-4">
               Requests per day (14d)
             </h3>
@@ -145,7 +145,7 @@ export function Analytics() {
           transition={{ duration: 0.45, ease: 'easeOut', delay: 0.08 }}
           className="lg:col-span-2"
         >
-          <GlassCard hoverable={false}>
+          <GlassCard hoverable={false} className="h-full">
             <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-text-secondary mb-4">
               Model usage mix
             </h3>

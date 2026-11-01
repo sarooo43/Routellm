@@ -30,6 +30,7 @@ backend/scripts/training_data/
 *.log
 .vite/
 node_modules/.vite/
+.wrangler/
 
 # OS noise
 Thumbs.db

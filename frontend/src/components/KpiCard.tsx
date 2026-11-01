@@ -26,35 +26,48 @@ export function KpiCard({
   const displayValue = useCountUp(value)
 
   return (
-    <GlassCard className="!p-5">
-      <div className="flex items-start justify-between gap-4">
+    <GlassCard className="relative h-full overflow-hidden !p-5">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full opacity-[0.07] blur-2xl"
+        style={{ backgroundColor: accentColor }}
+      />
+      <div className="relative flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.18em] text-text-secondary">
-            {label}
-          </p>
-          <p
-            className="mt-2 text-3xl font-semibold tabular-nums truncate"
-            style={{ color: accentColor }}
-          >
+          <p className="rl-eyebrow">{label}</p>
+          <p className="mt-2.5 truncate text-[28px] font-semibold leading-none tracking-tight tabular-nums text-text-primary">
             {format(displayValue)}
           </p>
-          {trend && (
+          {trend ? (
             <p
-              className={`mt-1.5 text-xs font-medium ${
-                trend.direction === 'up' ? 'text-success' : 'text-danger'
+              className={`mt-2.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                trend.direction === 'up'
+                  ? 'bg-success/10 text-success'
+                  : 'bg-danger/10 text-danger'
               }`}
             >
               {trend.direction === 'up' ? '▲' : '▼'} {trend.percent}% vs yesterday
             </p>
+          ) : (
+            <p className="mt-2.5 text-[11px] text-text-secondary/60">Live from routing engine</p>
           )}
         </div>
         <div
-          className="w-9 h-9 shrink-0 rounded-lg border border-border flex items-center justify-center"
-          style={{ color: accentColor, backgroundColor: `${accentColor}1A` }}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border"
+          style={{
+            color: accentColor,
+            backgroundColor: `${accentColor}14`,
+            borderColor: `${accentColor}30`,
+          }}
         >
-          <Icon size={18} />
+          <Icon size={19} aria-hidden="true" />
         </div>
       </div>
+      <div
+        aria-hidden="true"
+        className="absolute bottom-0 left-5 right-5 h-px opacity-40"
+        style={{ background: `linear-gradient(90deg, ${accentColor}, transparent)` }}
+      />
     </GlassCard>
   )
 }

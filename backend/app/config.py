@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
+    # Fernet key used to encrypt per-caller provider API keys (BYOK) at rest.
+    # Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # When unset, provider-key writes and BYOK routing fail closed with 503.
+    PROVIDER_KEY_ENCRYPTION_KEY: Optional[str] = None
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"

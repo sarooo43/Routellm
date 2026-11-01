@@ -1,0 +1,33 @@
+{
+  // Cloudflare Workers deployment for the RouteLLM dashboard + API proxy.
+  //
+  // IMPORTANT: Cloudflare Workers cannot run the Python FastAPI backend,
+  // PostgreSQL, or Redis. Host the backend elsewhere (for example the Caddy
+  // docker-compose deployment) and set ROUTELLM_API_ORIGIN to its HTTPS origin.
+  //
+  //   wrangler secret put ROUTELLM_API_ORIGIN
+  //   # or set a Worker variable in the Cloudflare dashboard:
+  //   # ROUTELLM_API_ORIGIN = https://api.example.com
+  //
+  // The frontend is built with same-origin API calls by default. This Worker
+  // proxies /api/* and /v1/* to ROUTELLM_API_ORIGIN, so browsers/webhooks can
+  // use https://<your-worker-domain>/api/v1/route once the backend is reachable.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "routellm",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-11-02",
+  "assets": {
+    "directory": "./frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/v1/*",
+      "/health",
+      "/docs",
+      "/docs/*",
+      "/openapi.json",
+      "/redoc"
+    ]
+  }
+}

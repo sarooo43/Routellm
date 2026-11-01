@@ -3,8 +3,9 @@
 Runs exactly the production backend, with PROVIDER_REGISTRY entries replaced
 by stubs (no real API keys needed) and a local SQLite file for persistence.
 TaskLogs persist across restarts so the Overview feed has history. Fire
-POST /api/v1/route requests in another terminal and watch the Overview
-live feed / KPI cards update. Delete demo.db to reset.
+POST /api/v1/route requests in another terminal (with an X-API-Key generated
+via POST /api/v1/keys/generate, or let the dashboard create one automatically)
+and watch the Overview live feed / KPI cards update. Delete demo.db to reset.
 
 Usage (from backend/):  & .venv\\Scripts\\python.exe scripts\\demo_server.py
 """

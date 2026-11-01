@@ -25,3 +25,16 @@ export function formatDollars(value: number, decimals = 6): string {
 export function formatCount(value: number): string {
   return value.toLocaleString('en-US')
 }
+
+/** Human-friendly context-window size: 64000 → "64K tokens", 1000000 → "1M tokens". */
+export function formatTokenWindow(value: number): string {
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M tokens`
+  }
+  if (value >= 1_000) {
+    const thousands = value / 1_000
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}K tokens`
+  }
+  return `${value} tokens`
+}

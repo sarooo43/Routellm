@@ -22,8 +22,10 @@ from tests.integration.conftest import StubProvider, fail, ok
 
 
 @pytest.fixture
-async def client(monkeypatch, db_session, breaker, tracker):
+async def client(monkeypatch, db_session, breaker, tracker, redis_client, auth_headers):
     from app.api import routes as routes_module
+    from app.core import executor as executor_module
+    from app.core.chaos import ChaosController
     from app.db.session import get_session
 
     async def _override_session():
@@ -32,9 +34,16 @@ async def client(monkeypatch, db_session, breaker, tracker):
     app.dependency_overrides[get_session] = _override_session
     monkeypatch.setattr(routes_module, "_get_breaker", lambda: breaker)
     monkeypatch.setattr(routes_module, "_get_quota", lambda: tracker)
+    monkeypatch.setattr(
+        executor_module,
+        "_ensure_shared_clients",
+        lambda: (breaker, tracker, ChaosController(redis_client)),
+    )
 
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver", headers=auth_headers
+    ) as ac:
         yield ac
     app.dependency_overrides.clear()
 

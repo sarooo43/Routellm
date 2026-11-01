@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LogsResponse } from '../types/api'
 import { LiveFeedTicker } from './LiveFeedTicker'
@@ -58,7 +59,7 @@ describe('LiveFeedTicker', () => {
   it('renders the most recent log entries from the API', async () => {
     mockGetLogs.mockResolvedValue(FIRST_PAGE)
 
-    render(<LiveFeedTicker />)
+    render(<MemoryRouter><LiveFeedTicker /></MemoryRouter>)
 
     // Initial poll fires immediately on mount.
     await act(async () => {})
@@ -72,7 +73,7 @@ describe('LiveFeedTicker', () => {
   it('renders a genuinely new entry appearing on the next poll without crashing', async () => {
     mockGetLogs.mockResolvedValueOnce(FIRST_PAGE).mockResolvedValue(SECOND_PAGE)
 
-    render(<LiveFeedTicker />)
+    render(<MemoryRouter><LiveFeedTicker /></MemoryRouter>)
     await act(async () => {})
 
     expect(screen.queryByText('summarization')).not.toBeInTheDocument()
@@ -91,7 +92,7 @@ describe('LiveFeedTicker', () => {
   it('keeps the last known items if a poll fails', async () => {
     mockGetLogs.mockResolvedValueOnce(FIRST_PAGE).mockRejectedValue(new Error('down'))
 
-    render(<LiveFeedTicker />)
+    render(<MemoryRouter><LiveFeedTicker /></MemoryRouter>)
     await act(async () => {})
 
     await act(async () => {

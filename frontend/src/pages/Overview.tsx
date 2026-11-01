@@ -1,8 +1,10 @@
 import { motion } from 'framer-motion'
 import { useEffect } from 'react'
-import { Coins, Target, Timer, Zap } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ArrowUpRight, Coins, LibraryBig, Target, Timer, Zap } from 'lucide-react'
 import { KpiCard } from '../components/KpiCard'
 import { LiveFeedTicker } from '../components/LiveFeedTicker'
+import { PageHeader } from '../components/PageHeader'
 import { TryItLive } from '../components/TryItLive'
 import { formatCount, formatDollars, formatMs, formatPercent } from '../lib/format'
 import { useAppStore } from '../store/useAppStore'
@@ -11,12 +13,12 @@ const POLL_INTERVAL_MS = 5000
 
 const containerVariants = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.08 } },
+  show: { transition: { staggerChildren: 0.06 } },
 }
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: 'easeOut' as const } },
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } },
 }
 
 export function Overview() {
@@ -35,18 +37,24 @@ export function Overview() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Overview</h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          Live pulse of your intelligent routing gateway.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Gateway pulse"
+        title="Overview"
+        description="Live routing health, cost efficiency, and every fallback decision — in one place."
+        actions={
+          <Link to="/catalog" className="rl-btn-secondary">
+            <LibraryBig size={15} aria-hidden="true" />
+            Browse catalog
+            <ArrowUpRight size={14} className="text-text-secondary" aria-hidden="true" />
+          </Link>
+        }
+      />
 
       <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
       >
         <motion.div variants={itemVariants}>
           <KpiCard
@@ -87,7 +95,6 @@ export function Overview() {
       </motion.div>
 
       <TryItLive />
-
       <LiveFeedTicker />
     </div>
   )

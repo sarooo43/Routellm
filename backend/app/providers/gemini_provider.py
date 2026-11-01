@@ -20,13 +20,25 @@ class GeminiProvider(ModelProvider):
 
     async def generate(self, prompt: str, **kwargs) -> ProviderResponse:
         model = kwargs.get("model", self.DEFAULT_MODEL)
-        url = f"{self.API_URL}?key={settings.GEMINI_API_KEY}"
+        api_key = kwargs.get("provider_api_key") or settings.GEMINI_API_KEY
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        generation_config = {}
+        if kwargs.get("temperature") is not None:
+            generation_config["temperature"] = kwargs["temperature"]
+        if kwargs.get("max_tokens") is not None:
+            generation_config["maxOutputTokens"] = kwargs["max_tokens"]
+        if generation_config:
+            payload["generationConfig"] = generation_config
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            # Header auth keeps the provider secret out of the request URL.
+            headers["x-goog-api-key"] = api_key
 
         start = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-                response = await client.post(url, json=payload)
+                response = await client.post(self.API_URL, json=payload, headers=headers)
             latency_ms = elapsed_ms(start)
 
             if response.status_code == 429:
@@ -60,6 +72,6 @@ class GeminiProvider(ModelProvider):
             return make_error(
                 self.provider_name,
                 model,
-                f"unexpected_error: {e}",
+                f"unexpected_error: {type(e).__name__}",
                 elapsed_ms(start),
             )

@@ -3,20 +3,40 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --rl-bg: #090a0c;
+    --rl-surface: #121418;
+    --rl-border: rgba(255, 255, 255, 0.07);
+    --rl-accent: #e87722;
+  }
+
   html {
     scroll-behavior: smooth;
-
-    /* Dark UI: keep form fields/scrollbars from falling back to browser white. */
     color-scheme: dark;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
-    @apply bg-background text-text-primary font-sans antialiased;
+    @apply bg-background font-sans text-text-primary antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(232, 119, 34, 0.08), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(212, 175, 55, 0.04), transparent);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgba(232, 119, 34, 0.35);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(232, 119, 34, 0.75);
+    outline-offset: 2px;
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
@@ -26,9 +46,69 @@
   ::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.12);
     border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(232, 119, 34, 0.5);
+    background-clip: padding-box;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .rl-card {
+    @apply rounded-2xl border border-white/[0.07] bg-surface backdrop-blur-xl;
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.03) inset,
+      0 12px 40px -24px rgba(0, 0, 0, 0.8);
+  }
+
+  .rl-input {
+    @apply w-full rounded-xl border border-white/[0.08] bg-black/30 px-4 py-2.5 text-sm text-text-primary outline-none transition placeholder:text-text-secondary/50 focus:border-accent/60 focus:bg-black/40 focus:ring-2 focus:ring-accent/15;
+  }
+
+  .rl-select {
+    @apply rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2 text-sm text-text-primary outline-none transition focus:border-accent/60 focus:ring-2 focus:ring-accent/15;
+  }
+
+  .rl-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#f08a35] to-accent px-4 py-2.5 text-sm font-semibold text-black shadow-lg shadow-accent/20 transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none;
+  }
+
+  .rl-btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-text-primary transition hover:border-accent/35 hover:bg-accent/[0.08] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .rl-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium text-text-secondary transition hover:bg-white/[0.05] hover:text-text-primary active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .rl-eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.22em] text-text-secondary/70;
+  }
+
+  .rl-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em];
   }
 }

@@ -10,9 +10,10 @@ RUN npm ci
 COPY . .
 
 # Vite inlines import.meta.env.VITE_* at BUILD time, so this must be a build
-# arg, not a runtime env. Default points at the host-mapped backend port so
-# the browser (which lives OUTSIDE the Docker network) can reach the API.
-ARG VITE_API_BASE_URL=http://localhost:8000
+# arg, not a runtime env. Default is same-origin (''): nginx proxies /api and
+# /v1 to the backend, and Caddy terminates HTTPS in front. This avoids shipping
+# a bundle that calls http://localhost:8000 from a remote browser.
+ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 RUN npm run build

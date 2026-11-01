@@ -9,7 +9,7 @@ interface GlassCardProps {
   onClick?: () => void
 }
 
-const ACCENT_RGB = '232, 119, 34' // hermes orange #E87722
+const ACCENT_RGB = '232, 119, 34'
 
 export function GlassCard({
   children,
@@ -17,20 +17,22 @@ export function GlassCard({
   hoverable = true,
   onClick,
 }: GlassCardProps) {
+  const hasCustomPadding = /(?:^|\s)p[xytrbl]?-/.test(className)
+
   return (
     <motion.div
       onClick={onClick}
       whileHover={
         hoverable
           ? {
-              scale: 1.02,
-              borderColor: `rgba(${ACCENT_RGB}, 0.35)`,
-              boxShadow: `0 0 32px rgba(${ACCENT_RGB}, 0.15)`,
+              y: -2,
+              borderColor: `rgba(${ACCENT_RGB}, 0.28)`,
+              boxShadow: `0 0 32px rgba(${ACCENT_RGB}, 0.10), 0 16px 40px -28px rgba(0,0,0,0.9)`,
             }
           : undefined
       }
-      transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-      className={`rounded-2xl bg-surface backdrop-blur-xl border border-border p-6 ${className}`}
+      transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+      className={`rl-card ${hasCustomPadding ? '' : 'p-6'} ${className}`}
     >
       {children}
     </motion.div>

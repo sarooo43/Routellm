@@ -1,22 +1,28 @@
 import axios from 'axios'
 import type {
   Analytics,
+  CatalogEntry,
   ChaosClearRequest,
   ChaosClearResponse,
   ChaosInjectRequest,
   ChaosInjectResponse,
+  DeleteProviderKeyResponse,
   FeedbackRequest,
   FeedbackResponse,
   FeedbackSummary,
+  GenerateKeyResponse,
+  KeyUsageResponse,
   LogsQuery,
   LogsResponse,
   ModelsResponse,
+  ProviderKeyStatus,
+  RevokeKeyResponse,
   RouteRequest,
   RouteResponse,
 } from '../types/api'
+import { getActiveKey, markKeyRevoked, saveGeneratedKey } from './keyStorage'
 
-export const API_BASE_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -38,9 +44,103 @@ export async function getAnalytics(): Promise<Analytics> {
   return data
 }
 
-export async function postRoute(payload: RouteRequest): Promise<RouteResponse> {
-  const { data } = await api.post<RouteResponse>('/api/v1/route', payload)
+export async function getCatalog(): Promise<CatalogEntry[]> {
+  const { data } = await api.get<CatalogEntry[]>('/api/v1/catalog')
   return data
+}
+
+export async function generateApiKey(label = 'Unnamed Key'): Promise<GenerateKeyResponse> {
+  const { data } = await api.post<GenerateKeyResponse>('/api/v1/keys/generate', { label })
+  return data
+}
+
+export async function getKeyUsage(apiKey: string): Promise<KeyUsageResponse> {
+  const { data } = await api.get<KeyUsageResponse>('/api/v1/keys/me', {
+    headers: { 'X-API-Key': apiKey },
+  })
+  return data
+}
+
+export async function revokeKey(apiKey: string): Promise<RevokeKeyResponse> {
+  const { data } = await api.delete<RevokeKeyResponse>('/api/v1/keys/me', {
+    headers: { 'X-API-Key': apiKey },
+  })
+  return data
+}
+
+/** List BYOK provider-key status for one RouteLLM caller key (hints only). */
+export async function getProviderKeys(apiKey: string): Promise<ProviderKeyStatus[]> {
+  const { data } = await api.get<ProviderKeyStatus[]>('/api/v1/provider-keys', {
+    headers: { 'X-API-Key': apiKey },
+  })
+  return data
+}
+
+/** Encrypt and store one upstream provider key for the calling RouteLLM key. */
+export async function setProviderKey(
+  apiKey: string,
+  providerName: string,
+  providerApiKey: string,
+): Promise<ProviderKeyStatus> {
+  const { data } = await api.put<ProviderKeyStatus>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}`,
+    { api_key: providerApiKey },
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Remove one caller-scoped upstream provider key. */
+export async function deleteProviderKey(
+  apiKey: string,
+  providerName: string,
+): Promise<DeleteProviderKeyResponse> {
+  const { data } = await api.delete<DeleteProviderKeyResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}`,
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Use the selected local key, or create a demo key automatically on first use. */
+export async function ensureActiveApiKey(): Promise<string> {
+  const active = getActiveKey()
+  if (active) return active.api_key
+  const generated = await generateApiKey('Dashboard demo key')
+  saveGeneratedKey(generated)
+  return generated.api_key
+}
+
+export async function postRoute(payload: RouteRequest): Promise<RouteResponse> {
+  const apiKey = await ensureActiveApiKey()
+  try {
+    const { data } = await api.post<RouteResponse>('/api/v1/route', payload, {
+      headers: { 'X-API-Key': apiKey },
+    })
+    return data
+  } catch (err) {
+    // A key revoked on the server should not permanently break the demo panel.
+    if (isUnauthorized(err)) {
+      const active = getActiveKey()
+      if (active) markKeyRevoked(active.key_prefix)
+      const replacement = await generateApiKey('Dashboard demo key')
+      saveGeneratedKey(replacement)
+      const { data } = await api.post<RouteResponse>('/api/v1/route', payload, {
+        headers: { 'X-API-Key': replacement.api_key },
+      })
+      return data
+    }
+    throw err
+  }
+}
+
+function isUnauthorized(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'response' in err &&
+    (err as { response?: { status?: number } }).response?.status === 401
+  )
 }
 
 // DEV/DEMO ONLY — chaos admin calls. The backend serves these 404-other

@@ -3,6 +3,7 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 httpx
+cryptography
 sqlmodel
 asyncpg
 greenlet
@@ -15,3 +16,5 @@ pytest
 pytest-asyncio
 pytest-cov
 respx
+# Real-SDK compatibility checks (scripts/smoke_openai_sdk.py); not a server dependency.
+openai

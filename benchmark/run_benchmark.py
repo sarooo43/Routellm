@@ -271,12 +271,27 @@ def summarize(rows: list[dict], arm: str) -> dict:
     }
 
 
+async def generate_demo_key(client: httpx.AsyncClient, base_url: str) -> str:
+    """Create a lightweight demo API key for this benchmark run."""
+    resp = await client.post(
+        f"{base_url}/api/v1/keys/generate",
+        json={"label": "RouteLLM benchmark"},
+        timeout=30.0,
+    )
+    if resp.status_code != 201:
+        raise BenchmarkAbort(
+            f"Could not generate a benchmark API key: HTTP {resp.status_code} {resp.text[:120]}"
+        )
+    return resp.json()["api_key"]
+
+
 async def run_arm(
     client: httpx.AsyncClient,
     base_url: str,
     prompts: list[dict],
     arm: str,
     baseline_provider: str,
+    api_key: str,
 ) -> dict:
     props = build_arm_props(prompts, arm, baseline_provider)
     rows: list[dict] = []
@@ -284,7 +299,12 @@ async def run_arm(
     for prompt, prop in zip(prompts, props):
         started = time.perf_counter()
         try:
-            resp = await client.post(f"{base_url}/api/v1/route", json=prop, timeout=120.0)
+            resp = await client.post(
+                f"{base_url}/api/v1/route",
+                json=prop,
+                headers={"X-API-Key": api_key},
+                timeout=120.0,
+            )
             wall_ms = (time.perf_counter() - started) * 1000.0
 
             if resp.status_code == 200:
@@ -338,6 +358,7 @@ async def run_scenario(
 
     async with httpx.AsyncClient() as client:
         await assert_backend_reachable(client, base_url)
+        api_key = await generate_demo_key(client, base_url)
 
         if chaos_scenario:
             # Long TTL covers the whole run; the script still clears it at
@@ -348,7 +369,7 @@ async def run_scenario(
         for arm in ("naive_baseline", "routellm_full"):
             print(f"--- arm: {arm} ---")
             results["runs"].update(
-                {arm: await run_arm(client, base_url, prompts, arm, baseline_provider)}
+                {arm: await run_arm(client, base_url, prompts, arm, baseline_provider, api_key)}
             )
 
         if chaos_scenario:

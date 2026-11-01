@@ -24,7 +24,9 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import require_api_key, require_provider_api_keys
 from app.config import settings
+from app.core.api_key_manager import record_api_key_usage
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.executor import (
     ExecutionResult,
@@ -36,7 +38,7 @@ from app.core.chaos import ChaosController
 from app.core.scorer import COST_PER_1K_TOKENS
 from app.api.chaos_routes import chaos_router
 from app.db.session import get_session
-from app.models import Feedback, ModelStatsDB, TaskLog
+from app.models import ApiKeyDB, Feedback, ModelStatsDB, TaskLog
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
 
@@ -228,6 +230,8 @@ async def route_prompt(
     request: Request,
     body: RouteRequest,
     db_session: AsyncSession = Depends(get_session),
+    api_key: ApiKeyDB = Depends(require_api_key),
+    provider_api_keys: dict[str, str] = Depends(require_provider_api_keys),
 ):
     try:
         start = time.perf_counter()
@@ -246,7 +250,10 @@ async def route_prompt(
             task_type=body.task_type,
             max_fallbacks=body.max_fallbacks,
             force_provider=body.force_provider,
+            provider_api_keys=provider_api_keys,
         )
+        if result.success:
+            await record_api_key_usage(db_session, api_key, result.tokens_used)
         logger.info(
             "route_endpoint_handled",
             request_id=result.request_id,

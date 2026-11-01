@@ -346,6 +346,26 @@ def _deepseek_kwargs(task_type: str) -> dict:
     }
 
 
+def _generation_kwargs(
+    provider_name: str,
+    task_type: str,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+) -> dict:
+    """Forward explicit generation options without changing legacy defaults.
+
+    Legacy /api/v1/route callers supply neither option, so their provider
+    kwargs remain exactly as before. The OpenAI adapter uses this same executor
+    path to honour temperature/max_tokens on both routed and forced calls.
+    """
+    kwargs = _deepseek_kwargs(task_type) if provider_name == "deepseek" else {}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    return kwargs
+
+
 # --------------------------------------------------------------------------
 # Naive single-provider execution (benchmark baseline)
 # --------------------------------------------------------------------------
@@ -359,6 +379,9 @@ async def _execute_forced_single_provider(
     request_id: str,
     start: float,
     chaos: Optional[ChaosController],
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    provider_api_keys: Optional[dict[str, str]] = None,
 ) -> ExecutionResult:
     """The naive alternative RouteLLM is benchmarked against: one hardcoded
     model, zero resilience infrastructure — no scoring/ranking, no quota or
@@ -374,11 +397,27 @@ async def _execute_forced_single_provider(
             f"(known: {sorted(PROVIDER_REGISTRY)})"
         )
 
-    kwargs = _deepseek_kwargs(resolved_task_type) if provider_name == "deepseek" else {}
+    kwargs = _generation_kwargs(provider_name, resolved_task_type, temperature, max_tokens)
+    if provider_api_keys and provider_name in provider_api_keys:
+        kwargs["provider_api_key"] = provider_api_keys[provider_name]
+
+    # BYOK callers may only use providers they configured. A forced provider
+    # without a caller key fails structurally without any upstream call.
+    missing_byok = bool(provider_api_keys) and provider_name not in provider_api_keys
 
     # ---- Chaos gate (DEV/DEMO ONLY): same simulated outage as the full path.
     chaos_injected = False
-    if settings.CHAOS_MODE_ENABLED and await _chaos_active(chaos, provider_name):
+    if missing_byok:
+        response = ProviderResponse(
+            success=False,
+            text="",
+            tokens_used=0,
+            latency_ms=0.0,
+            error="missing_provider_key",
+            provider_name=provider_name,
+            model_name="n/a",
+        )
+    elif settings.CHAOS_MODE_ENABLED and await _chaos_active(chaos, provider_name):
         logger.warning(
             "chaos_failure_injected_forced_provider",
             request_id=request_id,
@@ -473,6 +512,9 @@ async def execute_with_fallback(
     weights: Optional[dict] = None,
     chaos_controller: Optional[ChaosController] = None,
     force_provider: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    provider_api_keys: Optional[dict[str, str]] = None,
 ) -> ExecutionResult:
     """Execute a prompt across ranked providers with automatic fallback.
 
@@ -484,6 +526,14 @@ async def execute_with_fallback(
     force_provider (benchmarks only): skips scoring/ranking and pre-flight
     gating entirely; attempts ONLY that provider with zero fallback — the
     naive "hardcoded single model, no resilience system" baseline.
+
+    temperature/max_tokens are optional pass-through generation settings;
+    leaving them unset preserves each provider's existing defaults.
+
+    provider_api_keys is the calling RouteLLM key's decrypted BYOK mapping.
+    When non-empty, routing is restricted to those providers and each attempt
+    receives its own ``provider_api_key`` kwarg. When empty/None, legacy
+    operator/demo behavior is preserved (providers read settings.*_API_KEY).
     """
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
@@ -506,16 +556,27 @@ async def execute_with_fallback(
             request_id=request_id,
             start=start,
             chaos=chaos,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            provider_api_keys=provider_api_keys,
         )
 
     max_attempts = max(1, max_fallbacks)
 
     routing_method = _routing_method_in_effect()
 
+    # BYOK isolation: a caller that configured provider keys may only route to
+    # those providers. Empty mapping keeps the legacy operator/demo path.
+    candidate_providers = list(PROVIDER_REGISTRY.keys())
+    if provider_api_keys:
+        candidate_providers = [
+            name for name in candidate_providers if name in provider_api_keys
+        ]
+
     stats_snapshot = await _build_stats_snapshot(resolved_task_type, breaker, db_session)
     ranked = rank_models(
         resolved_task_type,
-        list(PROVIDER_REGISTRY.keys()),
+        candidate_providers,
         stats_snapshot,
         weights,
         prompt=prompt,
@@ -596,7 +657,11 @@ async def execute_with_fallback(
         else:
             # ---- Real attempt ----
             provider = PROVIDER_REGISTRY[provider_name]
-            kwargs = _deepseek_kwargs(resolved_task_type) if provider_name == "deepseek" else {}
+            kwargs = _generation_kwargs(
+                provider_name, resolved_task_type, temperature, max_tokens
+            )
+            if provider_api_keys and provider_name in provider_api_keys:
+                kwargs["provider_api_key"] = provider_api_keys[provider_name]
 
             try:
                 response = await provider.generate(prompt, **kwargs)
