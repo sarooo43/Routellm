@@ -15,7 +15,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "routellm",
   "main": "cloudflare/worker.js",
-  "compatibility_date": "2026-11-01",
+  // Pin a stable, historically released Workers runtime behavior set.
+  // Do not bump this to "today": CI clocks/Cloudflare API validation are UTC,
+  // and a local calendar date can accidentally be in the future (error 10021).
+  "compatibility_date": "2025-09-01",
   "assets": {
     "directory": "./frontend/dist",
     "binding": "ASSETS",
@@ -29,5 +32,27 @@
       "/openapi.json",
       "/redoc"
     ]
+  },
+  // Matches the Cloudflare dashboard observability snapshot.
+  // Top-level enabled:false keeps collection off; the nested settings are
+  // retained so a later enablement uses the same sampling/persistence policy.
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true
+    },
+    "issues": {
+      "enabled": true
+    }
   }
 }

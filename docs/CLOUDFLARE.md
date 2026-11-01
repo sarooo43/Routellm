@@ -67,8 +67,18 @@ Use these settings for the Worker deployment:
 |---|---|
 | Root directory | `/` |
 | Build command | `npm run build` |
-| Deploy command | `npx wrangler deploy` |
+| Deploy command | `npm run deploy` |
 | Build output | handled by `wrangler.jsonc` (`frontend/dist`) |
+
+Use `npm run deploy`, not a bare `npx wrangler deploy`. The package script runs:
+
+```bash
+wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig
+```
+
+That makes the repository config explicit, preserves variables/secrets set in the
+Cloudflare dashboard, and prevents Wrangler autoconfig from rewriting the deploy
+setup.
 
 The repo includes:
 
@@ -96,11 +106,70 @@ If a previous build is stuck:
 2. Make sure the deployed branch includes the workspace `package.json` and root
    `package-lock.json`.
 3. Retry the build with cache cleared if Cloudflare offers that option.
-4. Keep the deploy command as `npx wrangler deploy`.
+4. Keep the deploy command as `npm run deploy`.
 
 ---
 
-## 3. Point the Worker at your backend
+## 3. Compatibility date and observability
+
+`wrangler.jsonc` pins:
+
+```jsonc
+"compatibility_date": "2025-09-01"
+```
+
+Do not change this to the current local date. Cloudflare validates compatibility
+dates in UTC, and a date that is already "today" in your timezone can still be in
+the future to the Cloudflare API. That produces:
+
+```text
+Can't set compatibility date in the future ... [code: 10021]
+```
+
+If a new build still reports a different date than `wrangler.jsonc`, Cloudflare is
+not deploying this repository config. Check:
+
+1. The build is using the latest `main` commit.
+2. The Workers Builds **Deploy command** is exactly `npm run deploy`.
+3. The deploy command does not append `--latest` or `--compatibility-date ...`.
+4. If the Worker dashboard exposes a runtime compatibility date, align it with
+   `2025-09-01` as well.
+
+The repo also includes the dashboard observability snapshot:
+
+```jsonc
+"observability": {
+  "enabled": false,
+  "head_sampling_rate": 1,
+  "redact_query_string": false,
+  "logs": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "invocation_logs": true,
+    "persist": true
+  },
+  "traces": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "persist": true
+  },
+  "issues": {
+    "enabled": true
+  }
+}
+```
+
+Top-level `enabled: false` means observability collection remains off, matching
+the dashboard snapshot. The nested log/trace settings are retained so enabling
+observability later uses the same sampling and persistence policy.
+
+"No connected bindings" is not the deploy error. This Worker does not need
+KV/D1/R2 bindings. `ASSETS` is the static-assets binding from `wrangler.jsonc`,
+and `ROUTELLM_API_ORIGIN` is a variable/secret.
+
+---
+
+## 4. Point the Worker at your backend
 
 Set a Worker runtime variable/secret:
 
@@ -155,7 +224,7 @@ If the backend cannot be reached, API paths return `502`:
 
 ---
 
-## 4. Verify the deployed Worker
+## 5. Verify the deployed Worker
 
 After deployment:
 
