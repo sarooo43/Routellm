@@ -157,3 +157,65 @@ export interface LogsQuery {
   task_type?: string | null
   status?: string | null
 }
+
+// --------------------------------------------------------------------------
+// Models Catalog (Phase 15)
+// --------------------------------------------------------------------------
+
+export type Capability = 'code' | 'reasoning' | 'summarization' | 'qa' | 'general'
+export type PricingTier = 'free' | 'cheap' | 'premium'
+
+export interface CatalogEntry {
+  provider_name: string
+  display_name: string
+  description: string
+  context_window: number
+  capabilities: Capability[]
+  pricing_tier: PricingTier
+  cost_per_1k_tokens: number
+  live_success_rate: number
+  avg_latency_ms: number
+  current_status: ProviderStatusValue
+}
+
+// --------------------------------------------------------------------------
+// Lightweight API keys (Phase 16)
+// --------------------------------------------------------------------------
+
+export interface GenerateKeyResponse {
+  api_key: string
+  key_prefix: string
+  label: string
+  warning: string
+}
+
+export interface KeyUsageResponse {
+  key_prefix: string
+  label: string
+  created_at: string
+  total_requests: number
+  total_tokens_used: number
+  last_used_at: string | null
+}
+
+export interface RevokeKeyResponse {
+  status: string
+  key_prefix: string
+}
+
+// --------------------------------------------------------------------------
+// Per-caller provider keys / BYOK (Phase 18)
+// --------------------------------------------------------------------------
+
+export interface ProviderKeyStatus {
+  provider_name: string
+  configured: boolean
+  key_hint: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface DeleteProviderKeyResponse {
+  status: string
+  provider_name: string
+}

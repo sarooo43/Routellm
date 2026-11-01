@@ -50,7 +50,11 @@ different model — the comparison code does not care.
    python -m pip install matplotlib    # only generate_report.py needs it
    ```
 
-3. **Disable the rate limit for the benchmark run.** The script fires
+3. **API keys are automatic.** The runner generates a lightweight demo key via
+   `POST /api/v1/keys/generate` and sends it as `X-API-Key` on every routing
+   request. No login or manual key setup is required.
+
+4. **Disable the rate limit for the benchmark run.** The script fires
    `37 requests × 2 arms × 2 scenarios = 148` calls at `POST /api/v1/route`.
    The default `ROUTE_RATE_LIMIT=30/minute` would trip after ~31 calls and
    poison the sample (the script aborts loudly with a 429 — it refuses to

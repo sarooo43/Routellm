@@ -90,16 +90,28 @@ export function ModelHealthCard({
   return (
     <motion.div animate={shakeControls}>
       <motion.div
-        className="rounded-2xl bg-surface backdrop-blur-xl border p-6"
-        animate={{ borderColor: meta.color === '#3DDC97' ? 'rgba(255, 255, 255, 0.08)' : meta.color }}
+        className="rl-card h-full p-6"
+        animate={{ borderColor: meta.color === '#3DDC97' ? 'rgba(255, 255, 255, 0.07)' : `${meta.color}66` }}
         transition={{ duration: 0.6, ease: 'easeOut' }}
       >
         <div className="flex items-start justify-between gap-3">
-          <h3 className="text-lg font-semibold capitalize tracking-tight">{name}</h3>
+          <div className="flex items-center gap-3">
+            <span
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-bold uppercase"
+              style={{ color: meta.color, backgroundColor: meta.bg }}
+              aria-hidden="true"
+            >
+              {name.slice(0, 2)}
+            </span>
+            <div>
+              <h3 className="text-lg font-semibold capitalize tracking-tight">{name}</h3>
+              <p className="text-[11px] text-text-secondary/70">Provider node</p>
+            </div>
+          </div>
           <StatusBadge status={status} />
         </div>
 
-        <div className="mt-5 flex items-center gap-5">
+        <div className="mt-6 flex items-center gap-5 rounded-xl border border-white/[0.05] bg-black/20 p-4">
           <div className="relative shrink-0" role="img" aria-label={`Success rate ${ringPct}%`}>
             <svg width="64" height="64" viewBox="0 0 64 64">
               <circle

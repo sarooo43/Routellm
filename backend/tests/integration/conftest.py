@@ -15,9 +15,11 @@ from sqlmodel import SQLModel
 
 import app.models  # noqa: F401  (register all tables on SQLModel.metadata)
 import app.providers.registry  as registry_module
+from app.core.api_key_manager import generate_api_key
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import rank_models
+from app.models.api_key import ApiKeyDB
 from app.providers.base import ModelProvider, ProviderResponse
 from app.providers.registry import PROVIDER_REGISTRY
 
@@ -40,10 +42,12 @@ class StubProvider(ModelProvider):
         self.provider_name = provider_name
         self.responses = list(responses)
         self.calls = 0
+        self.prompts_seen: list[str] = []
         self.kwargs_seen: list[dict] = []
 
     async def generate(self, prompt: str, **kwargs) -> ProviderResponse:
         self.calls += 1
+        self.prompts_seen.append(prompt)
         self.kwargs_seen.append(kwargs)
         if self.responses:
             return self.responses.pop(0)
@@ -144,6 +148,15 @@ async def db_session(db_engine):
     maker = async_sessionmaker(db_engine, expire_on_commit=False)
     async with maker() as session:
         yield session
+
+
+@pytest.fixture
+async def auth_headers(db_session):
+    """A real generated key for tests that exercise protected core endpoints."""
+    raw_key, key_hash, key_prefix = generate_api_key()
+    db_session.add(ApiKeyDB(key_hash=key_hash, key_prefix=key_prefix, label="Test key"))
+    await db_session.commit()
+    return {"X-API-Key": raw_key}
 
 
 @pytest.fixture

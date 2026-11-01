@@ -36,7 +36,7 @@ export function ChaosBanner() {
   return (
     <motion.div
       data-testid="chaos-banner"
-      className="flex items-center justify-between gap-3 px-8 py-2 text-sm"
+      className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 text-sm sm:px-6 lg:px-8"
       style={{ backgroundColor: 'rgba(179, 136, 255, 0.08)', borderBottom: `1px solid ${CHAOS_COLOR}44` }}
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}

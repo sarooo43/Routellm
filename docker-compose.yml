@@ -1,11 +1,19 @@
-# RouteLLM — full-stack orchestration.
-# Fresh start: cp .env.example .env (fill API keys), then: docker compose up --build
+# RouteLLM — full-stack orchestration with auto-HTTPS.
+#
+# Fresh start:
+#   cp .env.example .env
+#   # set PROVIDER_KEY_ENCRYPTION_KEY (see .env.example) and optionally DOMAIN
+#   docker compose up --build -d
 #
 # Notes:
+# - Caddy is the public entrypoint on :80/:443 and obtains/renews TLS certs for
+#   DOMAIN automatically. Set DOMAIN to a DNS name pointing at this host.
+# - backend/frontend/Postgres/Redis are bound to 127.0.0.1 for local debugging;
+#   public traffic should go through Caddy (https://DOMAIN).
 # - backend's DATABASE_URL/REDIS_URL are overridden in `environment` to point
-#   at the compose service hostnames; .env mainly supplies provider API keys.
-# - frontend's VITE_API_BASE_URL build arg defaults to http://localhost:8000 —
-#   the address the HOST BROWSER uses, not the docker-internal hostname.
+#   at the compose service hostnames; .env supplies secrets and provider keys.
+# - frontend's VITE_API_BASE_URL build arg defaults to same-origin (''); nginx
+#   proxies /api and /v1 to the backend, so remote browsers never call localhost.
 # - Postgres creds come from POSTGRES_* vars (see .env.example) so the DB and
 #   the backend's DATABASE_URL always stay in sync.
 
@@ -18,7 +26,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-routellm}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -32,7 +40,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -51,7 +59,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-routellm}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-routellm}
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,14 +77,35 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_BASE_URL: http://localhost:8000
+        VITE_API_BASE_URL: ""
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       backend:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
 volumes:
   pgdata:
   redisdata:
+  caddy_data:
+  caddy_config:

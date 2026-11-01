@@ -25,8 +25,11 @@ class DeepSeekProvider(ModelProvider):
             "messages": [{"role": "user", "content": prompt}],
             "temperature": kwargs.get("temperature", 0.7),
         }
+        if kwargs.get("max_tokens") is not None:
+            payload["max_tokens"] = kwargs["max_tokens"]
+        api_key = kwargs.get("provider_api_key") or settings.DEEPSEEK_API_KEY
         headers = {
-            "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
@@ -69,6 +72,6 @@ class DeepSeekProvider(ModelProvider):
             return make_error(
                 self.provider_name,
                 model,
-                f"unexpected_error: {e}",
+                f"unexpected_error: {type(e).__name__}",
                 elapsed_ms(start),
             )

@@ -1,0 +1,25 @@
+# RouteLLM auto-HTTPS reverse proxy.
+#
+# Set DOMAIN to a public DNS name pointing at this host (ports 80/443 open).
+# Caddy then obtains/renews a Let's Encrypt certificate automatically.
+# For local experiments, DOMAIN=localhost uses Caddy's internal CA.
+#
+#   DOMAIN=routellm.example.com docker compose up --build -d
+#
+# Browser/webhook traffic:
+#   https://DOMAIN/            -> React dashboard (frontend nginx)
+#   https://DOMAIN/api/v1/...  -> FastAPI legacy/dashboard API
+#   https://DOMAIN/v1/...      -> FastAPI OpenAI-compatible API
+
+{$DOMAIN:localhost} {
+	encode zstd gzip
+
+	@api path /api/* /v1/* /health /docs /docs/* /openapi.json /redoc
+	handle @api {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}

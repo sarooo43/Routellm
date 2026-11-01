@@ -76,6 +76,11 @@ backend/
    ```
 
    Then edit `.env` and fill in your API keys and service URLs (see comments in `.env.example`).
+   For the per-caller BYOK Provider Keys feature, also set `PROVIDER_KEY_ENCRYPTION_KEY`:
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
 
 5. Run the development server:
 
@@ -95,3 +100,11 @@ pytest
 ```
 
 `pytest.ini` sets `asyncio_mode = auto`, so async tests run without per-test decorators.
+
+## BYOK and HTTPS
+
+- Per-caller provider keys are managed at `/api/v1/provider-keys` and encrypted
+  with `PROVIDER_KEY_ENCRYPTION_KEY`. See the root README and
+  `docs/HTTPS_AND_WEBHOOKS.md`.
+- The docker-compose stack uses Caddy for automatic public HTTPS. The backend
+  container itself serves HTTP on port 8000 behind the proxy.

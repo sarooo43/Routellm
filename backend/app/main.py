@@ -6,6 +6,10 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app.api.catalog_routes import router as catalog_router
+from app.api.keys_routes import router as keys_router
+from app.api.openai_compat_routes import router as openai_compat_router
+from app.api.provider_keys_routes import router as provider_keys_router
 from app.api.routes import health_payload, limiter, router
 from app.config import settings
 from app.utils.logger import get_logger
@@ -56,6 +60,10 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(catalog_router, prefix="/api/v1")
+app.include_router(keys_router, prefix="/api/v1")
+app.include_router(provider_keys_router, prefix="/api/v1")
+app.include_router(openai_compat_router)
 
 
 @app.get("/health")

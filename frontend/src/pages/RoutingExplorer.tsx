@@ -3,6 +3,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, ThumbsDown, ThumbsUp } from 'lu
 import { useEffect, useState } from 'react'
 import { postFeedback } from '../api/client'
 import { FallbackChainGraph } from '../components/FallbackChainGraph'
+import { PageHeader } from '../components/PageHeader'
 import { relativeTime } from '../lib/format'
 import { useAppStore } from '../store/useAppStore'
 import type { FeedbackRating, TaskLog } from '../types/api'
@@ -94,8 +95,7 @@ function FeedbackWidget({ log }: { log: TaskLog }) {
   )
 }
 
-const selectClasses =
-  'bg-surface border border-border rounded-lg px-3 py-2 text-sm text-text-primary outline-none focus:border-accent'
+const selectClasses = 'rl-select'
 
 export function RoutingExplorer() {
   const logs = useAppStore((state) => state.logs)
@@ -126,14 +126,13 @@ export function RoutingExplorer() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Routing Explorer</h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          Every routing decision, with its full fallback chain. Click a row to expand.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Decision log"
+        title="Routing Explorer"
+        description="Every routing decision with its full fallback chain. Click a row to expand confidence, errors, and feedback."
+      />
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="rl-card flex flex-wrap items-center gap-3 p-4">
         <select
           aria-label="Filter by task type"
           className={selectClasses}
@@ -193,10 +192,10 @@ export function RoutingExplorer() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rl-card overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-widest text-text-secondary bg-white/[0.03]">
+            <tr className="border-b border-white/[0.06] bg-white/[0.03] text-left text-[11px] uppercase tracking-widest text-text-secondary">
               <th className="px-4 py-3 font-medium">When</th>
               <th className="px-4 py-3 font-medium">Task</th>
               <th className="px-4 py-3 font-medium">Model</th>
@@ -241,7 +240,7 @@ function ExplorerRow({
   return (
     <>
       <tr
-        className="border-t border-border cursor-pointer hover:bg-white/[0.03] transition-colors"
+        className="cursor-pointer border-t border-white/[0.05] transition-colors hover:bg-white/[0.03]"
         onClick={onToggle}
       >
         <td className="px-4 py-3 text-text-secondary whitespace-nowrap">
