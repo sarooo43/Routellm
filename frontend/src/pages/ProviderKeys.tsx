@@ -18,6 +18,7 @@ import {
 } from '../api/keyStorage'
 import { GlassCard } from '../components/GlassCard'
 import { PageHeader } from '../components/PageHeader'
+import { toApiError } from '../api/errors'
 import { relativeTime } from '../lib/format'
 import type { ProviderKeyStatus } from '../types/api'
 
@@ -54,15 +55,11 @@ const PROVIDERS: ProviderMeta[] = [
 ]
 
 function errorDetail(err: unknown, fallback: string): string {
-  if (
-    typeof err === 'object' &&
-    err !== null &&
-    'response' in err &&
-    typeof (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail === 'string'
-  ) {
-    return (err as { response: { data: { detail: string } } }).response.data.detail
-  }
-  return fallback
+  // Taxonomy-aware: the wording now reflects the ACTUAL failure kind instead
+  // of blaming the backend for every error (401 → key issue, 429 → rate
+  // limit, 503 → db, network → unreachable). Server "detail" wins when set.
+  const apiError = toApiError(err)
+  return apiError.serverDetail ?? apiError.message ?? fallback
 }
 
 export function ProviderKeys() {
@@ -102,7 +99,7 @@ export function ProviderKeys() {
         setStatuses({})
         setError('That RouteLLM key is no longer active. Select or generate another key.')
       } else {
-        setError(errorDetail(err, 'Could not load provider-key status. Is the backend running?'))
+        setError(errorDetail(err, 'Could not load provider-key status.'))
       }
     } finally {
       setLoading(false)

@@ -1,6 +1,6 @@
-import { motion } from 'framer-motion'
 import { Menu } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
+import { ConnectionStatus } from './ConnectionStatus'
 import { findNavItem } from './navigation'
 
 interface TopbarProps {
@@ -40,19 +40,7 @@ export function Topbar({ onMobileMenuOpen, mobileMenuOpen }: TopbarProps) {
         <span className="hidden rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-secondary md:inline-flex">
           API v1
         </span>
-        <div
-          className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/[0.08] px-3 py-1.5"
-          aria-label="System status: live"
-        >
-          <motion.span
-            className="h-2 w-2 rounded-full bg-success"
-            animate={{ scale: [1, 1.25, 1], opacity: [1, 0.65, 1] }}
-            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-          />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-success">
-            Live
-          </span>
-        </div>
+        <ConnectionStatus />
       </div>
     </header>
   )

@@ -53,9 +53,11 @@ async def test_catalog_merges_static_and_live_data_for_all_providers(
     response = await client.get("/api/v1/catalog")
     assert response.status_code == 200
     data = response.json()
-    assert [entry["provider_name"] for entry in data] == list(PROVIDER_REGISTRY)
+    assert data["live_stats_available"] is True
+    entries = data["models"]
+    assert [entry["provider_name"] for entry in entries] == list(PROVIDER_REGISTRY)
 
-    by_name = {entry["provider_name"]: entry for entry in data}
+    by_name = {entry["provider_name"]: entry for entry in entries}
     for name, entry in by_name.items():
         metadata = MODEL_CATALOG[name]
         assert entry["display_name"] == metadata["display_name"]
@@ -78,5 +80,46 @@ async def test_catalog_merges_static_and_live_data_for_all_providers(
 async def test_catalog_is_public_and_empty_history_is_safe(client):
     response = await client.get("/api/v1/catalog")
     assert response.status_code == 200
-    assert len(response.json()) == len(PROVIDER_REGISTRY)
-    assert all(entry["current_status"] == "healthy" for entry in response.json())
+    assert len(response.json()["models"]) == len(PROVIDER_REGISTRY)
+    assert all(
+        entry["current_status"] == "healthy"
+        for entry in response.json()["models"]
+    )
+
+
+async def test_catalog_fails_soft_when_db_stats_unavailable(client, breaker):
+    """FAIL-SOFT: a DB outage nulls the live telemetry but the static
+    directory still renders with 200 — observability must never take the
+    model directory down."""
+    from app.models import ModelStatsDB
+
+    async def exploding_execute(*args, **kwargs):
+        raise OSError("simulated database outage")
+
+    class BrokenSession:
+        execute = exploding_execute
+        scalars = staticmethod(lambda: None)
+
+    from app.api import catalog_routes
+    from app.db.session import get_session
+
+    async def override_session():
+        yield BrokenSession()
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        response = await client.get("/api/v1/catalog")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["live_stats_available"] is False
+    entries = data["models"]
+    assert len(entries) == len(PROVIDER_REGISTRY)
+    for entry in entries:
+        assert entry["live_success_rate"] is None
+        assert entry["avg_latency_ms"] is None
+        # Static directory fields survive the outage untouched.
+        assert entry["context_window"] > 0
+        assert entry["display_name"]

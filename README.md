@@ -547,7 +547,13 @@ Set the Worker variable/secret:
 ROUTELLM_API_ORIGIN=https://api.example.com
 ```
 
-Full guide: [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md).
+Full guide: [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md), end-to-end host setup +
+env-var tables in [`DEPLOY.md`](DEPLOY.md).
+
+**"Backend is not running"?** Almost always a Worker with
+`ROUTELLM_API_ORIGIN` unset — verify with
+`curl https://<worker-domain>/health`:
+`503 {"error":"routellm_backend_not_configured"}` means exactly that.
 
 The repo uses an npm workspace so Cloudflare's root install includes the
 `frontend/` dependencies. The root build runs `tsc && vite build` in the

@@ -173,9 +173,17 @@ export interface CatalogEntry {
   capabilities: Capability[]
   pricing_tier: PricingTier
   cost_per_1k_tokens: number
-  live_success_rate: number
-  avg_latency_ms: number
-  current_status: ProviderStatusValue
+  /** Live telemetry — null when the backend's DB/Redis is unreachable
+   *  (fail-soft catalog: static specs still render as "No live data"). */
+  live_success_rate: number | null
+  avg_latency_ms: number | null
+  current_status: ProviderStatusValue | null
+}
+
+export interface CatalogResponse {
+  /** False → all live_* fields above are null (backend couldn't observe). */
+  live_stats_available: boolean
+  models: CatalogEntry[]
 }
 
 // --------------------------------------------------------------------------

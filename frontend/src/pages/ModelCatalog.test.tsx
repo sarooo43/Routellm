@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CatalogEntry } from '../types/api'
+import type { CatalogResponse } from '../types/api'
 import { ModelCatalog } from './ModelCatalog'
 
 vi.mock('../api/client', () => ({
@@ -9,8 +9,9 @@ vi.mock('../api/client', () => ({
 
 import { getCatalog } from '../api/client'
 
-const catalog: CatalogEntry[] = [
-  {
+// The backend now serves CatalogResponse { live_stats_available, models } —
+// these tests build the static entries then wrap them in the response shape.
+const entries: CatalogEntry[] = [  {
     provider_name: 'groq',
     display_name: 'Llama 3.3 70B (via Groq)',
     description: 'Ultra-low-latency inference.',
@@ -48,6 +49,11 @@ const catalog: CatalogEntry[] = [
   },
 ]
 
+const catalog: CatalogResponse = {
+  live_stats_available: true,
+  models: entries,
+}
+
 function visibleProviders(): string[] {
   return screen
     .getAllByTestId('catalog-card')
@@ -73,6 +79,27 @@ describe('ModelCatalog', () => {
     expect(screen.getAllByText('FREE')).toHaveLength(2)
     expect(screen.getByText('CHEAP')).toBeInTheDocument()
     expect(visibleProviders()).toEqual(['groq', 'deepseek', 'gemini'])
+  })
+
+  it('FAIL-SOFT: live-telemetry outage shows static cards + "No live data", not an error', async () => {
+    vi.mocked(getCatalog).mockResolvedValue({
+      live_stats_available: false,
+      models: entries.map((entry) => ({
+        ...entry,
+        live_success_rate: null,
+        avg_latency_ms: null,
+        current_status: null,
+      })),
+    })
+    render(<ModelCatalog />)
+
+    // Static directory still fully renders…
+    expect(await screen.findByText('Llama 3.3 70B (via Groq)')).toBeInTheDocument()
+    // …live fields degrade to explicit "No live data" instead of blanks/NaN,
+    expect(screen.getAllByLabelText('No live data')).toHaveLength(6) // 3 cards × 2 fields
+    // …and the banner explains what happened — NO error state anywhere.
+    expect(screen.getByText(/Serving the static catalog only/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('capability pills narrow the grid and can be combined', async () => {

@@ -11,7 +11,8 @@ from app.api.keys_routes import router as keys_router
 from app.api.openai_compat_routes import router as openai_compat_router
 from app.api.provider_keys_routes import router as provider_keys_router
 from app.api.routes import health_payload, limiter, router
-from app.config import settings
+from app.config import cors_origin_list, settings
+from app.db.session import DatabaseUnavailableError
 from app.utils.logger import get_logger
 
 
@@ -49,14 +50,34 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RouteLLM API", version="0.1.0", lifespan=lifespan)
 
+logger = get_logger(__name__)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+@app.exception_handler(DatabaseUnavailableError)
+async def _database_unavailable_handler(request, exc):
+    """Clean 503 for a missing/unreachable Postgres — never a raw 500."""
+    logger.error(
+        "database_unavailable_503", path=request.url.path, error=str(exc)
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database temporarily unavailable"},
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # Explicit browser-origin allowlist (comma-separated CORS_ORIGINS env, see
+    # config.py). Wildcard "*" with credentials never works; and the deployed
+    # dashboard calls same-origin through the Cloudflare Worker proxy, so this
+    # only gates clients that set VITE_API_BASE_URL directly at the backend.
+    allow_origins=cors_origin_list(),
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+    allow_credentials=False,
+    expose_headers=["X-RateLimit-Remaining", "Retry-After"],
 )
 
 app.include_router(router, prefix="/api/v1")

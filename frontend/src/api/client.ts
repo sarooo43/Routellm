@@ -1,7 +1,8 @@
 import axios from 'axios'
+import { API_BASE_URL } from '../config'
 import type {
   Analytics,
-  CatalogEntry,
+  CatalogResponse,
   ChaosClearRequest,
   ChaosClearResponse,
   ChaosInjectRequest,
@@ -21,8 +22,6 @@ import type {
   RouteResponse,
 } from '../types/api'
 import { getActiveKey, markKeyRevoked, saveGeneratedKey } from './keyStorage'
-
-export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -44,8 +43,8 @@ export async function getAnalytics(): Promise<Analytics> {
   return data
 }
 
-export async function getCatalog(): Promise<CatalogEntry[]> {
-  const { data } = await api.get<CatalogEntry[]>('/api/v1/catalog')
+export async function getCatalog(): Promise<CatalogResponse> {
+  const { data } = await api.get<CatalogResponse>('/api/v1/catalog')
   return data
 }
 

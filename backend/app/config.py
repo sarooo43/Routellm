@@ -1,8 +1,6 @@
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -21,6 +19,11 @@ class Settings(BaseSettings):
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # When unset, provider-key writes and BYOK routing fail closed with 503.
     PROVIDER_KEY_ENCRYPTION_KEY: Optional[str] = None
+    # Comma-separated browser origins allowed to call this backend cross-origin,
+    # e.g. CORS_ORIGINS=http://localhost:5173,https://routellm.example.workers.dev
+    # (the Cloudflare Worker proxies same-origin server-to-server, so this only
+    # matters for clients that set VITE_API_BASE_URL directly at the backend).
+    CORS_ORIGINS: str = ""
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"
@@ -36,3 +39,27 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+class _CorsOrigins:
+    """Module-level helper so tests can inspect the parsed allowlist."""
+
+    @staticmethod
+    def parse(raw: str) -> list[str]:
+        origins = [o.strip().rstrip("/") for o in (raw or "").split(",") if o.strip()]
+        return origins
+
+
+def cors_origin_list(settings_obj: Optional[Settings] = None) -> list[str]:
+    """Browser-origin allowlist for CORSMiddleware. Falls back to the Vite
+    dev origins when CORS_ORIGINS is unset so local development needs zero
+    configuration; production origins must be set explicitly."""
+    s = settings_obj or settings
+    origins = _CorsOrigins.parse(s.CORS_ORIGINS)
+    if origins:
+        return origins
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+    ]

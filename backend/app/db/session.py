@@ -26,15 +26,24 @@ _engine = None
 _session_maker: Optional[async_sessionmaker] = None
 
 
+class DatabaseUnavailableError(RuntimeError):
+    """Raised when the configured database cannot be reached (or is not
+    configured). API handlers convert this into a clean 503 instead of a
+    500 stack trace — the gateway stays routable for STAT-less paths."""
+
+
 def get_engine():
     global _engine
     if _engine is None:
         if not settings.DATABASE_URL:
-            raise RuntimeError(
+            raise DatabaseUnavailableError(
                 "DATABASE_URL is not configured. Set it in .env, e.g. "
                 "postgresql+asyncpg://user:password@localhost:5432/routellm"
             )
-        _engine = create_async_engine(settings.DATABASE_URL, echo=False)
+        try:
+            _engine = create_async_engine(settings.DATABASE_URL, echo=False)
+        except Exception as e:  # malformed URL etc.
+            raise DatabaseUnavailableError(f"database engine unavailable: {e}") from e
     return _engine
 
 
@@ -46,7 +55,13 @@ def get_session_maker() -> async_sessionmaker:
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async generator suitable for FastAPI Depends() injection."""
+    """Async generator suitable for FastAPI Depends() injection.
+
+    Failures to even OPEN a session raise DatabaseUnavailableError (mapped to
+    503 by the app-level handler). Failures on first actual QUERY surface
+    inside handlers as SQLAlchemy connect errors — the global handler also
+    maps those, so callers never see a raw 500 for an infrastructure outage.
+    """
     async with get_session_maker()() as session:
         yield session
 

@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Check, Copy, KeyRound, Plus, ShieldAlert, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { generateApiKey, getKeyUsage, revokeKey } from '../api/client'
+import { toApiError, ApiError } from '../api/errors'
 import {
   getActiveKey,
   getStoredKeys,
@@ -12,6 +13,7 @@ import {
   type StoredApiKey,
 } from '../api/keyStorage'
 import { GlassCard } from '../components/GlassCard'
+import { ErrorState } from '../components/ErrorState'
 import { PageHeader } from '../components/PageHeader'
 import { formatCount, relativeTime } from '../lib/format'
 import type { GenerateKeyResponse, KeyUsageResponse } from '../types/api'
@@ -22,7 +24,7 @@ export function ApiKeys() {
   const [usage, setUsage] = useState<Record<string, KeyUsageResponse>>({})
   const [label, setLabel] = useState('')
   const [generating, setGenerating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
   const [modalKey, setModalKey] = useState<GenerateKeyResponse | null>(null)
   const [copied, setCopied] = useState(false)
   const [revoking, setRevoking] = useState<string | null>(null)
@@ -84,8 +86,8 @@ export function ApiKeys() {
       setCopied(false)
       setLabel('')
       await refresh()
-    } catch {
-      setError('Could not generate a key. Is the backend running?')
+    } catch (err) {
+      setError(toApiError(err))
     } finally {
       setGenerating(false)
     }
@@ -97,7 +99,7 @@ export function ApiKeys() {
       await navigator.clipboard.writeText(modalKey.api_key)
       setCopied(true)
     } catch {
-      setError('Could not copy automatically. Select the key and copy it manually.')
+      setError(new ApiError('validation', 'Could not copy automatically. Select the key and copy it manually.'))
     }
   }
 
@@ -108,8 +110,8 @@ export function ApiKeys() {
       await revokeKey(key.api_key)
       markKeyRevoked(key.key_prefix)
       await refresh()
-    } catch {
-      setError(`Could not revoke ${key.key_prefix}.`)
+    } catch (err) {
+      setError(toApiError(err))
     } finally {
       setRevoking(null)
     }
@@ -163,9 +165,9 @@ export function ApiKeys() {
           </button>
         </div>
         {error && (
-          <p role="alert" className="mt-3 text-sm text-danger">
-            {error}
-          </p>
+          <div className="mt-3">
+            <ErrorState kind={error.kind} detail={error.serverDetail} onRetry={() => void onGenerate()} retrying={generating} />
+          </div>
         )}
       </GlassCard>
 

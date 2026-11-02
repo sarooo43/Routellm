@@ -2,6 +2,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowDownWideNarrow, LibraryBig, RefreshCw, SearchX } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { getCatalog } from '../api/client'
+import { toApiError, type ApiError } from '../api/errors'
+import { ErrorState } from '../components/ErrorState'
 import { GlassCard } from '../components/GlassCard'
 import { formatMs, formatPercent, formatTokenWindow } from '../lib/format'
 import type { Capability, CatalogEntry, PricingTier, ProviderStatusValue } from '../types/api'
@@ -37,27 +39,36 @@ type SortKey = 'success_rate' | 'latency' | 'context_window'
 
 export function ModelCatalog() {
   const [models, setModels] = useState<CatalogEntry[]>([])
+  const [liveStatsAvailable, setLiveStatsAvailable] = useState(true)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
   const [selectedCapabilities, setSelectedCapabilities] = useState<Capability[]>([])
   const [pricing, setPricing] = useState<PricingTier | 'all'>('all')
   const [sort, setSort] = useState<SortKey>('success_rate')
 
-  const fetchCatalog = async () => {
-    try {
-      setModels(await getCatalog())
+  const load = (keepQuiet = false) => {
+    if (!keepQuiet) {
+      setLoading(true)
       setError(null)
-    } catch {
-      setError('Could not load the models catalog. Is the backend running?')
+    }
+    void fetchCatalog(keepQuiet)
+  }
+
+  const fetchCatalog = async (keepQuiet = false) => {
+    try {
+      const data = await getCatalog()
+      setModels(data.models)
+      setLiveStatsAvailable(data.live_stats_available)
+      setError(null)
+    } catch (err) {
+      // Refreshes that fail quietly keep the last good catalog visible —
+      // never wipe live content just because one refresh hiccuped.
+      if (!keepQuiet || models.length === 0) {
+        setError(toApiError(err))
+      }
     } finally {
       setLoading(false)
     }
-  }
-
-  const load = () => {
-    setLoading(true)
-    setError(null)
-    void fetchCatalog()
   }
 
   useEffect(() => {
@@ -76,9 +87,9 @@ export function ModelCatalog() {
     })
 
     return [...filtered].sort((a, b) => {
-      if (sort === 'latency') return a.avg_latency_ms - b.avg_latency_ms
+      if (sort === 'latency') return (a.avg_latency_ms ?? Infinity) - (b.avg_latency_ms ?? Infinity)
       if (sort === 'context_window') return b.context_window - a.context_window
-      return b.live_success_rate - a.live_success_rate
+      return (b.live_success_rate ?? -1) - (a.live_success_rate ?? -1)
     })
   }, [models, selectedCapabilities, pricing, sort])
 
@@ -195,8 +206,14 @@ export function ModelCatalog() {
       </GlassCard>
 
       {error && (
-        <p role="alert" className="rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-          {error}
+        <ErrorState kind={error.kind} detail={error.serverDetail} onRetry={() => load()} />
+      )}
+
+      {!loading && !error && !liveStatsAvailable && (
+        <p className="rounded-xl border border-warning/25 bg-warning/[0.07] px-4 py-3 text-xs text-warning">
+          Serving the static catalog only — live success rates, latency, and circuit
+          status are unavailable right now (the backend can't reach its telemetry
+          store). Everything else below is complete.
         </p>
       )}
 
@@ -247,7 +264,6 @@ export function ModelCatalog() {
 
 function CatalogCard({ model }: { model: CatalogEntry }) {
   const pricing = PRICING_META[model.pricing_tier]
-  const status = STATUS_META[model.current_status]
 
   return (
     <GlassCard className="flex h-full flex-col overflow-hidden p-0">
@@ -303,23 +319,41 @@ function CatalogCard({ model }: { model: CatalogEntry }) {
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-text-secondary">Live success</p>
-            <p className="mt-1 font-semibold tabular-nums text-success">
-              {formatPercent(model.live_success_rate, 1)}
-            </p>
+            {model.live_success_rate === null ? (
+              <p aria-label="No live data" className="mt-1 text-xs font-medium text-text-secondary/70">
+                No live data
+              </p>
+            ) : (
+              <p className="mt-1 font-semibold tabular-nums text-success">
+                {formatPercent(model.live_success_rate, 1)}
+              </p>
+            )}
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-widest text-text-secondary">Avg latency</p>
-            <p className="mt-1 font-semibold tabular-nums">{formatMs(model.avg_latency_ms, 0)}</p>
+            {model.avg_latency_ms === null ? (
+              <p aria-label="No live data" className="mt-1 text-xs font-medium text-text-secondary/70">
+                No live data
+              </p>
+            ) : (
+              <p className="mt-1 font-semibold tabular-nums">{formatMs(model.avg_latency_ms, 0)}</p>
+            )}
           </div>
         </div>
 
         <div className="mt-4 flex items-center gap-2 border-t border-white/[0.06] pt-4 text-xs text-text-secondary">
-          <span
-            aria-hidden="true"
-            className="h-2 w-2 rounded-full"
-            style={{ backgroundColor: status.color }}
-          />
-          {status.label}
+          {model.current_status === null ? (
+            <span className="text-text-secondary/70">No live status</span>
+          ) : (
+            <>
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: STATUS_META[model.current_status].color }}
+              />
+              {STATUS_META[model.current_status].label}
+            </>
+          )}
         </div>
       </div>
     </GlassCard>
