@@ -108,7 +108,12 @@ You will be prompted for credentials:
            (NOT your account password; the token is never stored by this script)
 "@ -ForegroundColor Yellow
 
-git push $HfRemote "$($splitSha):main" --force
+# FULL refspec on purpose. A bare "<sha>:main" is rejected by git 2.39+ with
+# "The destination you provided is not a full refname": when the SOURCE is a
+# raw commit sha, git cannot infer that the destination is a branch, and the
+# Space has no "main" ref yet to look up. This is the exact form the scripts
+# are tested with (see tests/test_deploy_scripts.py).
+git push $HfRemote "$($splitSha):refs/heads/main" --force
 $pushExit = $LASTEXITCODE
 
 # git writes normal progress to stderr; PowerShell may have printed a

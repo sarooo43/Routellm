@@ -102,7 +102,7 @@ jobs:
 
           SHA="${{ steps.split.outputs.subtree_sha }}"
           git -c credential.helper="${HELPER}" \
-              push "https://huggingface.co/spaces/${HF_SPACE_REPO}" "${SHA}:main" --force
+              push "https://huggingface.co/spaces/${HF_SPACE_REPO}" "${SHA}:refs/heads/main" --force
           rm -f "${HELPER}"
 
           echo "::notice::Pushed ${SHA} to https://huggingface.co/spaces/${HF_SPACE_REPO}"

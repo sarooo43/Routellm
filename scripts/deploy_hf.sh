@@ -86,7 +86,12 @@ You will be prompted for credentials:
   Password: a WRITE access token from https://huggingface.co/settings/tokens
            (NOT your account password; the token is never stored by this script)
 NOTICE
-if git push "$HF_REMOTE" "${SPLIT_SHA}:main" --force; then
+# FULL refspec on purpose. A bare "<sha>:main" is rejected by git 2.39+ with
+# "The destination you provided is not a full refname": when the SOURCE is a
+# raw commit sha, git cannot infer that the destination is a branch, and the
+# Space has no "main" ref yet to look up. "<sha>:refs/heads/main" is explicit
+# and works on every git version.
+if git push "$HF_REMOTE" "${SPLIT_SHA}:refs/heads/main" --force; then
   cat <<EOF
 
 ✅ Deployed. Space: https://huggingface.co/spaces/${HF_SPACE_REPO}
