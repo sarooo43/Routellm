@@ -5,6 +5,9 @@ node_modules/
 # Builds
 dist/
 coverage/
+# Coverage data files (pytest-cov): build artifacts, never published
+.coverage
+.coverage.*
 
 # Python
 __pycache__/
