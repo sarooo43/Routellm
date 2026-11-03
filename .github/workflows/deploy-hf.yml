@@ -4,8 +4,12 @@ name: Deploy to Hugging Face Space
 #
 # It is INERT until you add the repository secret HF_TOKEN
 # (Settings → Secrets and variables → Actions → New repository secret).
-# Without the secret the job is skipped, so the workflow never shows a red X
-# just because it has not been configured yet.
+# Without the secret the deploy job is SKIPPED (grey), never failed.
+#
+# Why the extra "preflight" job: GitHub does not allow `secrets.*` inside an
+# `if:` expression — doing so makes the whole workflow invalid (it fails at
+# startup with zero jobs). Secrets ARE allowed in `env:`, so preflight exposes
+# "is a token configured?" as a job output and the deploy job gates on that.
 #
 # Manual runs: Actions → "Deploy to Hugging Face Space" → Run workflow.
 # Use the dry_run input to build the subtree commit without pushing anything.
@@ -31,23 +35,38 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  preflight:
+    name: Check for HF_TOKEN
     runs-on: ubuntu-latest
-    # Job-level gate: skipped (not failed) when the secret is absent.
-    if: ${{ github.event_name == 'workflow_dispatch' || secrets.HF_TOKEN != '' }}
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - id: check
+        name: Is a deploy token configured?
+        run: |
+          if [ -n "${HF_TOKEN}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::HF_TOKEN is configured — the deploy job will run."
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HF_TOKEN is not set — deploys are skipped. Add the repository secret to enable them (see DEPLOY.md)."
+          fi
+
+  deploy:
+    name: Push backend/ to the Space
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: ${{ needs.preflight.outputs.has_token == 'true' || github.event_name == 'workflow_dispatch' }}
     env:
       HF_SPACE_REPO: saboornotgonna/routellm
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # git subtree split needs history
-
-      - name: Explain a skipped push
-        if: ${{ secrets.HF_TOKEN == '' }}
-        run: |
-          echo "::notice::HF_TOKEN is not set - building the subtree commit only."
-          echo "Add the secret to enable automatic deploys (see DEPLOY.md)."
 
       - name: Split backend/ into an orphan history
         id: split
@@ -57,18 +76,20 @@ jobs:
           echo "subtree_sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Prepared subtree commit ${SHA}"
 
+      - name: Report missing token
+        if: ${{ env.HF_TOKEN == '' }}
+        run: |
+          echo "::notice::No HF_TOKEN supplied — built the subtree commit only, nothing was pushed."
+
       - name: Push to the Space
-        if: ${{ secrets.HF_TOKEN != '' && env.DRY_RUN != 'true' }}
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        if: ${{ env.HF_TOKEN != '' && env.DRY_RUN != 'true' }}
         run: |
           # `set -x` stays OFF: it would print the shell expansion of the token.
           set -euo pipefail
 
-          # Ephemeral credential helper. The token is referenced from the
-          # environment at runtime, never written into this file, never placed
-          # in the remote URL, and never passed on the command line. GitHub also
-          # masks HF_TOKEN in the log.
+          # Ephemeral credential helper. The token is read from the environment
+          # at runtime — never written into this file, never placed in a remote
+          # URL, never passed on a command line, and masked by GitHub in logs.
           HELPER="${RUNNER_TEMP}/hf-credential-helper.sh"
           cat > "${HELPER}" <<'EOS'
           #!/bin/sh
