@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import os
 import sys
+import errno
+import socket
 from typing import Literal, Optional
 
 from fastapi import FastAPI
@@ -46,8 +48,17 @@ logger = get_logger(__name__)
 DEFAULT_PORT = 7860
 #: The status page mount point.
 STATUS_UI_PATH = "/ui"
+#: Gradio 6 can start a separate Node server for server-side rendering. On a
+#: Space that is a second process competing for a port we must own, and the
+#: Gradio SDK image ships Node 20 while SSR wants Node 24+. Pinning it off also
+#: makes the mount path deterministic: client-side rendering, one process.
+SSR_MODE_ENV = "GRADIO_SSR_MODE"
 
 SdkMode = Literal["gradio", "plain"]
+
+#: Exit code used when the port is already taken. Distinct from 1 so a log can
+#: tell "we could not listen" apart from "the app crashed".
+PORT_IN_USE_EXIT_CODE = 2
 
 #: Set after ``configure_app()`` so the running mode is introspectable
 #: (startup log + tests).
@@ -136,6 +147,8 @@ def configure_app(mode: SdkMode = "gradio", target_app: Optional[FastAPI] = None
 
     target = target_app or app
     effective: SdkMode = "plain"
+    # Set before Gradio reads it during the mount.
+    os.environ.setdefault(SSR_MODE_ENV, "false")
 
     if mode == "gradio":
         try:
@@ -178,14 +191,65 @@ def _resolve_port() -> int:
     return DEFAULT_PORT
 
 
+def probe_port(host: str, port: int) -> Optional[str]:
+    """Return ``None`` if ``host:port`` is bindable, else a short reason.
+
+    Binding happens *before* uvicorn starts, so a taken port is reported with a
+    clear log line instead of uvicorn's bare ``[Errno 98]`` — and, crucially,
+    before the app finishes starting up, so the process no longer looks
+    "started then immediately dead".
+
+    ``SO_REUSEADDR`` mirrors what uvicorn sets on its own socket
+    (``uvicorn/config.py``). Without it a socket lingering in ``TIME_WAIT``
+    after a restart would report a false conflict.
+
+    The probe socket is always closed; :func:`main` passes the port to uvicorn,
+    which binds its own socket, and the brief gap is harmless because uvicorn
+    sets ``SO_REUSEADDR`` too (and we are single-process by design).
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            return f"EADDRINUSE: {host}:{port} is already in use"
+        return f"OSError {exc.errno}: {exc.strerror or exc}"
+    finally:
+        probe.close()
+    return None
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Start uvicorn on 0.0.0.0:<PORT>. Returns a process exit code."""
     import uvicorn
 
     argv = list(sys.argv[1:] if argv is None else argv)
     wanted: SdkMode = "plain" if "--plain" in argv else "gradio"
-    configure_app(wanted)
     port = _resolve_port()
+
+    # Probe *first*: a doomed bind must not drag the app through startup.
+    # uvicorn runs the lifespan (DB connect + schema creation) before it binds,
+    # so probing later burns a Neon connection on every failed restart and
+    # leaves a misleading `hf_app_ready` line in the log.
+    conflict = probe_port("0.0.0.0", port)
+    if conflict is not None:
+        # Something else in the container owns the port. Asking for a different
+        # one is pointless on a Space (the platform routes 7860 only), so fail
+        # fast and loudly with the diagnosis in the log.
+        logger.error(
+            "hf_app_port_unavailable",
+            port=port,
+            reason=conflict,
+            hint=(
+                "another process in this container is already listening. On "
+                "Hugging Face this usually means the Space is running on "
+                "ZeroGPU hardware: a REST API belongs on CPU basic."
+            ),
+        )
+        return PORT_IN_USE_EXIT_CODE
+
+    configure_app(wanted)
 
     uvicorn.run(
         app,

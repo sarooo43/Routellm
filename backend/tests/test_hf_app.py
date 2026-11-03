@@ -5,6 +5,7 @@ never mutates the shared ``app.main.app`` used by the other test modules.
 """
 
 import os
+import socket
 from pathlib import Path
 
 import httpx
@@ -203,6 +204,122 @@ def test_port_resolution(monkeypatch, env, expected):
 
 
 # --------------------------------------------------------------------------
+# Port conflicts ("address already in use") fail fast with a readable log
+# --------------------------------------------------------------------------
+
+
+def test_probe_port_reports_a_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tmp:
+        tmp.bind(("127.0.0.1", 0))
+        free_port = tmp.getsockname()[1]
+    # Released above, so the probe must find it bindable.
+    assert hf_app.probe_port("0.0.0.0", free_port) is None
+
+
+def test_probe_port_detects_a_real_listener():
+    """A genuine second listener must be reported as EADDRINUSE."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("0.0.0.0", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        reason = hf_app.probe_port("0.0.0.0", port)
+    assert reason is not None
+    assert "EADDRINUSE" in reason
+    assert str(port) in reason
+
+
+def test_probe_port_tolerates_time_wait():
+    """SO_REUSEADDR means a lingering TIME_WAIT socket is not a conflict."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("0.0.0.0", 0))
+        port = listener.getsockname()[1]
+    # Closed but never had a connection: exactly the restart case.
+    assert hf_app.probe_port("0.0.0.0", port) is None
+
+
+def test_probe_socket_is_always_closed(monkeypatch):
+    """The probe must not leak a listening socket and block uvicorn."""
+    created = []
+
+    class TrackingSocket(socket.socket):
+        def close(self):
+            created.append(self)
+            super().close()
+
+    port = _free_port()  # before patching, so its own socket is not tracked
+    monkeypatch.setattr(hf_app.socket, "socket", TrackingSocket)
+    assert hf_app.probe_port("127.0.0.1", port) is None
+    assert len(created) == 1
+
+
+def _free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tmp:
+        tmp.bind(("127.0.0.1", 0))
+        return tmp.getsockname()[1]
+
+
+def test_main_exits_when_port_is_taken(monkeypatch):
+    """The whole point: a taken port is diagnosed, not an opaque uvicorn trace."""
+    called = {}
+
+    def fake_error(event, **kwargs):
+        called.update(event=event, **kwargs)
+
+    monkeypatch.setattr(hf_app.logger, "error", fake_error)
+    monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    monkeypatch.setenv("PORT", "7860")
+
+    assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
+    assert called["event"] == "hf_app_port_unavailable"
+    assert called["port"] == 7860
+    assert "EADDRINUSE" in called["reason"]
+
+
+def test_main_does_not_start_uvicorn_when_port_is_taken(monkeypatch):
+    import uvicorn
+
+    monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    monkeypatch.setattr(
+        uvicorn, "run", lambda *a, **k: pytest.fail("uvicorn.run must not be called")
+    )
+    assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
+
+
+def test_main_probes_before_configuring(monkeypatch):
+    """No Gradio mount, no DB startup work when the port is already taken."""
+    monkeypatch.setattr(
+        hf_app, "configure_app", lambda mode="gradio": pytest.fail(
+            "configure_app must not run when the port is unavailable"
+        )
+    )
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
+
+
+def test_main_starts_uvicorn_when_port_is_free(monkeypatch):
+    import uvicorn
+
+    seen = {}
+
+    def fake_run(app, **kwargs):
+        seen.update(kwargs, app=app)
+
+    monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: None)
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setenv("PORT", "7861")
+
+    assert hf_app.main([]) == 0
+    assert seen["port"] == 7861
+    assert seen["host"] == "0.0.0.0"
+    assert seen["app"] is hf_app.app
+
+
+# --------------------------------------------------------------------------
 # The real module exposes the real app
 # --------------------------------------------------------------------------
 
@@ -215,6 +332,19 @@ def test_status_ui_links_to_api_paths():
     pytest.importorskip("gradio")
     ui, _gr = hf_app.build_status_ui()
     assert ui.title == "RouteLLM API"
+
+
+def test_ssr_is_disabled_before_mounting(monkeypatch):
+    """A Node SSR server would be a second process fighting for the port."""
+    monkeypatch.delenv(hf_app.SSR_MODE_ENV, raising=False)
+    hf_app.configure_app("plain", _fresh_app())
+    assert os.environ[hf_app.SSR_MODE_ENV] == "false"
+
+
+def test_ssr_does_not_override_an_explicit_choice(monkeypatch):
+    monkeypatch.setenv(hf_app.SSR_MODE_ENV, "true")
+    hf_app.configure_app("plain", _fresh_app())
+    assert os.environ[hf_app.SSR_MODE_ENV] == "true"
 
 
 def test_no_app_py_shadow_at_repo_root():
