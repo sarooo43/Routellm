@@ -92,6 +92,9 @@ jobs:
         run: |
           pip install gradio
           pip check
+          # Record what Hugging Face will actually build. The Space README pins
+          # sdk_version to the version verified here (see backend/README.md).
+          python -c "import gradio, fastapi, starlette, pydantic; print('gradio', gradio.__version__); print('fastapi', fastapi.__version__); print('starlette', starlette.__version__); print('pydantic', pydantic.VERSION)"
 
       - name: Boot hf_app.py and probe every public path
         env:
