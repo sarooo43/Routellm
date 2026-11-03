@@ -34,11 +34,16 @@ export interface RouteResponse {
 
 export interface ProviderStatus {
   name: string
-  status: ProviderStatusValue
-  success_rate_overall: number
-  requests_today: number
-  daily_quota_limit: number
-  quota_percentage_used: number
+  /**
+   * "unknown" means live telemetry (Postgres/Redis) was unavailable — the
+   * card renders a neutral state instead of a misleading "healthy".
+   */
+  status: ProviderStatusValue | 'unknown'
+  /** null when live telemetry is unavailable — not the same as zero. */
+  success_rate_overall: number | null
+  requests_today: number | null
+  daily_quota_limit: number | null
+  quota_percentage_used: number | null
   /** DEV/DEMO ONLY — true while a chaos injection is active on this provider. */
   chaos_active?: boolean
 }
@@ -49,6 +54,8 @@ export interface ProviderStatus {
  */
 export interface ModelsResponse {
   chaos_mode_enabled: boolean
+  /** False when the backend could not reach its database/Redis. */
+  live_stats_available?: boolean
   providers: ProviderStatus[]
 }
 

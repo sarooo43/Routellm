@@ -560,6 +560,36 @@ The repo uses an npm workspace so Cloudflare's root install includes the
 workspace without a nested `npm ci`, fixing Cloudflare failures like
 `sh: 1: tsc: not found` and CI hangs during nested installs.
 
+## Hosting the backend on Hugging Face (Gradio SDK)
+
+The backend is deployable to a **Hugging Face Space** using the **Gradio SDK**
+(the Docker SDK is a paid feature). `backend/hf_app.py` is the entrypoint:
+
+```text
+python hf_app.py     # uvicorn on 0.0.0.0:7860, all API paths unchanged
+```
+
+- FastAPI keeps its normal routes (`/health`, `/docs`, `/api/v1/*`, `/v1/*`).
+- A tiny Gradio status page is mounted at `/ui`; `GET /` redirects to it.
+- If Gradio is missing or conflicts with the pinned FastAPI/Starlette versions,
+  the app automatically runs in **plain** mode (API only) and logs which mode
+  is active.
+- Startup is non-fatal: an unreachable database/Redis logs a masked warning,
+  `/health` reports `degraded`, and the catalog/models endpoints fall back to
+  static data instead of 500ing. Schema creation is retried until it succeeds.
+- Nothing writes inside the app directory (Hugging Face's app dir is
+  read-only); scratch paths resolve to `/tmp` when `SPACE_ID` is set.
+
+Deploy + owner checklist, env-var table and troubleshooting:
+[`DEPLOY.md`](DEPLOY.md). Scripts:
+
+```bash
+scripts/deploy_hf.sh          # macOS/Linux
+pwsh scripts/deploy_hf.ps1    # Windows
+python scripts/smoke_deployed.py --api https://<owner>-<space>.hf.space \
+                                 --origin https://routellm.saboornasar66.workers.dev
+```
+
 ## Production notes (deliberate MVP simplifications)
 
 - **Migrations**: tables are created via `init_db()` (SQLModel `create_all`)

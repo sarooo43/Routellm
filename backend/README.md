@@ -1,3 +1,41 @@
+---
+title: RouteLLM API
+emoji: 🔀
+colorFrom: yellow
+colorTo: red
+sdk: gradio
+sdk_version: 6.31.0
+python_version: "3.12"
+app_file: hf_app.py
+pinned: false
+short_description: Resilient LLM routing gateway (FastAPI backend)
+---
+
+# RouteLLM API — Hugging Face Space
+
+This Space runs the **backend** of [RouteLLM](https://github.com/sarooo43/Routellm),
+an LLM routing gateway that picks the best of several providers per request and
+falls back automatically when one fails, is rate-limited, or is circuit-broken.
+
+- **API root:** `https://saboornotgonna-routellm.hf.space`
+- **Interactive docs:** [`/docs`](https://saboornotgonna-routellm.hf.space/docs)
+- **Status page:** [`/ui`](https://saboornotgonna-routellm.hf.space/ui)
+- **Source:** <https://github.com/sarooo43/Routellm>
+
+The **dashboard UI is hosted separately** on Cloudflare Workers
+(<https://routellm.saboornasar66.workers.dev>) — this Space only serves the API.
+That frontend calls these endpoints cross-origin, so `CORS_ORIGINS` must list
+its origin (see [`DEPLOY.md`](https://github.com/sarooo43/Routellm/blob/main/DEPLOY.md)).
+
+Managed dependencies: **Neon** (Postgres) and **Upstash** (Redis, `rediss://`).
+Configuration is supplied through Space Secrets/Variables — never in this repo.
+This Space is public, so nothing secret may be committed here.
+
+> The body below is the original backend README, kept for developers running
+> the service locally.
+
+---
+
 # RouteLLM Backend
 
 RouteLLM is an intelligent LLM routing gateway that sits between client applications and multiple AI providers (Groq, Gemini, and DeepSeek to start). Instead of calling a single model endpoint, clients send requests to RouteLLM, which classifies the request, scores the available models, and executes the best one; if that model fails, is rate-limited, or produces bad output, the gateway automatically falls back to the next best model — without the calling application ever seeing an error. Think of it as a self-hosted mini version of what OpenRouter or Portkey offer commercially, focused on resilience.
@@ -22,7 +60,9 @@ backend/
 ├── tests/
 │   ├── unit/
 │   └── integration/
-├── requirements.txt
+├── hf_app.py           # Hugging Face Space entrypoint (python hf_app.py)
+├── requirements.txt    # runtime deps (what a deployment installs)
+├── requirements-dev.txt # + pytest/aiosqlite/respx/openai for local work
 ├── .env.example
 ├── pytest.ini
 └── README.md
@@ -60,7 +100,7 @@ backend/
 3. Install dependencies:
 
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt   # runtime + test tooling
    ```
 
 4. Configure environment variables:

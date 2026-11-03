@@ -48,6 +48,8 @@ export function ModelHealth() {
   const healthy = models.filter((m) => m.status === 'healthy').length
   const degraded = models.filter((m) => m.status === 'degraded').length
   const open = models.filter((m) => m.status === 'circuit_open').length
+  // Providers whose status could not be determined (backend DB/Redis down).
+  const unknown = models.filter((m) => m.status === 'unknown').length
 
   return (
     <div className="space-y-6">
@@ -64,11 +66,24 @@ export function ModelHealth() {
       />
 
       {models.length > 0 && (
-        <div className="grid grid-cols-3 gap-3">
+        <div
+          className={`grid gap-3 ${unknown > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}
+        >
           <HealthSummary label="Healthy" value={healthy} color="#3DDC97" />
           <HealthSummary label="Degraded" value={degraded} color="#F5A623" />
           <HealthSummary label="Circuit open" value={open} color="#FF4D4D" />
+          {unknown > 0 && (
+            <HealthSummary label="No live data" value={unknown} color="#9CA3AF" />
+          )}
         </div>
+      )}
+
+      {unknown > 0 && (
+        <p className="text-xs text-text-secondary" role="status">
+          Live telemetry is unavailable — the backend cannot reach its database
+          or Redis. Cards show “No live data” until it recovers; routing itself
+          is unaffected.
+        </p>
       )}
 
       {models.length === 0 ? (

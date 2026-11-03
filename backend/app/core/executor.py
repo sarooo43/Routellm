@@ -78,16 +78,25 @@ _chaos_controller: Optional[ChaosController] = None
 
 
 def _get_redis_client():
-    if settings.REDIS_URL:
-        return redis_async.from_url(settings.REDIS_URL, decode_responses=True)
-    logger.warning(
-        "redis_unavailable_fallback",
-        detail="REDIS_URL not set; using in-memory fakeredis. State does not "
-        "survive restarts and is NOT shared across instances (dev only).",
-    )
-    from fakeredis import FakeAsyncRedis
+    """Shared Redis client (TLS-aware, short timeouts).
 
-    return FakeAsyncRedis(decode_responses=True)
+    Delegates to :mod:`app.cache` so quota tracking, the circuit breaker and
+    /health all agree on one connection policy. A bad REDIS_URL must not take
+    routing down: the failure is logged and an in-memory fakeredis client is
+    used instead, which degrades exactly like "Redis not configured".
+    """
+    from app.cache import create_redis_client
+
+    try:
+        return create_redis_client()
+    except Exception as e:
+        logger.error(
+            "redis_client_unavailable_using_memory",
+            error=str(e).strip()[:300],
+        )
+        from fakeredis import FakeAsyncRedis
+
+        return FakeAsyncRedis(decode_responses=True)
 
 
 def _ensure_shared_clients() -> tuple[CircuitBreaker, QuotaTracker, ChaosController]:

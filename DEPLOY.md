@@ -1,82 +1,226 @@
 # Deploying RouteLLM
 
-Two deployables: the **FastAPI gateway** (Python — cannot run on Cloudflare
-Workers) and the **React dashboard** (built statically, served by a Cloudflare
-Worker that also reverse-proxies API paths).
-
-## 1) Backend — Render / Railway (or any Python host)
-
-Create a **Postgres** database and a **Redis** instance (Upstash or the
-host's add-on), then deploy `backend/` with:
-
-- Build: `pip install -r backend/requirements.txt`
-- Start: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-
-### Backend environment variables
-
-| Variable | Required | Example / how to get it |
-|---|---|---|
-| `DATABASE_URL` | yes | `postgresql+asyncpg://user:pass@host:5432/routellm` (host's Postgres add-on) |
-| `REDIS_URL` | recommended | `rediss://default:pass@host:6379` (Upstash). Falls back to in-memory fakeredis without it (dev only). |
-| `PROVIDER_KEY_ENCRYPTION_KEY` | needed for BYOK | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `GROQ_API_KEY` / `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | optional (demo fallback) | provider consoles. For a PUBLIC demo prefer leaving these unset. |
-| `CORS_ORIGINS` | only for direct cross-origin clients | e.g. `https://routellm.saboornasar66.workers.dev` (not needed for the Worker-proxy topology) |
-| `CHAOS_MODE_ENABLED` | leave false | demo-only fault injection |
-| `ENABLE_ML_ROUTING` | leave false | experimental; needs a trained artifact |
-
-Verify: `curl https://<backend-domain>/health` →
-
-```json
-{"status":"ok","service":"routellm-backend","components":{"database":"ok","redis":"ok"}}
-```
-
-## 2) Dashboard — Cloudflare Workers
-
-The Worker serves `frontend/dist` as static assets (SPA fallback enabled for
-deep links/refreshes) and proxies `/api/*`, `/v1/*`, `/health` server-to-server.
-
-### Build-time variable
-
-| Variable | Value | Notes |
-|---|---|---|
-| `VITE_API_BASE_URL` | *(unset)* | BUILD-TIME var. For the Worker-proxy topology leave it unset — same-origin requests through the worker. Only set it for direct calls (must be `https://`, and then set backend `CORS_ORIGINS`). Set it in Cloudflare **Build settings → Variables**, then **redeploy**. |
-
-### Worker runtime variable
+Two deployables and two managed services:
 
 ```
-wrangler secret put ROUTELLM_API_ORIGIN
-# paste: https://<backend-domain>   (NO trailing slash, https only for prod)
+┌──────────────────────────────┐        ┌───────────────────────────────┐
+│ Cloudflare Workers           │  HTTPS │ Hugging Face Space            │
+│  static React dashboard      │───────►│  Gradio SDK                   │
+│  routellm.saboornasar66      │        │  python hf_app.py → :7860     │
+│  .workers.dev                │        │  FastAPI (app/main.py)        │
+│  (optionally proxies /api/*) │        │  saboornotgonna-routellm      │
+└──────────────────────────────┘        └───────────┬───────────────────┘
+                                                    │
+                        ┌───────────────────────────┴──────────────┐
+                        │                                          │
+                  ┌─────▼──────────────┐                  ┌────────▼─────────────┐
+                  │ Neon (Postgres)    │                  │ Upstash (Redis, TLS) │
+                  │ asyncpg + sslmode  │                  │ rediss:// endpoint   │
+                  │ auto-created tables│                  │ circuit breaker,     │
+                  │ task logs, keys    │                  │ quotas (optional)    │
+                  └────────────────────┘                  └──────────────────────┘
 ```
 
-or set `ROUTELLM_API_ORIGIN` in the dashboard. **This is the #1 cause of the
-"backend is not running" symptom**: an unconfigured Worker answers every API
-path with `503 {"error":"routellm_backend_not_configured"}` by design.
+- **Frontend** → Cloudflare Workers (static assets; see `wrangler.jsonc`).
+- **Backend** → Hugging Face Space, **Gradio SDK** (not Docker — Docker is paid
+  on this account). The SDK only requires `python <app_file>` to listen on
+  port **7860**, which `hf_app.py` does while serving the real FastAPI app.
+- **Data** → Neon Postgres + Upstash Redis, both configured from Space secrets.
 
-Deploy:
+Backend URL format: **`https://<owner>-<space>.hf.space`** →
+`https://saboornotgonna-routellm.hf.space`.
+The `https://huggingface.co/spaces/<owner>/<space>` page is an **iframe wrapper**
+around the same app; use the `.hf.space` host for API calls and for
+`VITE_API_BASE_URL`.
+
+---
+
+## 1) Owner checklist (in order)
+
+1. **Create the database** — Neon project, copy the **pooled** connection
+   string. It looks like
+   `postgresql://USER:PASSWORD@ep-xxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require`.
+   Keep `sslmode=require`; `channel_binding=require` is fine too (it is stripped).
+2. **Create the cache** — Upstash Redis (TLS). Copy the **`rediss://`** URL
+   (TLS). A `redis://` URL pointed at a TLS-only port fails the handshake.
+3. **Space settings** — the Space already exists (`saboornotgonna/routellm`):
+   - SDK: **Gradio** (matches the README header `sdk: gradio`)
+   - Hardware: **CPU Basic** (free)
+   - Visibility: **Public** → therefore **no secrets in the repo, ever**
+4. **Add secrets/variables** in *Space → Settings → Variables and secrets*
+   (table in section 3). At minimum `DATABASE_URL`, `REDIS_URL`,
+   `PROVIDER_KEY_ENCRYPTION_KEY`, `CORS_ORIGINS`.
+5. **Create a WRITE token** — <https://huggingface.co/settings/tokens> → *New
+   token* → role **Write**. Never paste it into a file, a commit, or chat; the
+   deploy script prompts for it.
+6. **Deploy the backend**:
+   - Windows: `pwsh scripts/deploy_hf.ps1`
+   - macOS/Linux: `scripts/deploy_hf.sh`
+   Both split `backend/` and force-push it to the Space (this **overwrites** the
+   starter files Hugging Face created in the Space repo).
+7. **Open the Space's Logs tab.** You want the `startup_configuration` line with
+   `database.dsn` masked (`...:****@...`), `redis.tls: true`, and `hf_app_ready`
+   with `mode: "gradio"`. Then:
+   ```bash
+   python scripts/smoke_deployed.py \
+     --api https://saboornotgonna-routellm.hf.space \
+     --origin https://routellm.saboornasar66.workers.dev
+   ```
+8. **Point the dashboard at it** — Cloudflare Workers → Settings → Build →
+   **Variables**: `VITE_API_BASE_URL=https://saboornotgonna-routellm.hf.space`
+   (a **build-time** variable — redeploy afterwards; setting it alone changes
+   nothing). Leave `ROUTELLM_API_ORIGIN` at the same value if you prefer the
+   Worker-proxy topology instead.
+9. **Re-check CORS** — the Space must allow the dashboard origin:
+   `CORS_ORIGINS=https://routellm.saboornasar66.workers.dev`.
+
+---
+
+## 2) How the Space runs the app
 
 ```
-npm run deploy          # = wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig
+python hf_app.py                 # the Gradio SDK's start command
+   ├─ imports app.main:app       # the same FastAPI app used everywhere else
+   ├─ tries gr.mount_gradio_app(app, ui, path="/ui")
+   │     └─ on ImportError/conflict → PLAIN mode (API only, no /ui)
+   ├─ GET / → 307 → /ui (gradio mode) or /docs (plain mode)
+   └─ uvicorn.run(app, host=0.0.0.0, port=PORT or 7860,
+                  proxy_headers=True, forwarded_allow_ips="*")
 ```
 
-## 3) Post-deploy verification
+Every API path keeps its normal address: `/health`, `/docs`, `/api/v1/*`,
+`/v1/*`. The chosen mode is logged at startup (`hf_app_ready → mode`).
 
+Gradio's `mount_gradio_app` replaces `app.router.lifespan_context`; on Gradio 6
+it **chains** the previous lifespan, so table creation and the ML probe still
+run. `hf_app.py` verifies that chaining at mount time and falls back to plain
+mode if a future Gradio stops doing it (the Logs tab would show
+`hf_app_lifespan_not_chained`).
+
+---
+
+## 3) Environment variables
+
+Secrets go in **Space → Secrets**; non-sensitive settings in **Variables**.
+Nothing here is ever committed.
+
+| Variable | Secret? | Required | Default | Where the value comes from |
+|---|---|---|---|---|
+| `DATABASE_URL` | **Secret** | yes | — | Neon pooled connection string (`sslmode=require`) |
+| `REDIS_URL` | **Secret** | recommended | in-memory fakeredis | Upstash `rediss://default:PASSWORD@host:6379` |
+| `PROVIDER_KEY_ENCRYPTION_KEY` | **Secret** | for BYOK | — | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `GROQ_API_KEY` | **Secret** | no | — | <https://console.groq.com/keys> (operator fallback only) |
+| `GEMINI_API_KEY` | **Secret** | no | — | <https://aistudio.google.com/app/apikey> |
+| `DEEPSEEK_API_KEY` | **Secret** | no | — | <https://platform.deepseek.com/api_keys> |
+| `CORS_ORIGINS` | Variable | yes for the dashboard | Vite dev origins | `https://routellm.saboornasar66.workers.dev` (comma-separated) |
+| `ENVIRONMENT` | Variable | no | `development` | set to `production` |
+| `LOG_LEVEL` | Variable | no | `INFO` | `INFO` (or `DEBUG` while debugging) |
+| `ROUTE_RATE_LIMIT` | Variable | no | `30/minute` | slowapi syntax |
+| `CHAOS_MODE_ENABLED` | Variable | no | `false` | leave `false` on a public Space |
+| `ENABLE_ML_ROUTING` | Variable | no | `false` | leave `false` (see caveats) |
+| `PORT` | Variable | no | `7860` | injected by Hugging Face |
+| `HEALTH_PROBE_TIMEOUT_S` | Variable | no | `2.0` | per-component `/health` timeout |
+| `ROUTELLM_RUNTIME_DIR` | Variable | no | `/tmp/routellm` on HF | override scratch dir |
+| `ROUTELLM_READ_ONLY_APP_DIR` | Variable | no | unset | `1` to force read-only rules |
+
+**Naming note:** the prompt's `ENCRYPTION_KEY` is this codebase's
+**`PROVIDER_KEY_ENCRYPTION_KEY`** (Fernet, encrypts per-caller BYOK provider keys
+at rest). Use the real name or BYOK writes will fail closed with 503.
+
+---
+
+## 4) Deploying from the repo
+
+The Space repo root must be the **contents of `backend/`**, which is why the
+scripts use `git subtree split --prefix backend`.
+
+```bash
+scripts/deploy_hf.sh                 # or: pwsh scripts/deploy_hf.ps1
+git push hf <sha>:main --force        # what the script ultimately runs
 ```
-curl https://<worker-domain>/health              # → backend health JSON, not "not_configured"
-curl https://<worker-domain>/api/v1/catalog      # → {"live_stats_available":..., "models":[...]}
-curl https://<worker-domain>/v1/models           # → OpenAI-style model list
-# deep-link refresh (SPA fallback):
-open https://<worker-domain>/catalog             # must render, not 404
-# end-to-end (real routing):
-curl -s -X POST https://<worker-domain>/v1/chat/completions \
-  -H "Content-Type: application/json" -H "X-API-Key: rk_..." \
-  -d '{"model":"routellm-auto","messages":[{"role":"user","content":"hi"}]}'
-```
 
-## 4) Failure modes & what the UI shows
+- The script refuses to run on a dirty working tree and (by default) only
+  deploys when the backend tests pass.
+- Because it force-pushes, **the Space's generated starter files are replaced**.
+  That is intended: this repo is the source of truth.
+- Git will prompt for the HF **username** and a **WRITE token** as the password.
+  No credentials are stored in the remote URL or in the scripts.
 
-| Situation | What you get |
+Optional automation: `.github/workflows/deploy-hf.yml` does the same on every
+push to `main` that touches `backend/**` — but only after you add the repository
+secret `HF_TOKEN` (it is skipped, not failed, without it).
+
+Optional keep-alive: `.github/workflows/keepalive.yml` pings `/health` every 30
+minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
+
+---
+
+## 5) Caveats
+
+| Topic | What to know |
 |---|---|
-| Worker has no `ROUTELLM_API_ORIGIN` | 503 `routellm_backend_not_configured`; UI: "Backend is not reachable" with the Worker origin named |
-| Backend up, Postgres down | clean 503 `Database temporarily unavailable`; catalog still serves static entries with "No live data" |
-| Backend down entirely | UI: "Backend is not reachable" + Retry; header pill turns red Offline within 15 s |
-| Redis down | quota/circuit states degrade per-provider; nothing 500s |
+| **Sleeping Spaces** | Free CPU Spaces sleep when idle and wake on the next request — the first call after a sleep can take 30–60s. `smoke_deployed.py` retries for ~80s. Keep-alive reduces but does not eliminate this. |
+| **Build errors** | They show in the Space's **Logs** tab, not in the GitHub Actions run. If the Space is stuck on "Building", open Logs first. |
+| **Public Space** | Everything in `backend/` is world-readable. Never commit `.env`; `.gitignore` blocks `backend/.env*` and `.env.hf.local`. |
+| **ML stays off** | `ENABLE_ML_ROUTING=false` and **never** install `requirements-ml.txt` on the Space: `sentence-transformers` pulls torch (>1 GB) and the 87 MB pickle is not in the repo anyway. |
+| **Restart / rebuild** | *Settings → Factory rebuild* is the clean rebuild (reinstalls requirements). A plain **Restart** re-runs `hf_app.py` without reinstalling. |
+| **Rollback** | Force-push an older backend commit: `git subtree split --prefix backend <old-sha>` then `git push hf <new-sha>:main --force`. The previous Space image is also kept under the Space's *Settings → … → builds* history. |
+| **Cold start ≠ failure** | A 503/524 on the very first request usually means "still waking". Re-run the smoke test before changing code. |
+| **Tables** | Created automatically at startup (`SQLModel.metadata.create_all`) and retried on the next request if the database was asleep. No Alembic yet. |
+
+---
+
+## 6) Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Build fails resolving `gradio` vs `fastapi`/`starlette`/`pydantic` | Hugging Face installs its own Gradio on top of `requirements.txt` | Pins in `backend/requirements.txt` are the verified set (Gradio **6.31.0**, FastAPI 0.162.0, Starlette 1.10.0, Pydantic 2.14.2). Keep `sdk_version: 6.31.0` in the README header so the Space builds the tested Gradio. |
+| `TypeError: connect() got an unexpected keyword argument 'sslmode'` | asyncpg does not accept libpq keywords | Handled automatically: `sslmode=require` → `ssl=require`, other libpq params dropped. If it still appears, the Space is running old code — redeploy. |
+| TLS handshake error / `Connection refused` on Redis | `redis://` against a TLS-only Upstash port | Use the **`rediss://`** URL. `/health` will show `redis: "down"` in the meantime. |
+| Browser console: CORS policy error | Dashboard origin missing from `CORS_ORIGINS` | Add the exact origin (scheme + host, no trailing slash), restart the Space, re-run the smoke test with `--origin`. |
+| `relation "task_logs" does not exist` | Tables were never created (DB unreachable at boot, or a different database than the one queried) | Check `/health` → `db`. On the first successful connection the schema is created automatically; a restart forces it. |
+| `Permission denied` writing a file | HF runs non-root with a read-only app dir | Nothing in the app writes next to the source. Use `ROUTELLM_RUNTIME_DIR=/tmp/routellm`. A read-only boot is covered by a test. |
+| Space stuck on "Building" | Dependency resolution or a missing file referenced by `app_file` | Logs tab → look for `pip` output. `app_file` must be `hf_app.py` at the Space root. |
+| 404 at `/` | Root redirect missing (old deployment) | `hf_app.py` installs `GET /` → `/ui` (or `/docs`). Redeploy; `/docs` and `/health` always work even if `/ui` failed to mount. |
+| First request times out, then works | Space was asleep | Expected on free hardware. Retry, or pay for always-on hardware. |
+| `/api/v1/models` shows "No live data" | Postgres/Redis unreachable → deliberate fail-soft | Check `/health`; the UI keeps working and shows `unknown` instead of fake zeros. |
+| `503 {"detail":"Database temporarily unavailable"}` | DB down/unset | Check the Space secrets and Neon status. This is the documented envelope, not a crash. |
+
+---
+
+## 7) Verified dependency set
+
+Pins in `backend/requirements.txt` are the exact versions that were installed
+together in a fresh Python 3.12-targeted virtualenv with `gradio` added on top
+(what Hugging Face does), producing a clean `pip check` and a green backend test
+suite. `backend/requirements-dev.txt` holds test tooling only.
+
+To reproduce:
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r backend/requirements-dev.txt
+.venv/bin/pip install gradio      # what the Space adds implicitly
+.venv/bin/pip check
+cd backend && ../.venv/bin/python -m pytest -q
+```
+
+## 8) Local end-to-end check (no cloud credentials needed)
+
+```bash
+cd backend
+DATABASE_URL="sqlite+aiosqlite:////tmp/routellm.db" \
+REDIS_URL="redis://127.0.0.1:6379" \
+CORS_ORIGINS="http://localhost:5173" \
+PORT=7860 python hf_app.py
+```
+
+Then, from the repo root:
+
+```bash
+python scripts/smoke_deployed.py --api http://127.0.0.1:7860 \
+                                 --origin http://localhost:5173
+```
+
+`sqlite+aiosqlite://` is supported for local runs only (needs `aiosqlite` from
+`requirements-dev.txt`); deployments use Postgres.

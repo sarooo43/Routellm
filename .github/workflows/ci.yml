@@ -44,13 +44,97 @@ jobs:
           cache: pip
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        # Runtime + test tooling is split so the deployment install stays
+        # minimal; CI needs the dev set (pytest, aiosqlite, respx, openai).
+        run: pip install -r requirements-dev.txt
+
+      - name: Verify the app imports with no environment configured
+        # Guards the deployment invariant: `import app.main` must never
+        # require DATABASE_URL/REDIS_URL/gradio.
+        run: python -c "import app.main, app.db.session; print('import ok')"
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
+
+      - name: Verify the Hugging Face entrypoint imports
+        run: python -c "import hf_app; print('hf_app modes:', hf_app.STATUS_UI_PATH)"
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
 
       - name: Run backend tests with coverage
         env:
           DATABASE_URL: postgresql+asyncpg://routellm:routellm@localhost:5432/routellm_test
           REDIS_URL: redis://localhost:6379/0
         run: pytest --cov=app --cov-report=term-missing
+
+  hf-space-boot:
+    # Proves the Space's actual start command works: `python hf_app.py` must
+    # serve /health, /docs, /ui, /api/v1/models and /api/v1/catalog on 7860
+    # with no database, no Redis and no Gradio-specific glue.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Install gradio (as Hugging Face does) and check resolution
+        run: |
+          pip install gradio
+          pip check
+          # Record what Hugging Face will actually build. The Space README pins
+          # sdk_version to the version verified here (see backend/README.md).
+          python -c "import gradio, fastapi, starlette, pydantic; print('gradio', gradio.__version__); print('fastapi', fastapi.__version__); print('starlette', starlette.__version__); print('pydantic', pydantic.VERSION)"
+
+      - name: Boot hf_app.py and probe every public path
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
+          PORT: "7860"
+        run: |
+          set -euo pipefail
+          python hf_app.py > /tmp/hf_app.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 3 http://127.0.0.1:7860/health > /tmp/health.json; then
+              break
+            fi
+            sleep 2
+          done
+          echo "--- /health ---"; cat /tmp/health.json
+          python - <<'PY'
+          import json, sys
+          body = json.load(open("/tmp/health.json"))
+          assert body["status"] in {"ok", "degraded"}, body
+          for key in ("status", "db", "redis", "version", "uptime_s", "components"):
+              assert key in body, f"missing {key} in /health: {body}"
+          print("health contract ok")
+          PY
+          # / must redirect (307/308), /docs and /ui must answer 2xx/3xx.
+          for path in / /docs /ui /api/v1/models /api/v1/catalog /v1/models; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:7860$path")
+            echo "$path -> $code"
+            case "$code" in
+              200|307|308) ;;
+              *) echo "unexpected status for $path"; exit 1 ;;
+            esac
+          done
+          echo "--- startup log (masked) ---"
+          grep -E "hf_app_ready|startup_configuration|database_schema" /tmp/hf_app.log || true
+
+      - name: Run the deployment smoke script against the local server
+        # cwd is backend/, so the script is at ../scripts/. Routing checks are
+        # skipped here (no provider keys in CI); CI's job is the HTTP contract.
+        run: python ../scripts/smoke_deployed.py --api http://127.0.0.1:7860 --skip-routing
 
   cloudflare-worker:
     runs-on: ubuntu-latest

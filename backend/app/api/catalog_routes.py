@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.executor import _ensure_shared_clients
 from app.core.model_catalog import MODEL_CATALOG
 from app.core.scorer import COST_PER_1K_TOKENS
-from app.db.session import get_session
+from app.db.session import get_optional_session
 from app.models import ModelStatsDB
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
@@ -63,7 +63,9 @@ def _status_for(state: str, success_rate: float) -> str:
 
 
 @router.get("/catalog", response_model=CatalogResponse)
-async def get_catalog(db_session: AsyncSession = Depends(get_session)):
+async def get_catalog(
+    db_session: Optional[AsyncSession] = Depends(get_optional_session),
+):
     """Merge curated catalog metadata with live stats for registered providers.
 
     FAIL-SOFT: the static directory (names, capabilities, context windows,
@@ -76,15 +78,16 @@ async def get_catalog(db_session: AsyncSession = Depends(get_session)):
 
     # Live stats: aggregated per-provider request history. A DB outage nulls
     # the live fields — never the whole endpoint.
-    live_stats_available = True
+    live_stats_available = db_session is not None
     by_provider: dict[str, list[ModelStatsDB]] = {}
-    try:
-        rows = (await db_session.execute(select(ModelStatsDB))).scalars().all()
-        for row in rows:
-            by_provider.setdefault(row.provider_name, []).append(row)
-    except Exception as exc:
-        logger.warning("catalog_live_stats_unavailable", error=str(exc))
-        live_stats_available = False
+    if db_session is not None:
+        try:
+            rows = (await db_session.execute(select(ModelStatsDB))).scalars().all()
+            for row in rows:
+                by_provider.setdefault(row.provider_name, []).append(row)
+        except Exception as exc:
+            logger.warning("catalog_live_stats_unavailable", error=str(exc)[:300])
+            live_stats_available = False
 
     for entry in entries:
         if not live_stats_available:

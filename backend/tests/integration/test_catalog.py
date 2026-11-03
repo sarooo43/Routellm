@@ -13,14 +13,14 @@ from app.providers.registry import PROVIDER_REGISTRY
 @pytest.fixture
 async def client(monkeypatch, db_session, breaker):
     from app.api import catalog_routes
-    from app.db.session import get_session
+    from app.db.session import get_optional_session
 
     async def override_session():
         yield db_session
 
-    monkeypatch.setattr(
-        app, "dependency_overrides", {get_session: override_session}
-    )
+    # The catalog is fail-soft: it depends on get_optional_session, which
+    # yields None instead of 503 when the database is unreachable.
+    app.dependency_overrides[get_optional_session] = override_session
     monkeypatch.setattr(catalog_routes, "_get_breaker", lambda: breaker)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
@@ -101,12 +101,12 @@ async def test_catalog_fails_soft_when_db_stats_unavailable(client, breaker):
         scalars = staticmethod(lambda: None)
 
     from app.api import catalog_routes
-    from app.db.session import get_session
+    from app.db.session import get_optional_session
 
     async def override_session():
         yield BrokenSession()
 
-    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_optional_session] = override_session
     try:
         response = await client.get("/api/v1/catalog")
     finally:

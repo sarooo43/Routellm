@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     # trained (scripts/train_router_model.py) AND validated. Requires the
     # model file backend/app/ml_models/router_classifier.pkl to exist.
     ENABLE_ML_ROUTING: bool = False
+    # Port to bind when the app is started as a script (hf_app.py). Hugging
+    # Face Spaces require 7860; docker-compose/uvicorn pass --port explicitly.
+    PORT: int = 7860
+    # Set to "1"/"true" to force the Hugging Face filesystem rules (no writes
+    # inside the app dir) when testing a read-only deployment elsewhere.
+    ROUTELLM_READ_ONLY_APP_DIR: str = ""
+    # Optional explicit runtime directory override (logs/scratch files).
+    ROUTELLM_RUNTIME_DIR: str = ""
+    # Per-component budget for /health probes. Kept short so a sleeping
+    # Space's health check cannot hang a load balancer.
+    HEALTH_PROBE_TIMEOUT_S: float = 2.0
 
 
 settings = Settings()
@@ -48,6 +59,34 @@ class _CorsOrigins:
     def parse(raw: str) -> list[str]:
         origins = [o.strip().rstrip("/") for o in (raw or "").split(",") if o.strip()]
         return origins
+
+
+def normalize_redis_url(raw: Optional[str]) -> Optional[str]:
+    """Return a Redis DSN that the async client accepts, or None when unset.
+
+    ``rediss://`` (TLS, what Upstash hands out) is passed through untouched —
+    ``redis.asyncio.from_url`` already selects the TLS connection class from
+    the scheme. The only rewrite is the legacy/managed-provider habit of using
+    ``redis://`` against a TLS-only host, which is left alone *on purpose*:
+    silently upgrading the scheme would turn a clear connection error into a
+    confusing TLS handshake failure. See docs/DEPLOY.md troubleshooting.
+    """
+    if not raw:
+        return None
+    url = raw.strip()
+    if not url:
+        return None
+    if url.startswith(("redis://", "rediss://", "unix://")):
+        return url
+    raise ValueError(
+        "REDIS_URL must start with redis://, rediss:// or unix:// "
+        f"(got {url.split(':', 1)[0]!r})"
+    )
+
+
+def redis_uses_tls(raw: Optional[str]) -> bool:
+    """True for rediss:// (TLS) DSNs — used by the startup log."""
+    return bool(raw) and str(raw).strip().lower().startswith("rediss://")
 
 
 def cors_origin_list(settings_obj: Optional[Settings] = None) -> list[str]:

@@ -1,0 +1,24 @@
+# RouteLLM backend — development/test dependencies.
+#
+# Install with:  pip install -r backend/requirements-dev.txt
+# (This file includes the runtime set, then adds tooling.)
+#
+# Nothing here is needed to *run* the API, and the Hugging Face Space never
+# installs it.
+
+-r requirements.txt
+
+# --- test runner ---------------------------------------------------------
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+pytest-cov==7.1.0
+
+# --- test doubles --------------------------------------------------------
+# Async SQLite engine for the integration fixtures (tests/integration/conftest.py).
+aiosqlite==0.22.1
+# httpx request mocking for provider adapters.
+respx==0.23.1
+
+# --- real-SDK compatibility checks (scripts/smoke_openai_sdk.py) ---------
+# Verifies the OpenAI-compatible surface with the actual SDK, not a fake.
+openai==3.42.1
