@@ -1,0 +1,92 @@
+name: Deploy to Hugging Face Space
+
+# Optional convenience: pushes backend/ to the Space whenever main changes.
+#
+# It is INERT until you add the repository secret HF_TOKEN
+# (Settings → Secrets and variables → Actions → New repository secret).
+# Without the secret the job is skipped, so the workflow never shows a red X
+# just because it has not been configured yet.
+#
+# Manual runs: Actions → "Deploy to Hugging Face Space" → Run workflow.
+# Use the dry_run input to build the subtree commit without pushing anything.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build the subtree commit but do not push"
+        type: boolean
+        default: false
+
+# Never cancel an in-flight deploy; never run two at once.
+concurrency:
+  group: deploy-hf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Job-level gate: skipped (not failed) when the secret is absent.
+    if: ${{ github.event_name == 'workflow_dispatch' || secrets.HF_TOKEN != '' }}
+    env:
+      HF_SPACE_REPO: saboornotgonna/routellm
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git subtree split needs history
+
+      - name: Explain a skipped push
+        if: ${{ secrets.HF_TOKEN == '' }}
+        run: |
+          echo "::notice::HF_TOKEN is not set - building the subtree commit only."
+          echo "Add the secret to enable automatic deploys (see DEPLOY.md)."
+
+      - name: Split backend/ into an orphan history
+        id: split
+        run: |
+          set -euo pipefail
+          SHA=$(git subtree split --prefix backend HEAD)
+          echo "subtree_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Prepared subtree commit ${SHA}"
+
+      - name: Push to the Space
+        if: ${{ secrets.HF_TOKEN != '' && env.DRY_RUN != 'true' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # `set -x` stays OFF: it would print the shell expansion of the token.
+          set -euo pipefail
+
+          # Ephemeral credential helper. The token is referenced from the
+          # environment at runtime, never written into this file, never placed
+          # in the remote URL, and never passed on the command line. GitHub also
+          # masks HF_TOKEN in the log.
+          HELPER="${RUNNER_TEMP}/hf-credential-helper.sh"
+          cat > "${HELPER}" <<'EOS'
+          #!/bin/sh
+          if [ "$1" = "get" ]; then
+            echo "username=x-access-token"
+            echo "password=${HF_TOKEN}"
+          fi
+          EOS
+          chmod 700 "${HELPER}"
+
+          SHA="${{ steps.split.outputs.subtree_sha }}"
+          git -c credential.helper="${HELPER}" \
+              push "https://huggingface.co/spaces/${HF_SPACE_REPO}" "${SHA}:main" --force
+          rm -f "${HELPER}"
+
+          echo "::notice::Pushed ${SHA} to https://huggingface.co/spaces/${HF_SPACE_REPO}"
+
+      - name: Report dry run
+        if: ${{ env.DRY_RUN == 'true' }}
+        run: |
+          echo "Dry run: subtree commit ${{ steps.split.outputs.subtree_sha }} built, nothing pushed."

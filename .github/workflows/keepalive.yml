@@ -1,0 +1,55 @@
+name: Keep the Space awake
+
+# OPTIONAL convenience. Free Hugging Face Spaces sleep after a period of
+# inactivity and wake on the next request (a slow first load, ~30-60s).
+# A periodic /health call reduces how often that happens, but it CANNOT
+# guarantee the Space never sleeps: Hugging Face may still sleep it, and this
+# workflow is limited to GitHub's schedule (which can be delayed by minutes).
+#
+# Configure it by creating a repository VARIABLE (not a secret — the URL is
+# public):
+#   Settings → Secrets and variables → Actions → Variables → New variable
+#   Name:  API_BASE_URL
+#   Value: https://saboornotgonna-routellm.hf.space
+#
+# Without that variable every step is skipped and nothing fails.
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub disables schedules after 60 days of repository
+    # inactivity — re-enable from the Actions tab if that happens.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip when API_BASE_URL is not configured
+        if: ${{ vars.API_BASE_URL == '' }}
+        run: echo "::notice::API_BASE_URL repository variable is not set - nothing to do."
+
+      - name: Ping /health
+        if: ${{ vars.API_BASE_URL != '' }}
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE="${API_BASE_URL%/}"
+          echo "Pinging ${BASE}/health"
+          # -f fails on 4xx/5xx; a sleeping Space may take a while to answer,
+          # so allow a generous timeout and retry a couple of times.
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 60 "${BASE}/health" -o /tmp/health.json; then
+              cat /tmp/health.json
+              echo
+              exit 0
+            fi
+            echo "attempt ${attempt} failed; retrying in 20s"
+            sleep 20
+          done
+          echo "::warning::Space did not answer /health after 3 attempts (it may be asleep or rebuilding)."
+          exit 0
