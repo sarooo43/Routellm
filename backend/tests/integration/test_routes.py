@@ -26,12 +26,14 @@ async def client(monkeypatch, db_session, breaker, tracker, redis_client, auth_h
     from app.api import routes as routes_module
     from app.core import executor as executor_module
     from app.core.chaos import ChaosController
-    from app.db.session import get_session
+    from app.db.session import get_optional_session, get_session
 
     async def _override_session():
         yield db_session
 
     app.dependency_overrides[get_session] = _override_session
+    # /api/v1/models is fail-soft and depends on the optional session.
+    app.dependency_overrides[get_optional_session] = _override_session
     monkeypatch.setattr(routes_module, "_get_breaker", lambda: breaker)
     monkeypatch.setattr(routes_module, "_get_quota", lambda: tracker)
     monkeypatch.setattr(
@@ -170,7 +172,12 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
     assert resp.status_code == 200
 
     body = resp.json()
-    assert set(body.keys()) == {"chaos_mode_enabled", "providers"}
+    assert set(body.keys()) == {
+        "chaos_mode_enabled",
+        "live_stats_available",
+        "providers",
+    }
+    assert body["live_stats_available"] is True
     assert body["chaos_mode_enabled"] is False  # flag off in the test env
 
     items = {item["name"]: item for item in body["providers"]}
