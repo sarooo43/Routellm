@@ -1,20 +1,38 @@
-fastapi
-uvicorn[standard]
-pydantic
-pydantic-settings
-httpx
-cryptography
-sqlmodel
-asyncpg
-greenlet
-redis
-fakeredis
-aiosqlite
-structlog
-slowapi
-pytest
-pytest-asyncio
-pytest-cov
-respx
-# Real-SDK compatibility checks (scripts/smoke_openai_sdk.py); not a server dependency.
-openai
+# RouteLLM backend — RUNTIME dependencies only.
+#
+# This file is what gets installed on a deployment host (Hugging Face Space,
+# Docker image, Railway/Render). Keep it free of dev/test tooling: the Space is
+# PUBLIC and every install is paid for in build minutes.
+# Dev/test tooling lives in requirements-dev.txt.
+#
+# Versions are pinned to the exact set that was verified together (see
+# DEPLOY.md → "Verified dependency set"): Python 3.12, gradio 6.31.0 added on
+# top, `pip check` clean, full backend test suite green.
+
+# --- web framework -------------------------------------------------------
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.2
+pydantic-settings==2.16.2
+
+# --- HTTP client (provider calls + OpenAI-compatible upstream) -----------
+httpx==0.28.1
+
+# --- BYOK at rest (Fernet/AES) -------------------------------------------
+cryptography==50.0.2
+
+# --- database (Postgres via asyncpg; SQLModel on SQLAlchemy 2.x) ---------
+sqlmodel==0.0.48
+asyncpg==0.32.0
+greenlet==3.5.6
+
+# --- cache / circuit breaker / quota ------------------------------------
+redis==8.1.0
+# In-process Redis stand-in used when REDIS_URL is unset (dev + single-instance
+# demo). Kept in the runtime set on purpose: without it the app cannot start
+# on a fresh clone, which is exactly the failure this deployment targets.
+fakeredis==2.40.0
+
+# --- logging + rate limiting --------------------------------------------
+structlog==26.1.0
+slowapi==0.1.10

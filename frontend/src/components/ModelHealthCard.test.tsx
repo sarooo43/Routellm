@@ -40,4 +40,26 @@ describe('ModelHealthCard', () => {
     expect(screen.getByText('groq')).toBeInTheDocument()
     expect(screen.getByText('92%')).toBeInTheDocument()
   })
+
+  // Deployment fail-soft: the backend reports null live fields (and status
+  // "unknown") when Postgres/Redis are unreachable. The card must render a
+  // neutral state rather than a fabricated 0% success rate.
+  it('renders a neutral "No live data" card when telemetry is unavailable', () => {
+    render(
+      <ModelHealthCard
+        name="groq"
+        status="unknown"
+        successRate={null}
+        requestsToday={null}
+        quotaPercentageUsed={null}
+      />,
+    )
+    const badge = screen.getByTestId('status-badge')
+    expect(badge).toHaveTextContent('No live data')
+    expect(badge).toHaveStyle({ color: '#9CA3AF' })
+    // No invented numbers anywhere: no "0%", no "0.00%".
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+    expect(screen.queryByText('0.00%')).not.toBeInTheDocument()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+  })
 })

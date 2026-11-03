@@ -16,6 +16,18 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# Explicit (belt and braces): backend env files must never be committed. The
+# Hugging Face Space is PUBLIC, so a leaked DATABASE_URL/REDIS_URL/provider key
+# would be world-readable and is only removable by rewriting history.
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+# Local-only deployment scratch (real Neon/Upstash values for manual testing).
+.env.hf.local
+backend/.env.hf.local
 
 # Databases (local demo/dev artifacts)
 *.db
@@ -25,6 +37,9 @@ __pycache__/
 # or synthetic/local training data to the repo)
 backend/app/ml_models/*.pkl
 backend/scripts/training_data/
+
+# Runtime scratch (non-Hugging Face local runs only; HF uses /tmp)
+backend/.runtime/
 
 # Logs & caches
 *.log

@@ -4,13 +4,18 @@ import type { ProviderStatusValue } from '../types/api'
 import { formatCount } from '../lib/format'
 import { ChaosControl } from './ChaosControl'
 
+/** Card states: the three real ones plus "unknown" (telemetry unavailable). */
+export type ProviderCardStatus = ProviderStatusValue | 'unknown'
+
 const STATUS_META: Record<
-  ProviderStatusValue,
+  ProviderCardStatus,
   { label: string; color: string; bg: string }
 > = {
   healthy: { label: 'Healthy', color: '#3DDC97', bg: 'rgba(61, 220, 151, 0.12)' },
   degraded: { label: 'Degraded', color: '#F5A623', bg: 'rgba(245, 166, 35, 0.12)' },
   circuit_open: { label: 'Circuit Open', color: '#FF4D4D', bg: 'rgba(255, 77, 77, 0.12)' },
+  /** No live data (DB/Redis down) — deliberately neutral, not an error colour. */
+  unknown: { label: 'No live data', color: '#9CA3AF', bg: 'rgba(156, 163, 175, 0.12)' },
 }
 
 function ringColorFor(rate: number): string {
@@ -19,7 +24,7 @@ function ringColorFor(rate: number): string {
   return '#FF4D4D' // danger red
 }
 
-export function StatusBadge({ status }: { status: ProviderStatusValue }) {
+export function StatusBadge({ status }: { status: ProviderCardStatus }) {
   const meta = STATUS_META[status]
   return (
     <span
@@ -39,10 +44,11 @@ export function StatusBadge({ status }: { status: ProviderStatusValue }) {
 
 interface ModelHealthCardProps {
   name: string
-  status: ProviderStatusValue
-  successRate: number // 0..1
-  requestsToday: number
-  quotaPercentageUsed: number
+  status: ProviderCardStatus
+  /** 0..1, or null when telemetry is unavailable. */
+  successRate: number | null
+  requestsToday: number | null
+  quotaPercentageUsed: number | null
   /** DEV/DEMO ONLY — render the chaos controls at all? */
   chaosEnabled?: boolean
   chaosActive?: boolean
@@ -71,7 +77,7 @@ export function ModelHealthCard({
 }: ModelHealthCardProps) {
   const meta = STATUS_META[status]
   const shakeControls = useAnimationControls()
-  const prevStatusRef = useRef<ProviderStatusValue>(status)
+  const prevStatusRef = useRef<ProviderCardStatus>(status)
 
   useEffect(() => {
     if (prevStatusRef.current !== 'circuit_open' && status === 'circuit_open') {
@@ -83,9 +89,13 @@ export function ModelHealthCard({
     prevStatusRef.current = status
   }, [status, shakeControls])
 
-  const clampedRate = Math.min(Math.max(successRate, 0), 1)
-  const ringColor = ringColorFor(clampedRate)
+  // null → the ring renders empty and the label says "—" instead of inventing
+  // a 0% success rate for a provider that simply has no telemetry.
+  const hasStats = successRate !== null
+  const clampedRate = Math.min(Math.max(successRate ?? 0, 0), 1)
+  const ringColor = hasStats ? ringColorFor(clampedRate) : '#4B5563'
   const ringPct = Math.round(clampedRate * 100)
+  const quotaValue = quotaPercentageUsed
 
   return (
     <motion.div animate={shakeControls}>
@@ -142,7 +152,7 @@ export function ModelHealthCard({
               className="absolute inset-0 flex items-center justify-center text-xs font-semibold tabular-nums"
               style={{ color: ringColor }}
             >
-              {ringPct}%
+              {hasStats ? `${ringPct}%` : '—'}
             </span>
           </div>
 
@@ -150,7 +160,7 @@ export function ModelHealthCard({
             <p className="text-text-secondary">
               Requests today{' '}
               <span className="text-text-primary font-semibold tabular-nums">
-                {formatCount(requestsToday)}
+                {requestsToday === null ? '—' : formatCount(requestsToday)}
               </span>
             </p>
             <p className="text-text-secondary">
@@ -158,17 +168,24 @@ export function ModelHealthCard({
               <span
                 className="font-semibold tabular-nums"
                 style={{
-                  color: quotaPercentageUsed >= 90 ? '#FF4D4D' : quotaPercentageUsed >= 70 ? '#F5A623' : '#F5F5F5',
+                  color:
+                    quotaValue === null
+                      ? '#9CA3AF'
+                      : quotaValue >= 90
+                        ? '#FF4D4D'
+                        : quotaValue >= 70
+                          ? '#F5A623'
+                          : '#F5F5F5',
                 }}
               >
-                {quotaPercentageUsed.toFixed(2)}%
+                {quotaValue === null ? '—' : `${quotaValue.toFixed(2)}%`}
               </span>
             </p>
             <div className="h-1.5 w-full max-w-[140px] rounded-full bg-white/5 overflow-hidden">
               <motion.div
                 className="h-full rounded-full bg-accent"
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min(quotaPercentageUsed, 100)}%` }}
+                animate={{ width: `${Math.min(quotaValue ?? 0, 100)}%` }}
                 transition={{ duration: 0.7, ease: 'easeOut' }}
               />
             </div>

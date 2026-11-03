@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CatalogResponse } from '../types/api'
+import type { CatalogEntry, CatalogResponse } from '../types/api'
 import { ModelCatalog } from './ModelCatalog'
 
 vi.mock('../api/client', () => ({
