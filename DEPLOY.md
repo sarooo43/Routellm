@@ -174,7 +174,8 @@ minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Build fails resolving `gradio` vs `fastapi`/`starlette`/`pydantic` | Hugging Face installs its own Gradio on top of `requirements.txt` | Pins in `backend/requirements.txt` are the verified set (Gradio **6.31.0**, FastAPI 0.162.0, Starlette 1.10.0, Pydantic 2.14.2). Keep `sdk_version: 6.31.0` in the README header so the Space builds the tested Gradio. |
+| Build fails: `ResolutionImpossible` … `gradio[mcp,oauth] 6.31.0 depends on pydantic<=2.12.5` | Hugging Face does **not** run a bare `pip install gradio` — it installs `gradio[oauth,mcp]==<sdk_version>` **plus** `spaces`, `uvicorn` and `websockets`, and the **mcp** extra has a tighter pydantic ceiling than a plain install | `pydantic` is pinned to **2.12.5** for exactly this reason. If you bump it, the Space build dies before any code runs. The ceiling only appears with the `mcp` extra, which is why a local `pip install gradio` does not catch it — the `hf-space-boot` CI job now installs the same closure. |
+| Build fails resolving `gradio` vs `fastapi`/`starlette`/`pydantic` | Hugging Face installs its own Gradio on top of `requirements.txt` | Pins in `backend/requirements.txt` are the verified set (Gradio **6.31.0**, FastAPI 0.162.0, Starlette 1.10.0, Pydantic **2.12.5**). Keep `sdk_version: 6.31.0` in the README header so the Space builds the tested Gradio. |
 | `TypeError: connect() got an unexpected keyword argument 'sslmode'` | asyncpg does not accept libpq keywords | Handled automatically: `sslmode=require` → `ssl=require`, other libpq params dropped. If it still appears, the Space is running old code — redeploy. |
 | TLS handshake error / `Connection refused` on Redis | `redis://` against a TLS-only Upstash port | Use the **`rediss://`** URL. `/health` will show `redis: "down"` in the meantime. |
 | Browser console: CORS policy error | Dashboard origin missing from `CORS_ORIGINS` | Add the exact origin (scheme + host, no trailing slash), restart the Space, re-run the smoke test with `--origin`. |
@@ -195,15 +196,24 @@ together in a fresh Python 3.12-targeted virtualenv with `gradio` added on top
 (what Hugging Face does), producing a clean `pip check` and a green backend test
 suite. `backend/requirements-dev.txt` holds test tooling only.
 
-To reproduce:
+**Reproduce the Space's closure, not a plain install.** Hugging Face installs
+`gradio[oauth,mcp]==<sdk_version>` plus `spaces`, `uvicorn` and `websockets`, and
+the `mcp` extra imposes `pydantic<=2.12.5`. A bare `pip install gradio` misses
+that constraint entirely — which is how an earlier build failed.
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r backend/requirements-dev.txt
-.venv/bin/pip install gradio      # what the Space adds implicitly
-.venv/bin/pip check
-cd backend && ../.venv/bin/python -m pytest -q
+pip install "torch-stub==0.0.1"          # the Space image already has real torch
+pip install -r backend/requirements.txt \
+  "gradio[oauth,mcp]==6.31.0" "spaces==0.51.3" \
+  "uvicorn>=0.14.0" "websockets>=10.4"
+pip check
+cd backend && ROUTELLM_CHECK_PYPI=1 ../.venv/bin/python -m pytest -q
 ```
+
+`ROUTELLM_CHECK_PYPI=1` additionally re-checks the pins against Gradio's live
+metadata, which is what caught the pydantic ceiling.
 
 ## 8) Local end-to-end check (no cloud credentials needed)
 

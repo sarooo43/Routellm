@@ -88,13 +88,29 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Install gradio (as Hugging Face does) and check resolution
+      - name: Install gradio exactly as Hugging Face does and check resolution
+        # IMPORTANT: Hugging Face does NOT run a bare `pip install gradio`.
+        # For the Gradio SDK it installs
+        #   gradio[oauth,mcp]==<sdk_version>  +  spaces  +  uvicorn  +  websockets
+        # and the *mcp* extra has a tighter pydantic ceiling than a bare
+        # install does. Appending a stub `torch` (already on the Space image)
+        # reproduces the Space's resolution faithfully without a 2GB download.
         run: |
-          pip install gradio
+          SDK_VERSION=$(python -c "import re;print(re.search(r'^sdk_version:\s*(\S+)',open('README.md').read(),re.M).group(1))")
+          echo "Resolving against gradio[oauth,mcp]==${SDK_VERSION}"
+          pip install "torch-stub==0.0.1" || true
+          pip install -r requirements.txt \
+            "gradio[oauth,mcp]==${SDK_VERSION}" \
+            "spaces==0.51.3" \
+            "uvicorn>=0.14.0" "websockets>=10.4"
           pip check
-          # Record what Hugging Face will actually build. The Space README pins
-          # sdk_version to the version verified here (see backend/README.md).
           python -c "import gradio, fastapi, starlette, pydantic; print('gradio', gradio.__version__); print('fastapi', fastapi.__version__); print('starlette', starlette.__version__); print('pydantic', pydantic.VERSION)"
+
+      - name: Verify the pins satisfy gradio's enabled extras
+        run: ROUTELLM_CHECK_PYPI=1 python -m pytest tests/test_hf_requirements.py -q
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
 
       - name: Boot hf_app.py and probe every public path
         env:

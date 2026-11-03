@@ -12,7 +12,11 @@
 # --- web framework -------------------------------------------------------
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.2
+# NOTE: pinned to <=2.12.5 on purpose. Hugging Face installs
+# `gradio[oauth,mcp]==6.31.0`, and Gradio's *mcp* extra requires
+# `pydantic<=2.12.5,>=2.11.10`. A newer pydantic here makes the Space build
+# fail with ResolutionImpossible before anything runs.
+pydantic==2.12.5
 pydantic-settings==2.16.2
 
 # --- HTTP client (provider calls + OpenAI-compatible upstream) -----------
