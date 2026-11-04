@@ -320,6 +320,131 @@ def test_main_starts_uvicorn_when_port_is_free(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# ZeroGPU hardware (free accounts are often offered only this)
+# --------------------------------------------------------------------------
+
+
+def _clear_zerogpu_state(monkeypatch):
+    monkeypatch.delenv(hf_app.ZERO_GPU_ENV, raising=False)
+    monkeypatch.delenv(hf_app.ZERO_DEVICE_API_URL_ENV, raising=False)
+    try:
+        from spaces.zero import decorator as zero_decorator
+
+        zero_decorator.decorated_cache.clear()
+    except ImportError:  # spaces not installed in this environment
+        pass
+
+
+def test_zerogpu_disabled_off_hardware(monkeypatch):
+    monkeypatch.delenv(hf_app.ZERO_GPU_ENV, raising=False)
+    assert hf_app.zerogpu_enabled() is False
+    assert hf_app.register_zerogpu_stub() is False
+    assert hf_app.notify_zerogpu_startup() is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "t"])
+def test_zerogpu_env_values(monkeypatch, value):
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, value)
+    assert hf_app.zerogpu_enabled() is True
+
+
+def test_zerogpu_stub_registers_a_gpu_function(monkeypatch):
+    """The whole point: ZeroGPU refuses to start without a @spaces.GPU one."""
+    pytest.importorskip("spaces")
+    _clear_zerogpu_state(monkeypatch)
+    if not hf_app.zerogpu_enabled.__module__:  # pragma: no cover
+        pytest.skip("unreachable")
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, "true")
+    # Config.zero_gpu is read at import time by spaces; patch the flag the
+    # decorator itself consults so this test is hardware-independent.
+    from spaces import config as spaces_config
+
+    monkeypatch.setattr(spaces_config.Config, "zero_gpu", True, raising=False)
+
+    from spaces.zero import decorator as zero_decorator
+
+    assert hf_app.register_zerogpu_stub() is True
+    assert zero_decorator.decorated_cache, "no @spaces.GPU function was registered"
+    decorated = list(zero_decorator.decorated_cache.values())
+    assert all(getattr(fn, "zerogpu", None) is None for fn in decorated)
+
+
+def test_zerogpu_stub_is_skipped_without_spaces(monkeypatch):
+    """A missing `spaces` package must not take the API down."""
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, "true")
+    monkeypatch.setitem(__import__("sys").modules, "spaces", None)
+    assert hf_app.register_zerogpu_stub() is False
+    assert hf_app.notify_zerogpu_startup() is False
+
+
+def test_zerogpu_report_is_sent_when_configured(monkeypatch):
+    _clear_zerogpu_state(monkeypatch)
+    pytest.importorskip("spaces")
+    from spaces.zero import client as zero_client
+    from spaces.zero import decorator as zero_decorator
+
+    sent = []
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, "true")
+    monkeypatch.setenv(hf_app.ZERO_DEVICE_API_URL_ENV, "http://device.test")
+    zero_decorator.decorated_cache[lambda: None] = lambda: None
+    monkeypatch.setattr(zero_client, "startup_report", lambda: sent.append(1))
+
+    assert hf_app.notify_zerogpu_startup() is True
+    assert sent == [1]
+
+
+def test_zerogpu_report_failure_is_not_fatal(monkeypatch):
+    _clear_zerogpu_state(monkeypatch)
+    pytest.importorskip("spaces")
+    from spaces.zero import client as zero_client
+    from spaces.zero import decorator as zero_decorator
+
+    def boom():
+        raise RuntimeError("Error while initializing ZeroGPU: Unknown")
+
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, "true")
+    monkeypatch.setenv(hf_app.ZERO_DEVICE_API_URL_ENV, "http://device.test")
+    zero_decorator.decorated_cache[lambda: None] = lambda: None
+    monkeypatch.setattr(zero_client, "startup_report", boom)
+
+    # A refused report must not crash the API; it degrades to an error log.
+    assert hf_app.notify_zerogpu_startup() is False
+
+
+def test_zerogpu_report_skipped_without_device_api_url(monkeypatch):
+    _clear_zerogpu_state(monkeypatch)
+    pytest.importorskip("spaces")
+    from spaces.zero import decorator as zero_decorator
+
+    monkeypatch.setenv(hf_app.ZERO_GPU_ENV, "true")
+    zero_decorator.decorated_cache[lambda: None] = lambda: None
+    assert hf_app.notify_zerogpu_startup() is False
+
+
+def test_main_calls_zerogpu_hooks_in_order(monkeypatch):
+    """Stub must exist before the app is configured; report before uvicorn."""
+    import uvicorn
+
+    order = []
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: None)
+    monkeypatch.setattr(
+        hf_app, "register_zerogpu_stub", lambda: order.append("stub") or True
+    )
+    monkeypatch.setattr(
+        hf_app,
+        "configure_app",
+        lambda mode="gradio": order.append("configure") or "plain",
+    )
+    monkeypatch.setattr(
+        hf_app, "notify_zerogpu_startup", lambda: order.append("report") or True
+    )
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: order.append("serve"))
+
+    assert hf_app.main([]) == 0
+    assert order == ["stub", "configure", "report", "serve"]
+
+
+# --------------------------------------------------------------------------
 # The real module exposes the real app
 # --------------------------------------------------------------------------
 

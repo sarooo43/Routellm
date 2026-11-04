@@ -38,7 +38,7 @@ from typing import Literal, Optional
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from app.main import app, lifespan as app_lifespan, log_startup_diagnostics
+from app.main import app, log_startup_diagnostics
 from app.runtime import running_on_huggingface
 from app.utils.logger import get_logger
 
@@ -53,6 +53,10 @@ STATUS_UI_PATH = "/ui"
 #: Gradio SDK image ships Node 20 while SSR wants Node 24+. Pinning it off also
 #: makes the mount path deterministic: client-side rendering, one process.
 SSR_MODE_ENV = "GRADIO_SSR_MODE"
+#: Set by the platform on ZeroGPU hardware.
+ZERO_GPU_ENV = "SPACES_ZERO_GPU"
+#: ZeroGPU's private device API; only used to send the startup report.
+ZERO_DEVICE_API_URL_ENV = "SPACES_ZERO_DEVICE_API_URL"
 
 SdkMode = Literal["gradio", "plain"]
 
@@ -191,6 +195,99 @@ def _resolve_port() -> int:
     return DEFAULT_PORT
 
 
+# ---------------------------------------------------------------------------
+# ZeroGPU hardware
+# ---------------------------------------------------------------------------
+#
+# ZeroGPU refuses to start a Space unless a function decorated with
+# ``@spaces.GPU`` was registered at import time ("No @spaces.GPU function
+# detected during startup"). Free accounts are frequently offered *only*
+# ZeroGPU, so "just use CPU" is not always available advice.
+#
+# This API has no GPU work — routing is HTTP calls to providers. The function
+# below exists solely to satisfy the startup probe, is never called, and does
+# nothing. It is defined only on ZeroGPU so CPU/local runs are untouched.
+#
+# ``spaces`` itself sends the startup report from inside a patched
+# ``gr.Blocks.launch()`` (``spaces/zero/__init__.py`` -> ``gradio.one_launch``).
+# We serve FastAPI through uvicorn and never call ``launch()``, so the report
+# is never sent — :func:`notify_zerogpu_startup` does it explicitly.
+# ---------------------------------------------------------------------------
+
+
+def zerogpu_enabled() -> bool:
+    """True when the container is running on ZeroGPU hardware."""
+    return os.environ.get(ZERO_GPU_ENV, "").strip().lower() in ("1", "t", "true")
+
+
+def register_zerogpu_stub() -> bool:
+    """Declare a no-op ``@spaces.GPU`` function so ZeroGPU lets us start.
+
+    Returns True when the stub was registered. Never raises: on CPU hardware,
+    on local runs, or with a broken ``spaces`` install this is a no-op and the
+    API still serves.
+    """
+    if not zerogpu_enabled():
+        return False
+    try:
+        import spaces
+    except ImportError:
+        logger.warning("zerogpu_stub_unavailable", detail="spaces is not installed")
+        return False
+
+    @spaces.GPU(duration=1)
+    def _routellm_zerogpu_placeholder():
+        """Never called. Present only to satisfy ZeroGPU's startup probe."""
+        return None
+
+    logger.info(
+        "zerogpu_stub_registered",
+        detail=(
+            "declared an unused @spaces.GPU function; this API does no GPU "
+            "work and the placeholder is never invoked"
+        ),
+    )
+    return True
+
+
+def notify_zerogpu_startup() -> bool:
+    """Send ZeroGPU's startup report. Best effort; never fatal.
+
+    Mirrors ``spaces.zero.startup()`` minus the torch packing (which needs a
+    GPU context to be meaningful): with a decorated function registered, the
+    platform expects this POST before it will keep the Space alive.
+    """
+    if not zerogpu_enabled():
+        return False
+    try:
+        from spaces.zero import client as zero_client
+        from spaces.zero import decorator as zero_decorator
+    except Exception as exc:  # spaces present but zero mode off / import trouble
+        logger.warning("zerogpu_report_skipped", error=str(exc)[:200])
+        return False
+
+    if not zero_decorator.decorated_cache:
+        logger.warning(
+            "zerogpu_report_skipped",
+            detail="no @spaces.GPU function registered",
+        )
+        return False
+    if not os.environ.get(ZERO_DEVICE_API_URL_ENV):
+        logger.warning(
+            "zerogpu_report_skipped", detail=f"{ZERO_DEVICE_API_URL_ENV} not set"
+        )
+        return False
+    try:
+        zero_client.startup_report()
+    except Exception as exc:
+        # A refused report should not take the API down; the platform may
+        # still keep the Space running, and a dead API is worse than a warning.
+        logger.error("zerogpu_report_failed", error=str(exc)[:300])
+        return False
+    logger.info("zerogpu_report_sent")
+    return True
+
+
 def probe_port(host: str, port: int) -> Optional[str]:
     """Return ``None`` if ``host:port`` is bindable, else a short reason.
 
@@ -249,7 +346,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return PORT_IN_USE_EXIT_CODE
 
+    # ZeroGPU: declare the GPU function *before* the app is configured, then
+    # send the startup report the platform is waiting for. Both are no-ops
+    # everywhere except ZeroGPU hardware.
+    register_zerogpu_stub()
+
     configure_app(wanted)
+    notify_zerogpu_startup()
 
     uvicorn.run(
         app,
