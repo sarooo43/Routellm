@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, HeartPulse } from 'lucide-react'
 import axios from 'axios'
+import { extractWorkerDetail } from '../api/workerDetail'
 
 /**
  * Header connectivity pill: polls GET /health every 15s.
@@ -44,8 +45,15 @@ export function ConnectionStatus() {
               }
             : { state: 'online', latencyMs },
         )
-      } catch {
-        if (!cancelled) setPill({ state: 'offline' })
+      } catch (err) {
+        if (!cancelled) {
+          // The Worker answers API paths with a structured 503 carrying a
+          // `detail` string ("Set ROUTELLM_API_ORIGIN …") when it is not
+          // proxying anywhere. Swallowing it leaves the user staring at
+          // "Offline" with no idea what to fix, so keep the reason.
+          const detail = extractWorkerDetail(err)
+          setPill({ state: 'offline', detail })
+        }
       } finally {
         inFlight.current = false
       }
@@ -82,8 +90,16 @@ export function ConnectionStatus() {
     pill.state === 'degraded'
       ? `Some backend components are down (${pill.detail}) — routing may fall back automatically.`
       : pill.state === 'offline'
-        ? 'The backend health endpoint is not reachable right now.'
+        ? pill.detail
+          ? `The backend is not answering: ${pill.detail}`
+          : 'The backend health endpoint is not reachable right now.'
         : 'Live health probe of the FastAPI gateway (db + redis), refreshed every 15 s.'
+
+  // Show the actionable reason inline, not only in a hover tooltip: a
+  // misconfigured Worker is a deployment error, not a transient outage, and
+  // the message is the fix ("Set ROUTELLM_API_ORIGIN …").
+  const showReason =
+    pill.state === 'offline' && Boolean(pill.detail) && (pill.detail?.length ?? 0) < 120
 
   if (pill.state === 'unknown') return null
 
@@ -103,6 +119,14 @@ export function ConnectionStatus() {
       <span className="text-[10px] font-semibold uppercase tracking-[0.18em]">
         {label[pill.state]}
       </span>
+      {showReason && (
+        <span
+          data-testid="connection-status-detail"
+          className="max-w-[38ch] truncate text-[10px] font-medium normal-case tracking-normal opacity-80"
+        >
+          {pill.detail}
+        </span>
+      )}
     </div>
   )
 }
