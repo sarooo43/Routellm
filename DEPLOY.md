@@ -170,6 +170,9 @@ minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
 
 ---
 
+Verification runbook (per-layer gates with expected outputs):
+[`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
+
 ## 6) Troubleshooting
 
 | Symptom | Cause | Fix |
