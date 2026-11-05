@@ -160,6 +160,22 @@ origin, key generation and a real routed request.
 
 ## 6) The live dashboard 🔑 — owner only
 
+**If the header pill says "Offline" and DevTools shows `503` on `/api/v1/models`
+and `/health`:** the dashboard itself loaded (so the Worker serves assets), but
+the Worker has nowhere to proxy API calls — `ROUTELLM_API_ORIGIN` is unset on the
+deployed version. Confirm with:
+
+```bash
+curl -s https://routellm.saboornasar66.workers.dev/health
+```
+
+`{"error":"routellm_backend_not_configured", …}` is that exact case. Fix:
+set `ROUTELLM_API_ORIGIN=https://saboornotgonna-routellm.hf.space` as a Worker
+variable and **redeploy** (a variable set after the last deploy is not live until
+the next publish). Full decision table: `docs/CLOUDFLARE.md` §3b.
+
+## 6) The live dashboard 🔑 — owner only
+
 1. Open `https://routellm.saboornasar66.workers.dev`.
 2. The header shows **Connected** (not "backend not running") — that is the
    Worker→Space proxy working.

@@ -169,6 +169,32 @@ and `ROUTELLM_API_ORIGIN` is a variable/secret.
 
 ---
 
+## 3b. Every 503 from the Worker means one of two things
+
+The Worker only ever emits two statuses itself. Knowing which one you have
+identifies the fix in one look — open the failing URL directly in a browser or
+run `curl`:
+
+```bash
+curl -s https://routellm.saboornasar66.workers.dev/health
+```
+
+| Response body | Meaning | Fix |
+|---|---|---|
+| `{"error":"routellm_backend_not_configured","detail":"Set ROUTELLM_API_ORIGIN …"}` | `ROUTELLM_API_ORIGIN` is **empty or missing** on the deployed Worker. The dashboard loads (assets are served), but every API call 503s. | Set the variable → §4, then redeploy so it is bound. |
+| `{"error":"routellm_backend_unreachable", …}` with status **502** | The origin is set but the fetch failed (backend asleep, wrong host, DNS/TLS). | Check the backend origin answers on its own, then redeploy. |
+
+Anything else coming back as 503 is from FastAPI (for example
+`{"detail":"Database temporarily unavailable"}`), not from the Worker.
+
+**Important:** `wrangler deploy` does not carry dashboard variables into a new
+version unless `--keep-vars` is passed. This repo's `npm run deploy` already
+does, and `--no-autoconfig` prevents Cloudflare from overwriting the config.
+If you deploy by hand, keep both flags.
+
+**A variable set after the last deploy does not take effect until you deploy
+again** — the Worker bundle binds the value at publish time.
+
 ## 4. Point the Worker at your backend
 
 Set a Worker runtime variable/secret:
