@@ -15,6 +15,19 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "routellm",
   "main": "cloudflare/worker.js",
+  // The backend origin this Worker proxies /api/*, /v1/* and /health to.
+  //
+  // It lives HERE, in git, on purpose. As a dashboard-only variable it was
+  // silently lost on every deploy that did not pass --keep-vars, and the whole
+  // dashboard then 503'd with `routellm_backend_not_configured`. In config it is
+  // versioned, shows up in `wrangler deploy --dry-run` bindings, and survives
+  // every deploy and every Workers Build.
+  //
+  // This is PUBLIC information (a URL, not a secret). A dashboard variable still
+  // overrides it if you ever need to point at a different backend.
+  "vars": {
+    "ROUTELLM_API_ORIGIN": "https://saboornotgonna-routellm.hf.space"
+  },
   // Pin a stable, historically released Workers runtime behavior set.
   // Do not bump this to "today": CI clocks/Cloudflare API validation are UTC,
   // and a local calendar date can accidentally be in the future (error 10021).

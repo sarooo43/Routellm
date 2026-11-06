@@ -6,6 +6,7 @@ never mutates the shared ``app.main.app`` used by the other test modules.
 
 import os
 import socket
+import time
 from pathlib import Path
 
 import httpx
@@ -260,6 +261,56 @@ def _free_port():
         return tmp.getsockname()[1]
 
 
+def test_probe_with_wait_returns_immediately_when_free():
+    port = _free_port()
+    started = time.monotonic()
+    assert hf_app.probe_port_with_wait("127.0.0.1", port, timeout_s=5.0) is None
+    assert time.monotonic() - started < 1.0, "must not sleep when the port is free"
+
+
+def test_probe_with_wait_succeeds_when_the_holder_releases(monkeypatch):
+    """A transient holder (ZeroGPU handshake) must not cause a restart loop."""
+    held = {"n": 1}
+
+    def fake_probe(host, port):
+        if held["n"] > 0:
+            held["n"] -= 1
+            return "EADDRINUSE: busy"
+        return None
+
+    monkeypatch.setattr(hf_app, "probe_port", fake_probe)
+    assert hf_app.probe_port_with_wait("0.0.0.0", 7860, timeout_s=2.0, interval_s=0.01) is None
+
+
+def test_probe_with_wait_gives_up_and_reports_the_last_reason(monkeypatch):
+    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: busy")
+    started = time.monotonic()
+    reason = hf_app.probe_port_with_wait("0.0.0.0", 7860, timeout_s=0.2, interval_s=0.02)
+    assert reason == "EADDRINUSE: busy"
+    assert time.monotonic() - started >= 0.2
+
+
+def test_probe_with_wait_zero_timeout_is_a_single_shot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        hf_app, "probe_port", lambda host, port: calls.append(1) or "EADDRINUSE: busy"
+    )
+    assert hf_app.probe_port_with_wait("0.0.0.0", 7860, timeout_s=0.0) == "EADDRINUSE: busy"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [(None, hf_app.DEFAULT_PORT_WAIT_S), ("45", 45.0), ("0", 0.0), ("abc", hf_app.DEFAULT_PORT_WAIT_S), ("-5", 0.0)],
+)
+def test_port_wait_resolution(monkeypatch, env, expected):
+    if env is None:
+        monkeypatch.delenv(hf_app.PORT_WAIT_ENV, raising=False)
+    else:
+        monkeypatch.setenv(hf_app.PORT_WAIT_ENV, env)
+    assert hf_app._resolve_port_wait() == expected
+
+
 def test_main_exits_when_port_is_taken(monkeypatch):
     """The whole point: a taken port is diagnosed, not an opaque uvicorn trace."""
     called = {}
@@ -269,7 +320,9 @@ def test_main_exits_when_port_is_taken(monkeypatch):
 
     monkeypatch.setattr(hf_app.logger, "error", fake_error)
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
-    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    monkeypatch.setattr(
+        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+    )
     monkeypatch.setenv("PORT", "7860")
 
     assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
@@ -282,7 +335,9 @@ def test_main_does_not_start_uvicorn_when_port_is_taken(monkeypatch):
     import uvicorn
 
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
-    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    monkeypatch.setattr(
+        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+    )
     monkeypatch.setattr(
         uvicorn, "run", lambda *a, **k: pytest.fail("uvicorn.run must not be called")
     )
@@ -296,7 +351,9 @@ def test_main_probes_before_configuring(monkeypatch):
             "configure_app must not run when the port is unavailable"
         )
     )
-    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: "EADDRINUSE: taken")
+    monkeypatch.setattr(
+        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+    )
     assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
 
 
@@ -309,7 +366,9 @@ def test_main_starts_uvicorn_when_port_is_free(monkeypatch):
         seen.update(kwargs, app=app)
 
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
-    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: None)
+    monkeypatch.setattr(
+        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: None
+    )
     monkeypatch.setattr(uvicorn, "run", fake_run)
     monkeypatch.setenv("PORT", "7861")
 
@@ -426,7 +485,9 @@ def test_main_calls_zerogpu_hooks_in_order(monkeypatch):
     import uvicorn
 
     order = []
-    monkeypatch.setattr(hf_app, "probe_port", lambda host, port: None)
+    monkeypatch.setattr(
+        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: None
+    )
     monkeypatch.setattr(
         hf_app, "register_zerogpu_stub", lambda: order.append("stub") or True
     )

@@ -197,7 +197,25 @@ again** — the Worker bundle binds the value at publish time.
 
 ## 4. Point the Worker at your backend
 
-Set a Worker runtime variable/secret:
+**The origin now lives in `wrangler.jsonc` (`vars.ROUTELLM_API_ORIGIN`),** so it
+is version-controlled and cannot be lost by a deploy. Confirm it is bound:
+
+```bash
+npm run build      # frontend/dist must exist for the dry-run to resolve assets
+npm run deploy:dry-run
+```
+
+Expected in the bindings table:
+
+```text
+env.ROUTELLM_API_ORIGIN ("https://saboornotgonna-routellm.hf.sp...")  Environment Variable
+```
+
+If that row is missing, the build would deploy a Worker whose every API call
+503s — `cloudflare/config.test.js` fails in that case, so CI catches it.
+
+A dashboard variable still **overrides** the config value if you ever need to
+point somewhere else. To set one explicitly:
 
 ```text
 ROUTELLM_API_ORIGIN=https://api.example.com

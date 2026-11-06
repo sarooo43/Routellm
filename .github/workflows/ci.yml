@@ -147,6 +147,46 @@ jobs:
           echo "--- startup log (masked) ---"
           grep -E "hf_app_ready|startup_configuration|database_schema" /tmp/hf_app.log || true
 
+      - name: Boot with 7860 briefly held, as on ZeroGPU
+        # The Space once failed with "[Errno 98] address already in use" on
+        # 7860 while everything else had started. A one-shot port probe turned
+        # that into a restart loop; ROUTELLM_PORT_WAIT_S lets the app wait for
+        # the (usually transient) holder to go away. This reproduces the real
+        # condition: a stand-in process owns 7860 for 3 seconds first.
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
+          PORT: "7860"
+          ROUTELLM_PORT_WAIT_S: "20"
+        run: |
+          set -euo pipefail
+          python - <<'PY' &
+          import socket, time
+          s = socket.socket()
+          s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("0.0.0.0", 7860)); s.listen(1)
+          time.sleep(3); s.close()
+          PY
+          HOLDER=$!
+          sleep 0.5
+          python hf_app.py > /tmp/hf_app_held.log 2>&1 &
+          APP=$!
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 3 http://127.0.0.1:7860/health > /tmp/held_health.json; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "--- app log ---"; cat /tmp/hf_app_held.log
+            echo "app did not recover once the port was released"
+            exit 1
+          fi
+          echo "recovered after the holder released 7860:"
+          cat /tmp/held_health.json; echo
+          grep -E "hf_app_ready|hf_app_port_unavailable" /tmp/hf_app_held.log || true
+          kill "$APP" 2>/dev/null || true
+          wait "$APP" 2>/dev/null || true
+
       - name: Run the deployment smoke script against the local server
         # cwd is backend/, so the script is at ../scripts/. Routing checks are
         # skipped here (no provider keys in CI); CI's job is the HTTP contract.
