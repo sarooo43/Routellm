@@ -64,3 +64,28 @@ test("deploy script explicitly uses repo config and preserves dashboard vars", (
   assert.match(pkg.scripts.deploy, /--no-autoconfig/);
   assert.doesNotMatch(pkg.scripts.deploy, /--latest/);
 });
+
+test("Workers config carries a usable ROUTELLM_API_ORIGIN", () => {
+  // Regression guard. This value used to live ONLY in the Cloudflare dashboard,
+  // where it was silently dropped by any deploy without --keep-vars. Every API
+  // call then returned 503 routellm_backend_not_configured and the dashboard
+  // showed nothing but "Offline". Keeping it in config makes that impossible.
+  const origin = config.vars?.ROUTELLM_API_ORIGIN;
+  assert.ok(origin, "wrangler.jsonc must define vars.ROUTELLM_API_ORIGIN");
+  assert.doesNotThrow(() => new URL(origin), `not a URL: ${origin}`);
+  const parsed = new URL(origin);
+  assert.equal(parsed.protocol, "https:", "the origin must be https");
+  assert.equal(parsed.pathname, "/", "must be an origin only — no path");
+  assert.equal(parsed.search, "", "must not carry a query string");
+  assert.ok(!origin.endsWith("/"), "must not end with a slash");
+});
+
+test("the configured origin is the Space the docs point at", () => {
+  const origin = config.vars?.ROUTELLM_API_ORIGIN;
+  const deployDoc = fs.readFileSync(path.join(root, "DEPLOY.md"), "utf8");
+  const host = new URL(origin).hostname;
+  assert.ok(
+    deployDoc.includes(host),
+    `DEPLOY.md does not mention ${host}; config and docs have drifted apart`,
+  );
+});

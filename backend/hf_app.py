@@ -33,6 +33,7 @@ import os
 import sys
 import errno
 import socket
+import time
 from typing import Literal, Optional
 
 from fastapi import FastAPI
@@ -60,6 +61,10 @@ ZERO_DEVICE_API_URL_ENV = "SPACES_ZERO_DEVICE_API_URL"
 
 SdkMode = Literal["gradio", "plain"]
 
+#: How long to wait for 7860 to become bindable before giving up. Hugging Face
+#: injects this as a variable; the default covers a slow ZeroGPU handshake.
+PORT_WAIT_ENV = "ROUTELLM_PORT_WAIT_S"
+DEFAULT_PORT_WAIT_S = 20.0
 #: Exit code used when the port is already taken. Distinct from 1 so a log can
 #: tell "we could not listen" apart from "the app crashed".
 PORT_IN_USE_EXIT_CODE = 2
@@ -184,6 +189,19 @@ def configure_app(mode: SdkMode = "gradio", target_app: Optional[FastAPI] = None
     return effective
 
 
+def _resolve_port_wait() -> float:
+    """Grace period (seconds) to wait for the port, from the environment."""
+    raw = os.environ.get(PORT_WAIT_ENV, "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            logger.warning(
+                "invalid_port_wait_env", value=raw[:20], fallback=DEFAULT_PORT_WAIT_S
+            )
+    return DEFAULT_PORT_WAIT_S
+
+
 def _resolve_port() -> int:
     """Port from ``PORT`` (Hugging Face injects it) with a 7860 default."""
     raw = os.environ.get("PORT", "").strip()
@@ -288,6 +306,28 @@ def notify_zerogpu_startup() -> bool:
     return True
 
 
+def probe_port_with_wait(
+    host: str, port: int, timeout_s: float = 0.0, interval_s: float = 0.25
+) -> Optional[str]:
+    """Like :func:`probe_port` but retries until ``timeout_s`` elapses.
+
+    The ZeroGPU startup machinery can keep 7860 bound for a moment while it
+    finishes its own startup handshake, so a single immediate probe would report
+    a conflict that resolves itself a second later. Waiting briefly is the
+    difference between "restart loop" and "starts normally".
+
+    Returns ``None`` as soon as the port is bindable, else the last reason.
+    """
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        reason = probe_port(host, port)
+        if reason is None:
+            return None
+        if time.monotonic() >= deadline:
+            return reason
+        time.sleep(interval_s)
+
+
 def probe_port(host: str, port: int) -> Optional[str]:
     """Return ``None`` if ``host:port`` is bindable, else a short reason.
 
@@ -329,7 +369,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     # uvicorn runs the lifespan (DB connect + schema creation) before it binds,
     # so probing later burns a Neon connection on every failed restart and
     # leaves a misleading `hf_app_ready` line in the log.
-    conflict = probe_port("0.0.0.0", port)
+    wait_s = _resolve_port_wait()
+    conflict = probe_port_with_wait("0.0.0.0", port, timeout_s=wait_s)
     if conflict is not None:
         # Something else in the container owns the port. Asking for a different
         # one is pointless on a Space (the platform routes 7860 only), so fail
@@ -338,6 +379,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "hf_app_port_unavailable",
             port=port,
             reason=conflict,
+            waited_s=wait_s,
             hint=(
                 "another process in this container is already listening. On "
                 "Hugging Face this usually means the Space is running on "

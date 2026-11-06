@@ -101,3 +101,51 @@ test("unreachable backend returns a structured 502", async (t) => {
   assert.equal(response.status, 502);
   assert.equal((await response.json()).error, "routellm_backend_unreachable");
 });
+
+test("a browser navigation gets an HTML page naming the fix", async () => {
+  const res = await worker.fetch(
+    new Request("https://routellm.example.workers.dev/health", {
+      headers: { accept: "text/html,application/xhtml+xml" },
+    }),
+    {}, // no ROUTELLM_API_ORIGIN
+  );
+  assert.equal(res.status, 503);
+  assert.match(res.headers.get("content-type") || "", /text\/html/);
+  const html = await res.text();
+  assert.match(html, /ROUTELLM_API_ORIGIN/);
+  assert.match(html, /Cloudflare Worker, not from the FastAPI backend/);
+});
+
+test("the dashboard (JSON) still gets the structured 503 body", async () => {
+  const res = await worker.fetch(
+    new Request("https://routellm.example.workers.dev/api/v1/models", {
+      headers: { accept: "application/json" },
+    }),
+    {},
+  );
+  assert.equal(res.status, 503);
+  const body = await res.json();
+  assert.equal(body.error, "routellm_backend_not_configured");
+  assert.ok(body.detail.length > 0);
+  assert.match(body.fix, /ROUTELLM_API_ORIGIN/);
+});
+
+test("an unreachable origin names the host it tried", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("connect ECONNREFUSED");
+  };
+  try {
+    const res = await worker.fetch(
+      new Request("https://routellm.example.workers.dev/health"),
+      { ROUTELLM_API_ORIGIN: "https://space.example.hf.space" },
+    );
+    assert.equal(res.status, 502);
+    const body = await res.json();
+    assert.equal(body.error, "routellm_backend_unreachable");
+    assert.match(body.detail, /space\.example\.hf\.space/);
+    assert.equal(body.origin, "https://space.example.hf.space");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
