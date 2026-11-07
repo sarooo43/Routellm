@@ -14,6 +14,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.coverage
 
 # Env & secrets
 .env
@@ -31,6 +32,8 @@ frontend/.env.*
 # Local-only deployment scratch (real Neon/Upstash values for manual testing).
 .env.hf.local
 backend/.env.hf.local
+# Local wrangler dev variable overrides (see .dev.vars.example usage in DEPLOY)
+.dev.vars
 
 # Databases (local demo/dev artifacts)
 *.db

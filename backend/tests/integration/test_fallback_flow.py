@@ -9,8 +9,6 @@ from tests.integration.conftest import (
     fail,
     ok,
 )
-
-
 # ------------------------- Scenario A: happy path -------------------------
 
 

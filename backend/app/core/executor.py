@@ -716,12 +716,31 @@ async def execute_with_fallback(
         real_attempts += 1
 
         # ---- Post-attempt telemetry (must not break routing) ----
+        # BYOK isolation: a 401/403 caused by the CALLER's own provider key is
+        # the caller's problem, not a provider outage — it must not OPEN the
+        # global circuit breaker and lock the provider out for every other
+        # caller. (Gate 1 above checks user-key auth BEFORE the global gate 2
+        # circuit state only via the caller's key; the breaker stays global.)
+        user_key_used = bool(
+            provider_api_keys and provider_name in provider_api_keys
+        )
         try:
             if response.success:
                 await breaker.record_success(provider_name)
-            else:
+            elif user_key_used and response.error == "auth_failed":
+                logger.info(
+                    "breaker_skipped_user_key_auth_error",
+                    request_id=request_id,
+                    provider=provider_name,
+                    task_type=resolved_task_type,
+                    detail="401/403 from a caller-supplied BYOK key never "
+                    "opens the global circuit breaker",
+                )
+            elif chaos_injected:
                 # Chaos failures count too: repeated injections SHOULD be able
                 # to trip the real breaker — realistic and demonstrable.
+                await breaker.record_failure(provider_name)
+            else:
                 await breaker.record_failure(provider_name)
         except Exception as e:
             logger.warning(
