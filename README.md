@@ -26,6 +26,17 @@ Caddy (auto TLS, :80/:443)
                                           (operator keys or per-caller BYOK)
 ```
 
+The hosted production variant replaces the Caddy/nginx hop with:
+
+```
+Browser → Cloudflare Worker (static dashboard + same-origin API proxy)
+              └ BACKEND_URL → Hugging Face Space (hf_app.py, one uvicorn)
+                    → Neon Postgres + Upstash Redis
+```
+
+See [`DEPLOY.md`](DEPLOY.md) for the Space + Worker topology, cold-start
+semantics, and troubleshooting.
+
 - **Phase 0–2**: FastAPI skeleton, provider adapters with per-provider error
   taxonomies, prompt classifier
 - **Phase 3–4**: capability/cost/latency/availability scorer, Redis circuit
@@ -538,11 +549,55 @@ receiver are in [`docs/HTTPS_AND_WEBHOOKS.md`](docs/HTTPS_AND_WEBHOOKS.md) and
 [`examples/webhook/`](examples/webhook/). Keep `rk_` keys server-side; do not
 embed them in public browser bundles.
 
+## 🚀 Hugging Face Space (one-process backend)
+
+The production backend deploys to a HF Space via `hf_app.py`: a single
+uvicorn process that serves the FastAPI gateway plus a Gradio status page
+mounted at `/ui`. The file is import-safe (no server starts on import) and
+falls back to plain FastAPI+uvicorn when Gradio/Spaces are absent, so local
+dev and CI never install Gradio. `/health` ALWAYS answers 200 —
+`{"status":"ok"|"degraded", "db_up":…, "redis_up":…}` — so infra probes never
+see a 503; component health lives in the payload instead.
+
+Owner deploy:
+
+```powershell
+$env:HF_TOKEN = "<token>"          # never committed or echoed
+powershell -File scripts/deploy_hf.ps1 -Token $env:HF_TOKEN
+python scripts/smoke_deployed.py --base-url https://<owner>-<space>.hf.space
+```
+
+ZeroGPU caveat: the Space never requests a GPU (`@spaces.GPU` is unused), and
+HF may also rate-limit a ZeroGPU Space that never claims one — expected and
+harmless for this CPU-only app. A cold Sleeping Space can take up to a minute
+to answer; §Cloudflare below shows how that is surfaced.
+
 ## ☁️ Cloudflare Workers (dashboard + API proxy)
 
 Cloudflare Workers can host the React dashboard, but **cannot run the Python
-FastAPI backend, PostgreSQL, or Redis**. The repo includes a Worker that serves
-the dashboard and proxies `/api/*` + `/v1/*` to an externally hosted backend.
+FastAPI backend, PostgreSQL, or Redis**. The repo's Worker serves the
+dashboard and proxies `/api/*` + `/v1/*` + `/health` + `/docs` **same-origin**
+to the HF Space — the browser never makes a cross-origin API call, so there
+is no CORS and no `VITE_API_BASE_URL` to misconfigure.
+
+```
+Browser → Worker (serves frontend/dist, proxies API paths)
+              └ BACKEND_URL → https://saboornotgonna-routellm.hf.space
+                    → Neon Postgres + Upstash Redis
+```
+
+Key proxy semantics (cloudflare/worker.js, all unit-tested):
+
+- `BACKEND_URL` — plain public var in `wrangler.jsonc` (no secret needed; it
+  is a Space URL). Legacy `ROUTELLM_API_ORIGIN` still honored; invalid values
+  fall back to the default instead of erroring.
+- 60 s upstream timeout; GET retried ONCE on 502/503/504/network errors;
+  POST/PUT/DELETE never replayed.
+- `x-routellm-source: backend` on proxied answers;
+  `x-routellm-source: worker-proxy` + `503 {"detail":"Backend unreachable or
+  waking up","upstream":"down"}` when the Space is down/asleep.
+- The dashboard turns that last shape into an amber **"Waking up…"** pill and
+  retries with ~1s→60s backoff — the documented cold-start UX.
 
 Cloudflare build settings:
 
@@ -557,19 +612,10 @@ variables/secrets (`--keep-vars`), and disables Wrangler autoconfig. The config
 pins a stable compatibility date (`2025-09-01`) so Cloudflare cannot reject a
 local "today" date as future (error 10021).
 
-Set the Worker variable/secret:
-
-```text
-ROUTELLM_API_ORIGIN=https://api.example.com
-```
-
-Full guide: [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md), end-to-end host setup +
-env-var tables in [`DEPLOY.md`](DEPLOY.md).
-
-**"Backend is not running"?** Almost always a Worker with
-`ROUTELLM_API_ORIGIN` unset — verify with
-`curl https://<worker-domain>/health`:
-`503 {"error":"routellm_backend_not_configured"}` means exactly that.
+Full guide: [`DEPLOY.md`](DEPLOY.md) — Space secrets, ZeroGPU caveats,
+`scripts/deploy_hf.ps1` / `scripts/smoke_deployed.py`, local `wrangler dev`
+verification, and the troubleshooting table (address already in use, 503
+same-origin, cold start, CORS, `relation "…" does not exist`).
 
 The repo uses an npm workspace so Cloudflare's root install includes the
 `frontend/` dependencies. The root build runs `tsc && vite build` in the
