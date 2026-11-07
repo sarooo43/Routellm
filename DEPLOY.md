@@ -171,6 +171,9 @@ minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
 
 ---
 
+Deploying the Worker from your own machine, step by step:
+[`docs/DEPLOY_WALKTHROUGH.md`](./docs/DEPLOY_WALKTHROUGH.md).
+
 Verification runbook (per-layer gates with expected outputs):
 [`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
 

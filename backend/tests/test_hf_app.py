@@ -261,6 +261,90 @@ def _free_port():
         return tmp.getsockname()[1]
 
 
+# --------------------------------------------------------------------------
+# Socket ownership (the probe->bind race on ZeroGPU)
+# --------------------------------------------------------------------------
+
+
+def test_bind_listening_socket_binds_and_listens_after_handoff():
+    port = _free_port()
+    sock, reason = hf_app.bind_listening_socket("127.0.0.1", port, timeout_s=0.0)
+    assert reason is None and sock is not None
+    try:
+        assert sock.getsockname()[1] == port
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) != 0
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) is not None
+    finally:
+        sock.close()
+
+
+def test_bind_listening_socket_blocks_a_second_binder_immediately():
+    """Owning the socket is what removes the window a later bind could use."""
+    port = _free_port()
+    first, _ = hf_app.bind_listening_socket("0.0.0.0", port, timeout_s=0.0)
+    assert first is not None
+    try:
+        second, reason = hf_app.bind_listening_socket("0.0.0.0", port, timeout_s=0.0)
+        assert second is None
+        assert reason and "EADDRINUSE" in reason
+    finally:
+        first.close()
+
+
+def test_bind_listening_socket_retries_until_the_holder_releases():
+    port = _free_port()
+    holder, _ = hf_app.bind_listening_socket("0.0.0.0", port, timeout_s=0.0)
+    assert holder is not None
+
+    import threading
+
+    threading.Timer(0.3, holder.close).start()
+    sock, reason = hf_app.bind_listening_socket(
+        "0.0.0.0", port, timeout_s=3.0, interval_s=0.05
+    )
+    assert reason is None and sock is not None
+    sock.close()
+
+
+def test_main_serves_through_the_socket_it_owns(monkeypatch):
+    """main() must pass our socket to uvicorn, not host/port."""
+    import uvicorn
+
+    captured = {}
+
+    class FakeSocket:
+        """Stands in for the listening socket main() owns and closes."""
+
+        closed = False
+
+        def close(self):
+            type(self).closed = True
+
+    sentinel = FakeSocket()
+
+    class FakeServer:
+        def __init__(self, config):
+            captured["config"] = config
+
+        def run(self, sockets=None):
+            captured["sockets"] = sockets
+
+    monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
+    monkeypatch.setattr(hf_app, "register_zerogpu_stub", lambda: False)
+    monkeypatch.setattr(hf_app, "notify_zerogpu_startup", lambda: False)
+    monkeypatch.setattr(
+        hf_app,
+        "bind_listening_socket",
+        lambda host, port, timeout_s=0, interval_s=0, **k: (sentinel, None),
+    )
+    monkeypatch.setattr(uvicorn, "Server", FakeServer)
+
+    assert hf_app.main([]) == 0
+    assert captured["sockets"] == [sentinel]
+    assert FakeSocket.closed is True, "main() must close the socket it opened"
+    assert captured["config"].port == hf_app._resolve_port()
+
+
 def test_probe_with_wait_returns_immediately_when_free():
     port = _free_port()
     started = time.monotonic()
@@ -321,7 +405,7 @@ def test_main_exits_when_port_is_taken(monkeypatch):
     monkeypatch.setattr(hf_app.logger, "error", fake_error)
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
     monkeypatch.setattr(
-        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+        hf_app, "bind_listening_socket", lambda host, port, timeout_s=0, interval_s=0, **k: (None, "EADDRINUSE: taken")
     )
     monkeypatch.setenv("PORT", "7860")
 
@@ -336,10 +420,10 @@ def test_main_does_not_start_uvicorn_when_port_is_taken(monkeypatch):
 
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
     monkeypatch.setattr(
-        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+        hf_app, "bind_listening_socket", lambda host, port, timeout_s=0, interval_s=0, **k: (None, "EADDRINUSE: taken")
     )
     monkeypatch.setattr(
-        uvicorn, "run", lambda *a, **k: pytest.fail("uvicorn.run must not be called")
+        uvicorn, "Server", lambda *a, **k: pytest.fail("uvicorn must not start")
     )
     assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
 
@@ -352,30 +436,41 @@ def test_main_probes_before_configuring(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: "EADDRINUSE: taken"
+        hf_app, "bind_listening_socket", lambda host, port, timeout_s=0, interval_s=0, **k: (None, "EADDRINUSE: taken")
     )
     assert hf_app.main([]) == hf_app.PORT_IN_USE_EXIT_CODE
 
 
 def test_main_starts_uvicorn_when_port_is_free(monkeypatch):
+    """main() must configure uvicorn and hand it the socket it bound."""
     import uvicorn
 
     seen = {}
+    fake_sock = socket.socket()
 
-    def fake_run(app, **kwargs):
-        seen.update(kwargs, app=app)
+    class FakeServer:
+        def __init__(self, config):
+            seen["config"] = config
+
+        def run(self, sockets=None):
+            seen["sockets"] = sockets
 
     monkeypatch.setattr(hf_app, "configure_app", lambda mode="gradio": "plain")
+    monkeypatch.setattr(hf_app, "register_zerogpu_stub", lambda: False)
+    monkeypatch.setattr(hf_app, "notify_zerogpu_startup", lambda: False)
     monkeypatch.setattr(
-        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: None
+        hf_app,
+        "bind_listening_socket",
+        lambda host, port, timeout_s=0, interval_s=0, **k: (fake_sock, None),
     )
-    monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(uvicorn, "Server", FakeServer)
     monkeypatch.setenv("PORT", "7861")
 
     assert hf_app.main([]) == 0
-    assert seen["port"] == 7861
-    assert seen["host"] == "0.0.0.0"
-    assert seen["app"] is hf_app.app
+    assert seen["config"].port == 7861
+    assert seen["config"].host == "0.0.0.0"
+    assert seen["config"].app is hf_app.app
+    assert seen["sockets"] == [fake_sock]
 
 
 # --------------------------------------------------------------------------
@@ -486,7 +581,7 @@ def test_main_calls_zerogpu_hooks_in_order(monkeypatch):
 
     order = []
     monkeypatch.setattr(
-        hf_app, "probe_port_with_wait", lambda host, port, timeout_s=0, interval_s=0, **k: None
+        hf_app, "bind_listening_socket", lambda host, port, timeout_s=0, interval_s=0, **k: (socket.socket(), None)
     )
     monkeypatch.setattr(
         hf_app, "register_zerogpu_stub", lambda: order.append("stub") or True
@@ -499,10 +594,18 @@ def test_main_calls_zerogpu_hooks_in_order(monkeypatch):
     monkeypatch.setattr(
         hf_app, "notify_zerogpu_startup", lambda: order.append("report") or True
     )
-    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: order.append("serve"))
+
+    class FakeServer:
+        def __init__(self, config):
+            order.append("serve")
+
+        def run(self, sockets=None):
+            order.append("ran")
+
+    monkeypatch.setattr(uvicorn, "Server", FakeServer)
 
     assert hf_app.main([]) == 0
-    assert order == ["stub", "configure", "report", "serve"]
+    assert order == ["stub", "configure", "report", "serve", "ran"]
 
 
 # --------------------------------------------------------------------------

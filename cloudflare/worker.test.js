@@ -149,3 +149,45 @@ test("an unreachable origin names the host it tried", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a cross-origin redirect is followed by the Worker, never sent to the browser", async () => {
+  const originalFetch = globalThis.fetch;
+  const hops = [];
+  globalThis.fetch = async (req) => {
+    const url = typeof req === "string" ? req : req.url;
+    hops.push(url);
+    if (hops.length === 1) {
+      return new Response(null, {
+        status: 307,
+        headers: { location: "https://canonical.example.hf.space/health" },
+      });
+    }
+    return Response.json({ status: "ok" }, { status: 200 });
+  };
+  try {
+    const res = await worker.fetch(
+      new Request("https://routellm.example.workers.dev/health"),
+      { ROUTELLM_API_ORIGIN: "https://space.example.hf.space" },
+    );
+    assert.equal(res.status, 200, "browser must never see the raw 307");
+    assert.equal(hops.length, 2, "the Worker should make exactly one extra hop");
+    assert.match(hops[1], /canonical\.example\.hf\.space/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a same-origin redirect is passed through untouched", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(null, { status: 307, headers: { location: "/docs" } });
+  try {
+    const res = await worker.fetch(
+      new Request("https://routellm.example.workers.dev/health"),
+      { ROUTELLM_API_ORIGIN: "https://space.example.hf.space" },
+    );
+    assert.equal(res.status, 307);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

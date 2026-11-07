@@ -99,7 +99,23 @@ export default {
     }
 
     try {
-      return await fetch(proxyRequest);
+      const response = await fetch(proxyRequest);
+      // Hugging Face can answer a *.hf.space URL with a redirect to the
+      // canonical host. A proxy must not forward that: the browser would be
+      // sent to the Space's own domain, bypassing the Worker (and the CORS
+      // contract). Follow one hop when the target changed, then re-check.
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (location) {
+          const next = new URL(location, target);
+          if (next.origin !== target.origin) {
+            const hop = new Request(next.toString(), request);
+            hop.headers.delete("host");
+            return await fetch(hop);
+          }
+        }
+      }
+      return response;
     } catch {
       // Name the target: "could not be reached" without the host is the least
       // actionable message an operator can get. The origin is a public URL, so
