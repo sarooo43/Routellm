@@ -38,10 +38,28 @@ const TONE_STYLES: Record<'danger' | 'warn' | 'neutral', string> = {
   neutral: 'border-white/10 bg-white/[0.04] text-text-primary',
 }
 
+/**
+ * A 503 can mean two very different things, and conflating them sends people
+ * debugging the wrong system. The Cloudflare Worker's 503 says "this deployment
+ * has no backend address configured"; FastAPI's says "the database is down".
+ * The server's own message is the only thing that distinguishes them, so the
+ * title follows it instead of a fixed label.
+ */
+function isGatewayMisconfigured(detail?: string): boolean {
+  if (!detail) return false
+  return /ROUTELLM_API_ORIGIN|not_configured|not configured/i.test(detail)
+}
+
 export function ErrorState({ kind, detail, onRetry, retrying }: ErrorStateProps) {
-  const meta = KIND_META[kind]
+  const misconfigured = kind === 'service_unavailable' && isGatewayMisconfigured(detail)
+  const meta =
+    misconfigured
+      ? { title: 'API gateway is not configured', icon: AlertTriangle, tone: 'danger' as const }
+      : KIND_META[kind]
   const Icon = meta.icon
-  const body = kindBody(kind, detail)
+  const body = misconfigured
+    ? `This deployment's Cloudflare Worker has no backend address, so every API call is refused. ${detail ?? ''}`.trim()
+    : kindBody(kind, detail)
 
   return (
     <div
@@ -93,8 +111,16 @@ function kindBody(kind: ApiErrorKind, detail?: string): string {
       return 'The active RouteLLM key is not allowed to perform this action.'
     case 'rate_limited':
       return 'Too many requests in a short window. Wait a moment and retry.'
-    case 'service_unavailable':
-      return 'The database behind this endpoint is down or starting up. Retrying usually fixes it.'
+    case 'service_unavailable': {
+      // Prefer what the server actually said; the generic line is a guess. If
+      // the detail merely repeats the title, say something useful instead of
+      // printing "Database temporarily unavailable" twice.
+      const repeatsTitle = /^database temporarily unavailable\.?$/i.test(
+        (detail ?? '').trim(),
+      )
+      if (detail && !repeatsTitle) return detail
+      return 'The backend answered 503 while the database was down or starting up. Retrying usually fixes it.'
+    }
     default:
       return detail ?? 'Something went wrong while talking to the backend.'
   }

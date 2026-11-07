@@ -65,6 +65,8 @@ SdkMode = Literal["gradio", "plain"]
 #: injects this as a variable; the default covers a slow ZeroGPU handshake.
 PORT_WAIT_ENV = "ROUTELLM_PORT_WAIT_S"
 DEFAULT_PORT_WAIT_S = 20.0
+#: Matches uvicorn's default backlog; asyncio re-listens when it adopts the socket.
+LISTEN_BACKLOG = 2048
 #: Exit code used when the port is already taken. Distinct from 1 so a log can
 #: tell "we could not listen" apart from "the app crashed".
 PORT_IN_USE_EXIT_CODE = 2
@@ -306,6 +308,57 @@ def notify_zerogpu_startup() -> bool:
     return True
 
 
+def bind_listening_socket(
+    host: str, port: int, timeout_s: float = 0.0, interval_s: float = 0.25
+) -> tuple[Optional[socket.socket], Optional[str]]:
+    """Bind ``host:port`` ourselves and hand the socket to uvicorn.
+
+    Returns ``(socket, None)`` on success or ``(None, reason)`` on failure.
+
+    Why bind here instead of letting uvicorn do it: probing for a free port and
+    then asking uvicorn to bind leaves a window — measured at ~1 second on a
+    ZeroGPU Space — in which something else in the container can take the port.
+    That exact race produced ``EXIT CODE 3`` with ``[Errno 98] address already in
+    use`` *after* our own probe had reported the port free. Owning the socket
+    removes the window: once bound, nothing can steal it.
+
+    This mirrors ``uvicorn.config.Config.bind_socket`` (same family,
+    ``SO_REUSEADDR``, ``set_inheritable``) and keeps the retry that makes a
+    briefly-held port survivable instead of fatal.
+    """
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError as exc:
+            sock.close()
+            reason = (
+                f"EADDRINUSE: {host}:{port} is already in use"
+                if exc.errno == errno.EADDRINUSE
+                else f"OSError {exc.errno}: {exc.strerror or exc}"
+            )
+            if time.monotonic() >= deadline:
+                return None, reason
+            time.sleep(interval_s)
+            continue
+        # listen() is NOT optional here. On Linux, SO_REUSEADDR lets a *second*
+        # process bind the same addr:port while the first socket is merely
+        # bound — the conflict is only guaranteed once the socket is listening.
+        # Skipping this would leave exactly the race this function exists to
+        # close (verified: a second bind succeeded until listen() was called).
+        try:
+            sock.listen(LISTEN_BACKLOG)
+        except OSError as exc:  # pragma: no cover - rare, but must not crash
+            sock.close()
+            return None, f"OSError {exc.errno}: {exc.strerror or exc}"
+        # uvicorn passes this to loop.create_server(sock=...), which listens
+        # again (idempotent) and sets the socket non-blocking.
+        sock.set_inheritable(True)
+        return sock, None
+
+
 def probe_port_with_wait(
     host: str, port: int, timeout_s: float = 0.0, interval_s: float = 0.25
 ) -> Optional[str]:
@@ -370,8 +423,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     # so probing later burns a Neon connection on every failed restart and
     # leaves a misleading `hf_app_ready` line in the log.
     wait_s = _resolve_port_wait()
-    conflict = probe_port_with_wait("0.0.0.0", port, timeout_s=wait_s)
-    if conflict is not None:
+    listener, conflict = bind_listening_socket("0.0.0.0", port, timeout_s=wait_s)
+    if listener is None:
         # Something else in the container owns the port. Asking for a different
         # one is pointless on a Space (the platform routes 7860 only), so fail
         # fast and loudly with the diagnosis in the log.
@@ -396,7 +449,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     configure_app(wanted)
     notify_zerogpu_startup()
 
-    uvicorn.run(
+    config = uvicorn.Config(
         app,
         host="0.0.0.0",
         port=port,
@@ -408,6 +461,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         log_level=os.environ.get("LOG_LEVEL", "info").lower(),
         # No reload, no workers: the Gradio SDK expects one process on 7860.
     )
+    server = uvicorn.Server(config)
+    logger.info("hf_app_binding", port=port, waited_s=wait_s)
+    try:
+        # Hand over the socket we already own; uvicorn listen()s it.
+        server.run(sockets=[listener])
+    finally:
+        # Close whether or not uvicorn got as far as adopting the socket, so a
+        # failed start never leaves 7860 held by a dying process.
+        try:
+            listener.close()
+        except OSError:  # pragma: no cover - already closed by the server
+            pass
     return 0
 
 

@@ -160,6 +160,10 @@ origin, key generation and a real routed request.
 
 ## 6) The live dashboard 🔑 — owner only
 
+New to the terminal, or unsure where to run the deploy commands?
+[`docs/DEPLOY_WALKTHROUGH.md`](./DEPLOY_WALKTHROUGH.md) is the same steps with the
+exact window to open on each OS and what success looks like.
+
 **If the header pill says "Offline" and DevTools shows `503` on `/api/v1/models`
 and `/health`:** the dashboard itself loaded (so the Worker serves assets), but
 the Worker has nowhere to proxy API calls — `ROUTELLM_API_ORIGIN` is unset on the

@@ -38,3 +38,32 @@ describe('ErrorState', () => {
     expect(onRetry).toHaveBeenCalledOnce()
   })
 })
+
+describe('ErrorState 503 classification', () => {
+  it('blames the Worker config, not the database, when the Worker says so', () => {
+    render(
+      <ErrorState
+        kind="service_unavailable"
+        detail="Set ROUTELLM_API_ORIGIN to the HTTPS origin of the RouteLLM FastAPI backend."
+      />,
+    )
+    // The screenshot bug: this used to read "Database temporarily unavailable".
+    expect(screen.queryByText(/Database temporarily unavailable/i)).toBeNull()
+    expect(screen.getByText(/API gateway is not configured/i)).toBeInTheDocument()
+    expect(screen.getByText(/ROUTELLM_API_ORIGIN/)).toBeInTheDocument()
+  })
+
+  it('keeps the database wording for a genuine backend 503', () => {
+    render(<ErrorState kind="service_unavailable" detail="Database temporarily unavailable" />)
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent(/Database temporarily unavailable/)
+    expect(alert).not.toHaveTextContent(/API gateway is not configured/i)
+    // And it must not print the same sentence twice.
+    expect(alert.textContent?.match(/Database temporarily unavailable/g)).toHaveLength(1)
+  })
+
+  it('falls back to guidance when the server gave no detail', () => {
+    render(<ErrorState kind="service_unavailable" />)
+    expect(screen.getByText(/ROUTELLM_API_ORIGIN|503/)).toBeInTheDocument()
+  })
+})
