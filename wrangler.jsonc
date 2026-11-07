@@ -26,6 +26,9 @@
   // This is PUBLIC information (a URL, not a secret). A dashboard variable still
   // overrides it if you ever need to point at a different backend.
   "vars": {
+    // BACKEND_URL is the primary name; ROUTELLM_API_ORIGIN is the legacy
+    // alias still honored by cloudflare/worker.js and any dashboard override.
+    "BACKEND_URL": "https://saboornotgonna-routellm.hf.space",
     "ROUTELLM_API_ORIGIN": "https://saboornotgonna-routellm.hf.space"
   },
   // Pin a stable, historically released Workers runtime behavior set.

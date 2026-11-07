@@ -35,6 +35,26 @@ test("Workers config keeps the dashboard assets and API routing contract", () =>
   ]);
 });
 
+test("BACKEND_URL is a plain, non-secret runtime var pointing at the Space", () => {
+  // Problem 2 architecture: the Worker proxies same-origin API paths to the
+  // HF Space named here. It MUST remain a plain var (not a secret) and hold
+  // no credentials — it is the public Space URL.
+  assert.ok(config.vars, "vars block missing");
+  const raw = fs
+    .readFileSync(path.join(root, "wrangler.jsonc"), "utf8")
+    .split("\n")
+    // Strip full-line // comments (string values like https://… must survive)
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+  const parsed = JSON.parse(raw.trim());
+  const backendUrl = parsed.vars?.BACKEND_URL;
+  assert.equal(typeof backendUrl, "string");
+  assert.match(backendUrl, /^https:\/\//);
+  assert.ok(!/token|key|secret|password|Bearer/i.test(backendUrl));
+  assert.ok(backendUrl.includes(".hf.space"), "backend points at the HF Space");
+  assert.equal(config.vars.BACKEND_URL, backendUrl);
+});
+
 test("Workers observability matches the Cloudflare dashboard snapshot", () => {
   assert.deepEqual(config.observability, {
     enabled: false,
@@ -63,29 +83,4 @@ test("deploy script explicitly uses repo config and preserves dashboard vars", (
   assert.match(pkg.scripts.deploy, /--keep-vars/);
   assert.match(pkg.scripts.deploy, /--no-autoconfig/);
   assert.doesNotMatch(pkg.scripts.deploy, /--latest/);
-});
-
-test("Workers config carries a usable ROUTELLM_API_ORIGIN", () => {
-  // Regression guard. This value used to live ONLY in the Cloudflare dashboard,
-  // where it was silently dropped by any deploy without --keep-vars. Every API
-  // call then returned 503 routellm_backend_not_configured and the dashboard
-  // showed nothing but "Offline". Keeping it in config makes that impossible.
-  const origin = config.vars?.ROUTELLM_API_ORIGIN;
-  assert.ok(origin, "wrangler.jsonc must define vars.ROUTELLM_API_ORIGIN");
-  assert.doesNotThrow(() => new URL(origin), `not a URL: ${origin}`);
-  const parsed = new URL(origin);
-  assert.equal(parsed.protocol, "https:", "the origin must be https");
-  assert.equal(parsed.pathname, "/", "must be an origin only — no path");
-  assert.equal(parsed.search, "", "must not carry a query string");
-  assert.ok(!origin.endsWith("/"), "must not end with a slash");
-});
-
-test("the configured origin is the Space the docs point at", () => {
-  const origin = config.vars?.ROUTELLM_API_ORIGIN;
-  const deployDoc = fs.readFileSync(path.join(root, "DEPLOY.md"), "utf8");
-  const host = new URL(origin).hostname;
-  assert.ok(
-    deployDoc.includes(host),
-    `DEPLOY.md does not mention ${host}; config and docs have drifted apart`,
-  );
 });
