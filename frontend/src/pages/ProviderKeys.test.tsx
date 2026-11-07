@@ -133,4 +133,32 @@ describe('ProviderKeys', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Provider key encryption is unavailable.')
     expect(screen.queryByText('Configured')).not.toBeInTheDocument()
   })
+
+  it('shows the "Add a provider key to start routing" notice when no user key is configured', async () => {
+    saveGeneratedKey(generated)
+    renderPage()
+
+    const notice = await screen.findByTestId('provider-keys-needed-notice')
+    expect(notice).toHaveTextContent(
+      'Add a provider key on the Providers page to start routing',
+    )
+  })
+
+  it('flips the notice to success once at least one provider key is configured', async () => {
+    saveGeneratedKey(generated)
+    vi.mocked(getProviderKeys).mockResolvedValue([
+      {
+        provider_name: 'groq',
+        configured: true,
+        key_hint: '****cdef',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      ...unconfigured.filter((row) => row.provider_name !== 'groq'),
+    ])
+    renderPage()
+
+    const notice = await screen.findByTestId('provider-keys-needed-notice')
+    expect(notice).toHaveTextContent('At least one provider key is configured')
+  })
 })

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import * as apiClient from '../api/client'
+import { toApiError } from '../api/errors'
 import type { Analytics, LogsQuery, ProviderStatus, RouteResponse, TaskLog } from '../types/api'
 
 const LOGS_PAGE_LIMIT = 50
@@ -116,12 +117,9 @@ export const useAppStore = create<AppState>((set) => ({
 }))
 
 function describeError(err: unknown): string {
-  if (axiosLikeError(err)) {
-    return `Backend error (${err.response.status})`
+  try {
+    return toApiError(err).message
+  } catch {
+    return 'Cannot reach the backend'
   }
-  return 'Cannot reach the backend'
-}
-
-function axiosLikeError(err: unknown): err is { response: { status: number } } {
-  return typeof err === 'object' && err !== null && 'response' in err
 }

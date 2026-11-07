@@ -111,4 +111,26 @@
   .rl-badge {
     @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em];
   }
+
+  /* Loading shimmer: matches the card surface, keeps glassmorphism intact. */
+  .rl-skeleton {
+    @apply rounded-md bg-white/[0.05];
+    background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.05) 25%,
+      rgba(232, 119, 34, 0.12) 50%,
+      rgba(255, 255, 255, 0.05) 75%
+    );
+    background-size: 200% 100%;
+    animation: rl-skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes rl-skeleton-shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
 }

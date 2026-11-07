@@ -14,6 +14,7 @@
 export type ApiErrorKind =
   | 'network'
   | 'cors_or_unreachable'
+  | 'backend_waking'
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
@@ -86,7 +87,21 @@ export function toApiError(err: unknown): ApiError {
       )
     }
     case 502:
-    case 503:
+    case 503: {
+      // Worker-proxy cold-start signature: {"detail": ..., "upstream":"down"}
+      // — the Hugging Face Space is asleep/booting, NOT a server crash. This
+      // must NEVER be worded as "backend not reachable"; the wake-retry layer
+      // handles it with backoff.
+      const data = response.data as { upstream?: unknown; detail?: unknown } | undefined
+      if (data && data.upstream === 'down') {
+        return new ApiError(
+          'backend_waking',
+          'Waking up the backend — this can take up to a minute.',
+          response.status,
+          undefined,
+          typeof data.detail === 'string' ? data.detail : undefined,
+        )
+      }
       return new ApiError(
         'service_unavailable',
         'The service is temporarily unavailable.',
@@ -94,11 +109,13 @@ export function toApiError(err: unknown): ApiError {
         undefined,
         serverDetail,
       )
-    default:
+    }
+    default: {
       if (response.status >= 500) {
         return new ApiError('server_error', `Backend error (${response.status}).`, response.status, undefined, serverDetail)
       }
       return new ApiError('validation', `Request failed (${response.status}).`, response.status, undefined, serverDetail)
+    }
   }
 }
 

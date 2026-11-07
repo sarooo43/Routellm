@@ -5,6 +5,7 @@ import { getCatalog } from '../api/client'
 import { toApiError, type ApiError } from '../api/errors'
 import { ErrorState } from '../components/ErrorState'
 import { GlassCard } from '../components/GlassCard'
+import { CatalogSkeletonGrid } from '../components/Skeleton'
 import { formatMs, formatPercent, formatTokenWindow } from '../lib/format'
 import type { Capability, CatalogEntry, PricingTier, ProviderStatusValue } from '../types/api'
 
@@ -225,7 +226,7 @@ export function ModelCatalog() {
       )}
 
       {loading ? (
-        <div className="rl-card py-14 text-center text-sm text-text-secondary">Loading catalog…</div>
+        <CatalogSkeletonGrid />
       ) : visibleModels.length === 0 ? (
         <GlassCard hoverable={false} className="py-12 text-center">
           <SearchX size={28} className="mx-auto text-text-secondary" aria-hidden="true" />

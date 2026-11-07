@@ -22,29 +22,36 @@ import type {
   RouteResponse,
 } from '../types/api'
 import { getActiveKey, markKeyRevoked, saveGeneratedKey } from './keyStorage'
+import { runWithWakeRetry as withWakeRetry } from './wake'
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15_000,
+  // Cold HF Spaces can take a while BEFORE the worker answers (the worker
+  // itself holds the request open up to ~2 attempts x 60s). 30s keeps the
+  // UI responsive inside the wake-retry window (api/wake.ts) instead of
+  // double-waiting.
+  timeout: 30_000,
 })
 
 export async function getModels(): Promise<ModelsResponse> {
-  const { data } = await api.get<ModelsResponse>('/api/v1/models')
+  const { data } = await withWakeRetry(() => api.get<ModelsResponse>('/api/v1/models'))
   return data
  }
 
 export async function getLogs(params: LogsQuery = {}): Promise<LogsResponse> {
-  const { data } = await api.get<LogsResponse>('/api/v1/logs', { params })
+  const { data } = await withWakeRetry(() =>
+    api.get<LogsResponse>('/api/v1/logs', { params }),
+  )
   return data
 }
 
 export async function getAnalytics(): Promise<Analytics> {
-  const { data } = await api.get<Analytics>('/api/v1/analytics')
+  const { data } = await withWakeRetry(() => api.get<Analytics>('/api/v1/analytics'))
   return data
 }
 
 export async function getCatalog(): Promise<CatalogResponse> {
-  const { data } = await api.get<CatalogResponse>('/api/v1/catalog')
+  const { data } = await withWakeRetry(() => api.get<CatalogResponse>('/api/v1/catalog'))
   return data
 }
 
@@ -54,9 +61,11 @@ export async function generateApiKey(label = 'Unnamed Key'): Promise<GenerateKey
 }
 
 export async function getKeyUsage(apiKey: string): Promise<KeyUsageResponse> {
-  const { data } = await api.get<KeyUsageResponse>('/api/v1/keys/me', {
-    headers: { 'X-API-Key': apiKey },
-  })
+  const { data } = await withWakeRetry(() =>
+    api.get<KeyUsageResponse>('/api/v1/keys/me', {
+      headers: { 'X-API-Key': apiKey },
+    }),
+  )
   return data
 }
 

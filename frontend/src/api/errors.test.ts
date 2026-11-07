@@ -44,6 +44,32 @@ describe('toApiError', () => {
     expect(err.serverDetail).toBe('server said')
   })
 
+  it('maps the worker-proxy cold-start 503 (upstream "down") to backend_waking', () => {
+    // Exact shape emitted by cloudflare/worker.js when the Space is asleep.
+    const err = toApiError({
+      code: undefined,
+      response: {
+        status: 503,
+        headers: {},
+        data: { detail: 'Backend unreachable or waking up', upstream: 'down' },
+      },
+    })
+    expect(err.kind).toBe('backend_waking')
+    // Never worded as "not reachable":
+    expect(err.message.toLowerCase()).toContain('waking up')
+    expect(err.message.toLowerCase()).not.toContain('not reachable')
+    // Not a reachability kind — the pill/UX treat it as transient.
+    expect(isReachabilityKind(err.kind)).toBe(false)
+  })
+
+  it('does NOT misclassify a plain 503 as waking (real db-down stays service_unavailable)', () => {
+    const err = toApiError({
+      code: undefined,
+      response: { status: 503, headers: {}, data: { detail: 'Database temporarily unavailable' } },
+    })
+    expect(err.kind).toBe('service_unavailable')
+  })
+
   it('maps 500 to server_error', () => {
     expect(toApiError(axiosLike(500)).kind).toBe('server_error')
   })

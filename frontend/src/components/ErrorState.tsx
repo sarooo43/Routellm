@@ -23,6 +23,7 @@ interface ErrorStateProps {
 const KIND_META: Record<ApiErrorKind, { title: string; icon: typeof WifiOff; tone: 'danger' | 'warn' | 'neutral' }> = {
   network: { title: 'Backend is not reachable', icon: WifiOff, tone: 'danger' },
   cors_or_unreachable: { title: 'Backend is not reachable', icon: WifiOff, tone: 'danger' },
+  backend_waking: { title: 'Waking up the backend', icon: Clock, tone: 'warn' },
   unauthorized: { title: 'Add or generate an API key', icon: KeyRound, tone: 'neutral' },
   forbidden: { title: 'This key lacks access', icon: ShieldOff, tone: 'warn' },
   not_found: { title: 'Not available on this deployment', icon: AlertTriangle, tone: 'neutral' },
@@ -103,8 +104,10 @@ function kindBody(kind: ApiErrorKind, detail?: string): string {
     case 'network':
     case 'cors_or_unreachable':
       return IS_SAME_ORIGIN
-        ? `Requests go same-origin here — if this is a Cloudflare Worker deployment, ROUTELLM_API_ORIGIN must point at your FastAPI backend. Target: ${typeof window !== 'undefined' ? window.location.host : 'unknown host'}${API_BASE_URL || ' /api'}`
+        ? `Requests go same-origin here — the Worker proxy could not reach the backend origin. Target: ${typeof window !== 'undefined' ? window.location.host : 'unknown host'}${API_BASE_URL || ' /api'}`
         : `Configured API host: ${API_BASE_URL}. Check that it is reachable and served over HTTPS.`
+    case 'backend_waking':
+      return 'Free-tier Spaces sleep between uses. Waking one up can take up to a minute — retrying automatically in the background; use Retry if it just woke slow.'
     case 'unauthorized':
       return 'Generate a key on the API Keys page (free, one click) — or select a previously saved one.'
     case 'forbidden':

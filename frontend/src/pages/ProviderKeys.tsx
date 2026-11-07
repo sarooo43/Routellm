@@ -76,6 +76,7 @@ export function ProviderKeys() {
 
   const activeKey = keys.find((key) => key.key_prefix === activePrefix && !key.revoked) ?? null
   const usableKeys = keys.filter((key) => !key.revoked)
+  const anyUserKeyConfigured = Object.values(statuses).some((status) => status.configured)
 
   const syncLocal = useCallback(() => {
     setKeys(getStoredKeys())
@@ -265,6 +266,31 @@ export function ProviderKeys() {
             Selected: <code className="font-mono text-text-primary">{activeKey.key_prefix}…</code>
             {loading && <span className="ml-2 text-accent">Loading provider status…</span>}
           </p>
+        )}
+        {/* Startup deploy log shows server_provider_keys is empty on this
+            deployment: routing fails until the caller configures a provider
+            key (BYOK). Render the operator-approved nudge. */}
+        {activeKey && !loading && Object.values(statuses).length > 0 && (
+          <div
+            role="status"
+            data-testid="provider-keys-needed-notice"
+            className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs ${
+              anyUserKeyConfigured
+                ? 'border-success/25 bg-success/[0.08] text-success'
+                : 'border-warning/25 bg-warning/[0.08] text-warning'
+            }`}
+          >
+            {anyUserKeyConfigured ? (
+              <ShieldCheck size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+            ) : (
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+            )}
+            <p>
+              {anyUserKeyConfigured
+                ? 'At least one provider key is configured — routing and fallback now work through your own keys.'
+                : 'Add a provider key on the Providers page to start routing — none of Groq, Gemini or DeepSeek is configured yet for this RouteLLM key.'}
+            </p>
+          </div>
         )}
       </GlassCard>
 

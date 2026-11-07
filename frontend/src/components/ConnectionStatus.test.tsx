@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import axios from 'axios'
 import { ConnectionStatus } from './ConnectionStatus'
-import { extractWorkerDetail } from '../api/workerDetail'
+import { useWakeStore } from '../api/wake'
 
 vi.mock('axios')
 
@@ -34,27 +34,6 @@ describe('ConnectionStatus', () => {
     expect(pill.textContent).toContain('Degraded')
   })
 
-  it("surfaces the Worker's configuration detail instead of a bare Offline", async () => {
-    // Exactly what the deployed Worker returns when ROUTELLM_API_ORIGIN is
-    // unset: { error: "routellm_backend_not_configured", detail: "Set …" }
-    getMock.mockRejectedValue({
-      response: {
-        status: 503,
-        data: {
-          error: 'routellm_backend_not_configured',
-          detail: 'Set ROUTELLM_API_ORIGIN to the HTTPS origin of the RouteLLM FastAPI backend.',
-        },
-      },
-    })
-    render(<ConnectionStatus />)
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('offline'))
-    // The fix must be visible without hovering a tooltip.
-    expect(screen.getByTestId('connection-status-detail').textContent).toContain(
-      'ROUTELLM_API_ORIGIN',
-    )
-  })
-
   it('shows red Offline when /health is unreachable', async () => {
     getMock.mockRejectedValue(new Error('Network Error'))
     render(<ConnectionStatus />)
@@ -62,26 +41,36 @@ describe('ConnectionStatus', () => {
     await waitFor(() => expect(pill.dataset.state).toBe('offline'))
     expect(pill.textContent).toContain('Offline')
   })
-})
 
-describe('extractWorkerDetail', () => {
-  it('prefers detail over error', () => {
+  it('shows the Worker actionable-detail inline for a genuine outage, never for waking', async () => {
+    // Worker fail-closed shape (x-routellm-source: worker-proxy down shape
+    // with 502-style detail naming the unreachable origin).
+    getMock.mockRejectedValue({
+      response: {
+        status: 502,
+        data: {
+          error: 'routellm_backend_unreachable',
+          detail: 'The configured RouteLLM backend origin could not be reached',
+        },
+      },
+    })
+    render(<ConnectionStatus />)
+    const pill = await screen.findByTestId('connection-status')
+    await waitFor(() => expect(pill.dataset.state).toBe('offline'))
     expect(
-      extractWorkerDetail({
-        response: { data: { error: 'routellm_backend_not_configured', detail: 'Set X' } },
-      }),
-    ).toBe('Set X')
+      screen.getByTestId('connection-status-detail'),
+    ).toHaveTextContent('The configured RouteLLM backend origin could not be reached')
   })
 
-  it('falls back to the error code', () => {
-    expect(
-      extractWorkerDetail({ response: { data: { error: 'routellm_backend_unreachable' } } }),
-    ).toBe('routellm_backend_unreachable')
-  })
-
-  it('returns undefined for plain network errors', () => {
-    expect(extractWorkerDetail(new Error('Network Error'))).toBeUndefined()
-    expect(extractWorkerDetail(undefined)).toBeUndefined()
-    expect(extractWorkerDetail({ response: { data: 'not json' } })).toBeUndefined()
+  it('shows amber "Waking up…" while the wake-retry window is active', async () => {
+    getMock.mockRejectedValue(new Error('Network Error'))
+    render(<ConnectionStatus />)
+    useWakeStore.getState().set({ waking: true, attempt: 2 })
+    const pill = await screen.findByTestId('connection-status')
+    await waitFor(() => expect(pill.dataset.state).toBe('waking'))
+    expect(pill.textContent).toContain('Waking up')
+    // The waking state never shows an inline deployment-fix reason:
+    expect(screen.queryByTestId('connection-status-detail')).not.toBeInTheDocument()
+    useWakeStore.getState().set({ waking: false, attempt: 0 })
   })
 })
