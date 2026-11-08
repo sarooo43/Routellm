@@ -60,7 +60,9 @@ def test_launcher_imports_without_a_virtualenv(launcher):
     assert launcher.MIN_PYTHON == (3, 11)
 
 
-def test_check_mode_exits_zero_without_starting_a_server(tmp_path):
+def test_check_mode_is_read_only_and_never_starts_a_server(tmp_path):
+    """`--check` must not install, build or bind anything (CI runs it)."""
+    vendored = tmp_path / "venv-python"
     result = subprocess.run(
         [sys.executable, str(RUN_PY), "--check"],
         cwd=REPO_ROOT,
@@ -69,8 +71,26 @@ def test_check_mode_exits_zero_without_starting_a_server(tmp_path):
         timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Environment is ready" in result.stdout
+    assert "Nothing was installed or started." in result.stdout
     assert "Uvicorn running" not in result.stdout
+    assert "installing backend dependencies" not in result.stdout
+    assert "building the dashboard" not in result.stdout
+    assert not vendored.exists()
+
+
+def test_check_mode_reports_each_prerequisite(launcher):
+    report = dict((message, ready) for ready, message in launcher.environment_report())
+    joined = " ".join(report)
+    assert "Python" in joined
+    assert "virtualenv" in joined or "dashboard" in joined
+
+
+def test_check_mode_names_the_ports_it_would_use(launcher, monkeypatch, capsys):
+    monkeypatch.setattr(launcher, "pick_port", lambda host, port: (port + 1, True))
+    assert launcher.main(["--check", "--port", "8000"]) == 0
+    printed = capsys.readouterr().out
+    assert "8001" in printed
+    assert "is busy" in printed
 
 
 # --------------------------------------------------------------------------

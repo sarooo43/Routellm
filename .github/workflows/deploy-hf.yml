@@ -51,7 +51,7 @@ jobs:
             echo "::notice::HF_TOKEN is configured — the deploy job will run."
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::HF_TOKEN is not set — deploys are skipped. Add the repository secret to enable them (see DEPLOY.md)."
+            echo "::notice::HF_TOKEN is not set — deploys are skipped. Add the repository secret to enable them (see docs/deploy/HUGGINGFACE_AND_MANAGED.md)."
           fi
 
   deploy:

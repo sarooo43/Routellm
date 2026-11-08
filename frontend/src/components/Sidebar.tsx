@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { ChevronRight, PanelLeftClose, PanelLeftOpen, Route, X } from 'lucide-react'
 import { NAV_GROUPS } from './navigation'
+import { APP_SHORT_NAME } from '../appInfo'
 
 interface SidebarProps {
   mobileOpen: boolean
@@ -69,14 +70,14 @@ export function Sidebar({
             to="/"
             onClick={onMobileClose}
             className="flex min-w-0 flex-1 items-center gap-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-            aria-label="RouteLLM overview"
+            aria-label={`${APP_SHORT_NAME} overview`}
           >
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-accent to-[#b95312] shadow-lg shadow-accent/20">
               <Route size={19} className="text-black" aria-hidden="true" />
             </span>
             <span className={`min-w-0 ${collapsed ? 'lg:hidden' : ''}`}>
               <span className="block truncate text-[15px] font-semibold tracking-[0.18em] text-text-primary">
-                ROUTELLM
+                {APP_SHORT_NAME.toUpperCase()}
               </span>
               <span className="block truncate text-[11px] text-text-secondary">
                 Intelligent routing gateway

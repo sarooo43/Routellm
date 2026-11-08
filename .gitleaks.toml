@@ -1,0 +1,33 @@
+# Minimal gitleaks configuration for pre-commit / CI scanning.
+#
+#   gitleaks detect --config .gitleaks.toml --no-banner
+#
+# The default rule set covers the mainstream providers. The allowlist exists so
+# the scanner stays *useful*: test fixtures must contain credential-shaped
+# strings, and docs must show the format of a connection string. Anything
+# allowlisted here is a shape, never a value.
+#
+# `backend/scripts/check_secrets.py` is the dependency-free equivalent CI runs;
+# keep the two exception lists aligned when adding an entry.
+
+title = "RouteLLM Gateway"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials in tests, placeholders in examples and docs"
+paths = [
+  '''(^|/)backend/tests/''',
+  '''(^|/)backend/\.env\.example$''',
+  '''(^|/)\.env\.example$''',
+  '''(^|/)frontend/src/.*\.test\.(ts|tsx)$''',
+]
+regexes = [
+  '''user:password@''',
+  '''USER:PASSWORD@''',
+  '''postgres(ql)?://u:p@''',
+  '''rediss?://default:<your-password>''',
+  '''rk_[A-Za-z0-9_-]*3456''',
+  '''gsk_test_''',
+]

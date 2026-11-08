@@ -40,6 +40,7 @@ from app.db.session import (
     ensure_schema,
 )
 from app.db.url import mask_database_url, normalize_database_url
+from app.identity import APP_NAME, APP_VERSION as IDENTITY_VERSION, PROJECT_URL, UPSTREAM_DISCLAIMER
 from app.frontend import (
     frontend_status,
     install_root_status_page,
@@ -49,8 +50,9 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: Version reported by /health and the OpenAPI document.
-APP_VERSION = "0.1.0"
+#: Version reported by /health and the OpenAPI document. Sourced from
+#: app.identity so the API, the dashboard and the docs cannot disagree.
+APP_VERSION = IDENTITY_VERSION
 
 #: Set once the process is up; /health reports the delta as uptime_s.
 _STARTED_AT = time.monotonic()
@@ -150,9 +152,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # against the SQLite file in the data dir, which is what makes a fresh
     # clone work with zero manual steps.
     if not settings.DATABASE_URL:
+        # The one place this is announced: consumers resolve the URL lazily and
+        # would otherwise repeat it once each.
         logger.info(
             "database_defaulted_to_sqlite",
-            detail="DATABASE_URL unset — using the local SQLite file.",
+            detail="DATABASE_URL unset — using the local SQLite file under the data directory.",
+            data_dir=_data_dir_for_log(),
         )
     await ensure_schema()
 
@@ -195,12 +200,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             model_usable=classifier.is_loaded,
         )
     yield
-    logger.info("RouteLLM backend shutting down...")
+    logger.info("backend_shutdown", app=APP_NAME)
 
 
 app = FastAPI(
-    title="RouteLLM API",
+    title=f"{APP_NAME} API",
     version=APP_VERSION,
+    description=(
+        "Intelligent LLM routing gateway: classify → rank → execute with "
+        "automatic fallback, health tracking and cost analytics.\n\n"
+        f"{UPSTREAM_DISCLAIMER}\n\n"
+        f"Source: {PROJECT_URL}"
+    ),
     lifespan=lifespan,
     # Root is claimed by a redirect to the status page (see below), so the
     # auto-generated Swagger UI stays available at /docs.

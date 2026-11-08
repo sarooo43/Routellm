@@ -1,667 +1,345 @@
-# RouteLLM — Intelligent LLM Routing Gateway
+# RouteLLM Gateway
 
-RouteLLM is a production-style FastAPI backend that sits between your app and
-multiple LLM providers (Groq, Google Gemini, DeepSeek). Every prompt is
-classified, ranked against live provider health (circuit state, quota usage,
-historical success/latency), and executed with automatic fallback — so your
-callers never see a raw provider error. A dark "Hermes-luxury" React dashboard
-visualizes routing decisions live: KPIs, a real-time feed, model health,
-fallback-chain exploration, and cost analytics.
+**An LLM router you can actually run.** Point one endpoint at several providers;
+it classifies each prompt, ranks Groq / Google AI Studio / DeepSeek, and falls
+back automatically when one is down, rate-limited or circuit-broken — while
+showing you exactly what it decided and why.
 
-## Architecture
+[![CI](https://github.com/sarooo43/Routellm/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo43/Routellm/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
+[![Node 20+ (only to build the UI)](https://img.shields.io/badge/node-20%2B%20(optional)-339933.svg)](https://nodejs.org)
 
-```
-apps / websites / webhooks
-        │ HTTPS (X-API-Key: rk_...)
-        ▼
-Caddy (auto TLS, :80/:443)
-        ├─ /*               ─▶ frontend (React/Vite + nginx)
-        └─ /api/v1/*, /v1/* ─▶ backend (FastAPI) ─▶ PostgreSQL + Redis
-                                   │
-                                   ├─ classify_task() → rank_models()
-                                   ├─ CircuitBreaker (Redis-backed)
-                                   ├─ QuotaTracker (Redis-backed)
-                                   └─ execute_with_fallback()
-                                        → Groq / Gemini / DeepSeek
-                                          (operator keys or per-caller BYOK)
-```
+> **Name:** this project is independent and **not affiliated with LMSYS RouteLLM**, the routing-model research project of the same name.
 
-The hosted production variant replaces the Caddy/nginx hop with:
+<!--
+  Demo placeholder — replace with a real screen recording before announcing.
+  Nothing below claims a measured result yet; see "Benchmarks".
+-->
 
-```
-Browser → Cloudflare Worker (static dashboard + same-origin API proxy)
-              └ BACKEND_URL → Hugging Face Space (hf_app.py, one uvicorn)
-                    → Neon Postgres + Upstash Redis
-```
+<!-- OWNER TASK: record docs/assets/demo.gif (see docs/assets/README.md).
+     Kept as a placeholder line rather than a broken image. -->
+> _Demo GIF: to be recorded. `docs/assets/README.md` lists exactly what to film._
 
-See [`DEPLOY.md`](DEPLOY.md) for the Space + Worker topology, cold-start
-semantics, and troubleshooting.
+---
 
-- **Phase 0–2**: FastAPI skeleton, provider adapters with per-provider error
-  taxonomies, prompt classifier
-- **Phase 3–4**: capability/cost/latency/availability scorer, Redis circuit
-  breaker + daily quota tracker (skips providers *before* wasting a request)
-- **Phase 5–6**: fallback executor + persistence layer (TaskLog, ModelStats,
-  UsageTracking) — every attempt is recorded and feeds future routing
-- **Phase 7**: typed REST API (`/api/v1/route`, `/models`, `/logs`,
-  `/analytics`, `/health`) with rate limiting on the route endpoint
-- **Phase 8**: glassmorphism dashboard (Overview, Model Health, Routing
-  Explorer, Analytics) with live polling
-- **Phase 9**: Docker orchestration + GitHub Actions CI
-- **OpenAI compatibility**: `/v1/chat/completions` and `/v1/models` over the
-  same routing engine, with automatic or provider-pinned model selection
-- **Phase 15**: Models Catalog — a capability/pricing/specs directory distinct
-  from the operational Model Health board
-- **Phase 16**: lightweight API-key management — self-service demo keys,
-  SHA-256-only storage, usage counters, revocation, and protected routing
-- **Phase 18**: per-caller BYOK provider keys (encrypted at rest) and Caddy
-  auto-HTTPS so apps/websites/webhooks can call RouteLLM over TLS
+## 60-second quick start
 
-## 🔌 OpenAI SDK Compatible
-
-Point the OpenAI SDK at RouteLLM instead of `api.openai.com`: this makes RouteLLM
-a drop-in replacement for any tool already built against the OpenAI text-chat API.
+No Docker. No Postgres. No Redis. No account.
 
 ```bash
-pip install openai
+git clone https://github.com/sarooo43/Routellm.git
+cd Routellm
+python run.py
 ```
+
+`run.py` creates a virtualenv, installs the backend, builds the dashboard if
+Node is available (or uses a prebuilt one), creates `./data`, and opens
+**http://127.0.0.1:8000**.
+
+<details>
+<summary><strong>Windows</strong> (PowerShell)</summary>
+
+```powershell
+git clone https://github.com/sarooo43/Routellm.git
+cd Routellm
+.\start.ps1
+```
+
+If PowerShell blocks local scripts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+`start.ps1` only locates Python and hands over to `run.py`; the
+`ExecutionPolicy Bypass` form scopes the change to that one invocation, so
+nothing needs to be made permanent.
+
+</details>
+
+<details>
+<summary><strong>macOS / Linux</strong></summary>
+
+```bash
+git clone https://github.com/sarooo43/Routellm.git
+cd Routellm
+./start.sh
+```
+
+Python 3.11+ is the only hard requirement. `--check` reports what is present
+and what would be installed, without changing anything:
+
+```bash
+python run.py --check
+```
+
+</details>
+
+<details>
+<summary><strong>No Node.js installed?</strong></summary>
+
+The dashboard needs a build. Without Node, the launcher runs the API only and
+`/` explains how to build the UI. Two ways to get the UI anyway:
+
+- install Node 20+ and rerun `python run.py`, or
+- download a release zip — it ships a prebuilt `frontend/dist`, so
+  `python run.py` serves the full app with no Node at all.
+
+</details>
+
+### Then, in the app
+
+1. **Providers** → paste a free key (Groq, Google AI Studio or DeepSeek — links
+   are on the page). Keys are encrypted at rest and win over environment
+   variables.
+2. **Explorer** → send a prompt and watch the routing decision.
+3. Leave it alone for demo mode: with no key configured, a **labelled MOCK**
+   provider answers so the UI is explorable without spending anything.
+
+### Use it from code
+
+It speaks the OpenAI chat-completions API, so the official SDK works unchanged:
 
 ```python
 from openai import OpenAI
 
-# Generate a RouteLLM demo key first (see "Lightweight API keys" below), then:
-client = OpenAI(
-    base_url="http://localhost:8000/v1",
-    api_key="anything",  # placeholder; RouteLLM auth uses X-API-Key
-    default_headers={"X-API-Key": "rk_your_generated_key"},
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed-locally")
+
+reply = client.chat.completions.create(
+    model="routellm-auto",          # or "groq" / "gemini" / "deepseek"
+    messages=[{"role": "user", "content": "Explain circuit breakers in one line."}],
 )
-response = client.chat.completions.create(
-    model="routellm-auto",
-    messages=[{"role": "user", "content": "Explain async Python in one sentence."}],
-)
-print(response.choices[0].message.content)
+print(reply.choices[0].message.content)
 ```
 
-Start the backend with your provider keys as usual (see Quick Start below). The
-new `POST /v1/chat/completions` adapter uses the **same** classifier, scorer,
-executor, quota checks, circuit breaker, fallback chain, and logging as the
-original API. `GET /v1/models` supports SDK/tool model discovery. The original
-`POST /api/v1/route` and its rich response are unchanged.
+`api_key` is ignored when `REQUIRE_API_KEY=false` (the local default). Set it to
+`true` to require a generated `rk_…` key.
 
-| `model` value | Behavior |
-| --- | --- |
-| `routellm-auto` | Automatically classify, score, select, and fall back across providers |
-| `groq`, `gemini`, `deepseek` | Force that registered provider; one attempt, no fallback |
+---
 
-The available names come from the live provider registry. Use the non-standard
-`task_type` field to override classification through the SDK's `extra_body`:
+## What it does
 
-```python
-response = client.chat.completions.create(
-    model="routellm-auto",
-    messages=[{"role": "user", "content": "Help with this text."}],
-    extra_body={"task_type": "summarization"},
-    temperature=0.2,
-    max_tokens=256,
-)
+**Classify → rank → execute → record.** Each request is classified into `code`,
+`reasoning`, `summarization`, `qa` or `general`; every candidate provider is
+scored on capability, recent success rate, cost, latency and breaker
+availability; the best one is called. If it fails, the next is tried, and the
+whole attempt chain is persisted and shown.
+
+```mermaid
+flowchart LR
+    C[Client] -->|POST /api/v1/route<br/>or /v1/chat/completions| G[FastAPI gateway]
+    G --> CL[Classifier]
+    CL --> R[Ranker<br/>capability · success · cost<br/>latency · availability]
+    R --> X{Executor}
+    X -->|1st choice| P1[Groq]
+    X -->|fallback| P2[Google AI Studio]
+    X -->|fallback| P3[DeepSeek]
+    X -.->|no key configured| D[MOCK demo provider]
+    P1 & P2 & P3 --> B[(Circuit breaker<br/>+ quota gates)]
+    B --> L[(Task log<br/>SQLite or Postgres)]
+    L --> U[React dashboard]
+    X --> O[OpenAI-compatible response]
 ```
 
-Successful responses follow OpenAI's `chat.completion` schema, with `model` set
-to the provider that actually answered. The extra `x_routellm_metadata` field
-contains `confidence_score`, `fallback_chain_attempted`, and `routing_method`;
-OpenAI SDKs retain it without requiring a custom client. Unknown models return
-400; exhausted provider chains return 502, both with OpenAI's `error` envelope.
-Model-list entries include the SDK-required `created` field (0: the registry
-does not track creation timestamps).
+### Features
 
-**Phase limitations:** text-only `user`/`system`/`assistant` messages are flattened
-into a role-labelled prompt; native conversation/context-window management and
-tool calls are not implemented. `stream: true` returns an explicit 400
-`streaming_not_supported`, never a silently non-streamed response. Providers
-currently report only aggregate token usage, so `prompt_tokens` is 0 (unavailable),
-and the reported count is carried in `completion_tokens`/`total_tokens` without
-double-counting. `temperature` and `max_tokens` are forwarded to every attempted
-provider (Gemini's native generation-config fields are used automatically).
-The placeholder SDK `api_key` is not gateway authentication. RouteLLM requires
-its own generated key in `X-API-Key` (see below); invalid/missing keys return
-401 with OpenAI's `invalid_api_key` error envelope. This is lightweight
-demo/portfolio auth, not production OAuth or multi-tenant account security.
+- **Automatic fallback** across providers, with the attempt chain recorded
+  (provider, error class, latency, whether it was skipped or failed).
+- **Circuit breaker** per provider: closed → open → half-open, so a dead
+  provider is skipped instead of retried forever.
+- **Quota pre-flight**: a provider close to its free-tier daily limit is
+  skipped *before* burning a request on a guaranteed 429.
+- **Live dashboard** (dark glassmorphism): KPIs, live feed, per-provider health,
+  routing explorer, analytics, catalog and key management.
+- **Bring your own key**, encrypted at rest, scoped per identity, never echoed
+  back after saving.
+- **OpenAI-compatible** `/v1/chat/completions` and `/v1/models`.
+- **Demo mode**: a MOCK provider for a zero-key, zero-spend first run. Labelled
+  everywhere and excluded from every real number.
+- **Chaos mode**: simulate a provider outage and watch the failover happen.
+- **Everything optional**: SQLite or Postgres, in-process store or Redis,
+  local only or containerised.
 
-### Reproduce the real-SDK smoke test (no API credits)
+---
 
-From `backend/`, start the existing demo server (real app and routing pipeline,
-stubbed upstream providers, local SQLite and fakeredis):
+## Configuration
 
-```bash
-python -m uvicorn scripts.demo_server:app --host 0.0.0.0 --port 8000
-```
+Nothing below is required for a local run. Copy
+[`backend/.env.example`](backend/.env.example) to `backend/.env` to override a
+default (the launcher creates it for you on first run).
 
-In another terminal, with the backend dependencies and `openai` installed:
-
-```bash
-python scripts/smoke_openai_sdk.py
-```
-
-The script uses the installed OpenAI package's **normal HTTP transport**, not
-FastAPI TestClient or an in-process ASGI transport. It checks model discovery,
-`routellm-auto`, SDK-parsed invalid-model/streaming errors, and the unchanged
-legacy route. Automated integration tests live in
-`backend/tests/integration/test_openai_compat.py` and mock all upstream calls.
-
-## 🔥 Live Chaos Demo (DEV/DEMO ONLY)
-
-RouteLLM's headline claim is *automatic self-healing fallback*. Instead of
-asking you to read code, the dashboard lets you prove it in ~15 seconds:
-deliberately break a provider and watch the system visibly reroute around it
-— a tiny, demo-safe version of Netflix's Chaos Monkey.
-
-**Safety first:** everything below is gated behind `CHAOS_MODE_ENABLED`, which
-defaults to `false`. With the flag off (any real deployment), the
-`/api/v1/admin/chaos/*` endpoints are not even registered — they answer `404`
-like any unknown path — and the executor never honors a chaos key. This feature
-can never accidentally run in production.
-
-### 1. Enable chaos mode
-
-In `backend/.env` (set before starting the backend; see `backend/.env.example`):
-
-```env
-CHAOS_MODE_ENABLED=true
-```
-
-Then start the stack (Docker: `docker compose up`, or locally:
-`uvicorn app.main:app --reload` from `backend/` + `npm run dev` from `frontend/`).
-
-### 2. Run the demo click-path
-
-1. **Model Health page** → click **"⚡ Simulate Outage"** on a card (e.g. the
-   top-ranked provider). The card immediately gains a pulsing purple
-   **Chaos Injected** badge, the app-top banner shows
-   "Chaos Mode: 1 provider artificially down", and a toast confirms the
-   injection (auto-expires in 60s via TTL — nothing to clean up).
-2. **Overview page** ("Try it Live" panel) → type any prompt → **Send Request**.
-   The request is a real `POST /api/v1/route` through the real executor: the
-   chain graph animates the chaos-injected provider in **purple** (✗), the
-   next provider in **green** (✓) — fallback, live.
-3. **Keep clicking "Send Request"** with chaos still on the same provider:
-   each synthesized failure feeds the REAL circuit breaker. After ~5 repeats
-   the genuine breaker trips and the provider drops into the red
-   **Circuit Open** state — both resilience mechanisms in one demo.
-4. Watch genuine (unchoreographed) rerouting behavior in **Routing Explorer**
-   and **Logs** as the chaos chain entries appear.
-5. Click **"Reset Now"** on the card (or **"Clear All"** on the banner).
-   Even if forgotten, the injection dies silently when its TTL expires.
-
-Backend equivalents (all under `http://localhost:8000`):
-
-```bash
-# Inject a 60s artificial failure (enabled mode only)
-curl -X POST http://localhost:8000/api/v1/admin/chaos/inject \
-  -H "Content-Type: application/json" \
-  -d '{"provider_name": "groq", "duration_seconds": 60}'
-
-# List active chaos injections
-curl http://localhost:8000/api/v1/admin/chaos/status
-
-# Manually reset before the TTL
-curl -X POST http://localhost:8000/api/v1/admin/chaos/clear \
-  -H "Content-Type: application/json" \
-  -d '{"provider_name": "groq"}'
-```
-
-Chaos failures are logged with `error="chaos_injected_failure"` and a
-`chaos_injected` marker, so on the dashboard they are always distinguishable
-from real provider outages — and they never touch the provider's permanent
-success-rate statistics.
-
-## Quick Start with Docker
-
-Prerequisites: [Docker](https://docs.docker.com/get-docker/) with compose v2
-(`docker compose version` to check).
-
-```bash
-# 1. Clone
-git clone https://github.com/<your-username>/routellm.git
-cd routellm
-
-# 2. Configure
-cp .env.example .env
-#    Edit .env:
-#      DOMAIN=routellm.example.com   # DNS name pointing at this host, or localhost
-#      PROVIDER_KEY_ENCRYPTION_KEY=  # required for BYOK Provider Keys UI
-#        generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-#      GROQ_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY  # optional operator fallback
-#      POSTGRES_PASSWORD=...         # choose a strong password
-#    Empty provider keys are safe: requests route through the full pipeline but
-#    end in a structured all_providers_failed response — never a crash/raw error.
-
-# 3. Build & launch all five services (Postgres, Redis, backend, frontend, Caddy)
-docker compose up --build -d
-
-#    Data volumes (pgdata, redisdata, caddy_data, caddy_config) persist across
-#    container restarts; `docker compose down -v` resets everything.
-```
-
-### Where everything runs
-
-| Service  | URL                               | Notes                                   |
-| -------- | --------------------------------- | --------------------------------------- |
-| Public   | `https://DOMAIN`                  | Caddy auto-HTTPS (Let's Encrypt)        |
-| Frontend | `https://DOMAIN` or http://localhost:8080 | nginx + static Vite build (SPA) |
-| Backend  | `https://DOMAIN/api/v1` or http://localhost:8000 | FastAPI                    |
-| API docs | `https://DOMAIN/docs`             | Fully typed Swagger UI                  |
-| Health   | `https://DOMAIN/api/v1/health`    | 200 when DB + Redis are reachable       |
-| Postgres | localhost:5432                    | bound to 127.0.0.1 for local debugging  |
-| Redis    | localhost:6379                    | bound to 127.0.0.1 for local debugging  |
-
-The dashboard uses same-origin API calls by default (`VITE_API_BASE_URL=''`);
-nginx proxies `/api` and `/v1` to the backend, and Caddy terminates public HTTPS.
-Remote browsers never need to call `http://localhost:8000`.
-
-### Watch it route
-
-```bash
-# Generate a demo key (raw key is returned once; save it)
-API_KEY=$(curl -s -X POST http://localhost:8000/api/v1/keys/generate \
-  -H "Content-Type: application/json" \
-  -d '{"label": "curl demo"}' | python -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
-
-curl -X POST http://localhost:8000/api/v1/route \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
-  -d '{"prompt": "Write a python function to merge two sorted lists"}'
-```
-
-Then open `https://DOMAIN` (or http://localhost:8080) — the request appears in
-the Overview live feed within ~3 seconds, and the KPI cards update on their 5s
-poll. For webhook/app examples over HTTPS, see
-[`docs/HTTPS_AND_WEBHOOKS.md`](docs/HTTPS_AND_WEBHOOKS.md) and
-[`examples/webhook/`](examples/webhook/).
-
-## Local development (no Docker)
-
-Backend (Python 3.12, uses [`uv`](https://docs.astral.sh/uv/)):
-
-```bash
-cd backend
-uv venv .venv --python 3.12
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt
-cp .env.example .env   # optional DATABASE_URL / REDIS_URL / API keys
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload   # Windows
-# Linux/macOS: .venv/bin/python -m uvicorn app.main:app --reload
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm ci
-npm run dev    # http://localhost:5173, proxies /api and /v1 to :8000
-```
-
-## Testing
-
-Verifying a deployment end to end (including what "done" means and the exact
-command for each check): [`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
-
-## Testing
-
-```bash
-# Backend tests (fixture DB is in-memory SQLite; Redis via fakeredis)
-cd backend && .venv/Scripts/python.exe -m pytest
-
-# Frontend: Vitest + React Testing Library
-cd frontend && npm run test
-```
-
-CI (`.github/workflows/ci.yml`) runs both suites on every push/PR to `main`,
-with the backend job booting PostgreSQL and Redis as GitHub Actions services
-and pytest reporting coverage.
-
-## 📊 Benchmark Results
-
-Methodology: 37 prompts across 5 task types, run twice under identical
-conditions — once simulating a naive single-model setup (no fallback), once
-through RouteLLM's full routing system — with Gemini artificially taken
-offline mid-run via Chaos Mode to simulate a real provider outage.
-Full methodology and reproduction steps: [`benchmark/README.md`](./benchmark/README.md).
-
-| Scenario | Naive (single model) | RouteLLM |
+| Variable | Default | What it changes |
 |---|---|---|
-| Normal conditions — success rate | 0/37 (0.0%) | 0/37 (0.0%) |
-| **Simulated outage — success rate** | **0/37 (0.0%)** | **0/37 (0.0%)** |
-| Avg latency (normal) | 2188 ms | 501 ms |
+| `ROUTELLM_DATA_DIR` | `./data` | Where SQLite, the generated encryption key and logs live |
+| `DATABASE_URL` | unset → SQLite | Set any Postgres DSN to use Postgres instead |
+| `REDIS_URL` | unset → in-process | Set it to share breaker/quota/chaos state across processes |
+| `REQUIRE_API_KEY` | `false` | `true` requires `X-API-Key` on `/api/v1/route` and `/v1/chat/completions` |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | Bind address and port |
+| `SERVE_FRONTEND` | `true` | Serve the built dashboard from the API process |
+| `FRONTEND_DIST_DIR` | `frontend/dist` | Explicit path to a built dashboard |
+| `CHAOS_MODE_ENABLED` | `true` | Fault-injection routes (hidden and 404 when false) |
+| `DEMO_MODE_ENABLED` | `true` | Registers the `mock` demo provider |
+| `DEMO_LATENCY_MS` / `DEMO_FAILURE_RATE` | `350` / `0.0` | Simulated latency and failure rate for demo mode |
+| `PROVIDER_KEY_ENCRYPTION_KEY` | auto-generated | Fernet key for stored provider keys |
+| `GROQ_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY` | unset | Provider keys from the environment (the Providers page wins) |
+| `ENABLE_ML_ROUTING` | `false` | Experimental ML-assisted ranking (needs `requirements-ml.txt`) |
+| `CORS_ORIGINS` | unset | Comma-separated origins, only for cross-origin clients |
 
-![Success Rate Comparison](./benchmark/results/success_rate_comparison.png)
-![Cost Comparison](./benchmark/results/cost_comparison.png)
+`python run.py --help` lists the launcher flags: `--port`, `--host` (prints a
+warning off loopback), `--dev`, `--no-browser`, `--reinstall`, `--rebuild`,
+`--check`.
 
-> **Status: the recorded run has no successful requests in either arm**, so it
-> does not demonstrate a success-rate advantage. The runner did complete all 74
-> requests without crashing, but no provider key was usable at the time, so both
-> arms ended every request in a structured failure. The latency numbers are real;
-> the success-rate column is not evidence of anything until the benchmark is
-> re-run with live provider keys.
->
-> Re-run (needs provider keys in `backend/.env`):
->
-> ```bash
-> python benchmark/run_benchmark.py --scenario 1
-> python benchmark/generate_report.py
-> ```
->
-> The methodology is sound and reproducible; only the data is missing. The charts
-> below are regenerated by `generate_report.py`.
+### Where your data lives
 
-## 🧠 ML-Assisted Routing (EXPERIMENTAL, off by default)
+`./data` (git-ignored) holds `routellm.db`, `encryption.key` and logs. It is
+never uploaded anywhere. Delete it to start clean — **deleting
+`encryption.key` makes previously stored provider keys unreadable**, so
+re-enter them on the Providers page.
 
-Inspired by the academic [RouteLLM](https://github.com/lm-sys/RouteLLM)
-(UC Berkeley) and commercial router products like Martian: instead of only the
-hand-tuned `CAPABILITY_MATCH` table deciding "how well each provider handles
-each task type", a lightweight trained classifier predicts, **directly from
-the prompt's embedding**, which provider is most likely to produce the best
-response. The learned capability score is blended **60% ML / 40% rule-based**
-over the existing table — the heuristics stay in the loop because the model is
-trained on limited data and must not blindly override them.
+---
 
-Full pipeline (data → labels → embeddings → training → serving → safe fallback):
+## Benchmarks
 
-1. **Judge-scored data collection** — `backend/scripts/collect_training_data.py`
-   calls *every* provider for each test prompt (bypassing routing), then an
-   LLM-as-judge (`app/core/judge.py`, JSON-scored 0.0–1.0 with defensive
-   parsing) rates each response. Output is a resumable JSONL dataset.
-2. **Training** — `backend/scripts/train_router_model.py` embeds prompts with
-   `sentence-transformers all-MiniLM-L6-v2` (small, local, free), trains a
-   `LogisticRegression`, prints honest accuracy vs the majority-class
-   baseline, and saves `app/ml_models/router_classifier.pkl` (joblib).
-3. **Serving** — `app/core/ml_classifier.py` loads the artifact lazily and
-   **never breaks the app**: missing file, missing deps (`requirements-ml.txt`
-   is optional), corrupt pickle, or a below-confidence-threshold prediction
-   (`max predict_proba < 0.45`) all degrade to pure rule-based scoring.
-4. **Hybrid scoring** — `rank_models()` blends the learned per-provider
-   capability with the rule-based one; gated by `ENABLE_ML_ROUTING=false`
-   (default). With the flag off, routing is bit-for-bit identical to before.
-5. **Transparency** — every response/logs row carries
-   `routing_method: "ml_hybrid" | "rule_based"`, shown in the Routing
-   Explorer as 🧠 ML-Assisted / 📋 Rule-Based badges.
+**Placeholder — no numbers are claimed yet.**
 
-**Honesty:** with ~37–150 judge-labeled examples (our benchmark set × 3
-providers), this model will often barely beat (or match) a majority-class
-predictor — and the training script says so out loud, printing the baseline
-alongside accuracy. For a portfolio the point is the complete, working
-ML pipeline with production-grade fallback semantics, not leaderboard
-accuracy on a tiny dataset. Rerun collection with more prompts to grow it.
+The repository contains a benchmark harness (`benchmark/`) that compares a
+naive single-model baseline against this router under identical conditions,
+including a deterministic simulated outage. A real run needs real provider keys
+and must be regenerated before anything is published here:
 
 ```bash
-# one-time (heavy: pulls torch)
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements-ml.txt
-# 1) collect (needs provider API keys in backend/.env; resumable)
-backend/.venv/Scripts/python.exe scripts/collect_training_data.py
-# 2) train + report metrics + save model
-backend/.venv/Scripts/python.exe scripts/train_router_model.py
-# 3) enable in backend/.env, restart
-#    ENABLE_ML_ROUTING=true
+cd benchmark
+pip install -r requirements.txt
+python run_benchmark.py --scenario normal
+python run_benchmark.py --scenario outage
+python generate_report.py
 ```
 
-## 🗂️ Models Catalog vs Model Health
+The currently committed `benchmark/results/REPORT.md` is from a run **without**
+provider credentials (every arm reports 0% success). It is kept only as an
+artefact of the harness and must not be quoted as a result. Demo-mode traffic is
+never included in benchmark runs.
 
-- **Catalog** (`/catalog`, `GET /api/v1/catalog`) is a browsable directory:
-  display name, description, context window, capability pills, pricing tier,
-  cost per 1K tokens, and a small live success/latency/status snapshot. Filters
-  and sorting are client-side.
-- **Model Health** (`/models`, `GET /api/v1/models`) is the operational board:
-  circuit state, quota pressure, success-rate trends, and chaos controls.
+---
 
-The catalog endpoint merges static metadata from `app/core/model_catalog.py`
-with live `ModelStatsDB` aggregates and the same circuit-breaker status logic
-used by `/api/v1/models`. It is public; no API key is required.
+## Privacy
 
-## 🔑 Lightweight API keys (no OAuth)
+Local-first is the point, not a setting.
 
-This is a **demo/portfolio authentication system**, not production multi-tenant
-auth. There are no users, passwords, sessions, signup, or OAuth flows. Anyone
-can generate a standalone key; possession of the key is the only credential.
+- **Your prompts go to the provider you configured** — Groq, Google AI Studio
+  or DeepSeek — and nowhere else. There is no telemetry, no analytics beacon and
+  no phone-home.
+- **Demo mode makes no network call at all.**
+- **Provider keys never leave the machine.** They are Fernet-encrypted before
+  touching the database and returned only as a 4-character hint.
+- **The gateway binds `127.0.0.1`.** `--host 0.0.0.0` prints a warning, because
+  anyone who can reach the port can spend your provider credits.
+- **Never commit `backend/.env`.** `backend/scripts/check_secrets.py` scans the
+  working tree *and* git history for credentials and masks anything it finds.
+
+Full threat model: [SECURITY.md](SECURITY.md).
+
+---
+
+## Optional: Postgres, Redis, containers, ML
+
+None of these are needed for local use.
+
+**Postgres / Redis** — point the app at them; nothing else changes:
 
 ```bash
-# Public: generate a key. The raw key is returned exactly once.
-curl -X POST http://localhost:8000/api/v1/keys/generate \
-  -H "Content-Type: application/json" \
-  -d '{"label": "My dev key"}'
-
-# Protected: use it on routing/chat endpoints.
-curl -X POST http://localhost:8000/api/v1/route \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: rk_..." \
-  -d '{"prompt": "Hello"}'
-
-# Key-scoped stats and revocation (only the calling key, never a global list).
-curl http://localhost:8000/api/v1/keys/me -H "X-API-Key: rk_..."
-curl -X DELETE http://localhost:8000/api/v1/keys/me -H "X-API-Key: rk_..."
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/routellm
+REDIS_URL=redis://localhost:6379/0
 ```
 
-Protected: `POST /api/v1/route`, `POST /v1/chat/completions`,
-`GET/DELETE /api/v1/keys/me`, and `GET/PUT/DELETE /api/v1/provider-keys`.
-Public: health, model discovery, catalog, key generation, and read-only
-dashboard telemetry.
+The Redis-facing consumers (circuit breaker, quota, chaos, health) are tested
+against both the in-process store and a real Redis with the same assertions
+(`tests/integration/test_redis_contract.py`).
 
-**Raw keys are never stored in the database.** Generation creates
-`rk_` + 32 random URL-safe characters, stores only:
-
-```python
-key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
-key_prefix = raw_key[:8]  # e.g. "rk_a1b2c" — display only
-```
-
-Validation hashes the presented key and looks up an active `api_keys` row.
-Successful generations increment `total_requests` and `total_tokens_used`.
-The dashboard's **API Keys** page shows the raw key once in a copy modal, then
-keeps a local demo copy in `localStorage` so "Try it Live" can reuse it. That
-browser copy is a deliberate demo tradeoff; the backend cannot recover the raw
-key from its table. For production, replace this with real account auth,
-hashed/scoped secrets management, rate limits per tenant, and TLS-only transport.
-
-## 🔐 Per-caller provider keys (BYOK)
-
-The **Provider Keys** dashboard page (`/providers`) lets each RouteLLM `rk_`
-caller key store its own upstream Groq, Gemini, and DeepSeek API keys. This is
-separate from the **API Keys** page, which manages RouteLLM caller keys.
+**Container** — one service, dashboard included:
 
 ```bash
-RK="rk_..."
-
-# Store one provider key for this caller (encrypted before it touches the DB).
-curl -X PUT https://routellm.example.com/api/v1/provider-keys/groq \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $RK" \
-  -d '{"api_key":"gsk_your_groq_key"}'
-
-# List configuration status for every provider (hints only, never raw keys).
-curl https://routellm.example.com/api/v1/provider-keys -H "X-API-Key: $RK"
-
-# Remove one provider key.
-curl -X DELETE https://routellm.example.com/api/v1/provider-keys/groq \
-  -H "X-API-Key: $RK"
-
-# Route using the caller's stored provider keys.
-curl -X POST https://routellm.example.com/api/v1/route \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $RK" \
-  -d '{"prompt":"Hello"}'
+docker compose up --build      # http://localhost:8000
 ```
 
-Behavior and guarantees:
-
-- Provider keys are encrypted with Fernet using the server-side
-  `PROVIDER_KEY_ENCRYPTION_KEY`. The database stores ciphertext plus a last-4
-  display hint; raw provider keys are never returned after saving.
-- Rows are scoped to `(api_key_id, provider_name)`. One `rk_` key cannot list,
-  use, or delete another key's provider credentials.
-- Once a caller has at least one stored provider key, automatic routing and
-  fallback stay within that caller's configured providers. A forced provider
-  without a caller key fails structurally (`missing_provider_key`) without an
-  upstream call.
-- Callers with no stored provider keys keep the legacy operator/demo behavior:
-  providers read `GROQ_API_KEY` / `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` from the
-  server environment.
-- If `PROVIDER_KEY_ENCRYPTION_KEY` is missing or wrong, provider-key writes and
-  BYOK routing fail closed with HTTP 503 instead of silently falling back to
-  operator credentials.
-
-Generate the encryption key once and keep it stable:
+**ML-assisted routing** (experimental, off by default):
 
 ```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+pip install -r backend/requirements-ml.txt
+# then set ENABLE_ML_ROUTING=true once a model exists
 ```
 
-Losing this key makes stored provider keys undecryptable; callers must re-enter
-them. For a public multi-tenant service, replace this with a managed KMS/secrets
-layer and real account auth.
+**Cloud** — the previous Hugging Face Space / Cloudflare Worker path still
+works and is still tested, but it is documented as experimental in
+[docs/deploy/](docs/deploy/) and is not the recommended way to run this.
 
-## 🌐 HTTPS for apps, websites, and webhooks
+---
 
-The docker-compose stack includes Caddy as the public reverse proxy. Set
-`DOMAIN` to a DNS name pointing at the host, open ports 80/443, and Caddy
-obtains/renews a Let's Encrypt certificate automatically:
+## Scope decisions
 
-```bash
-DOMAIN=routellm.example.com docker compose up --build -d
-```
+Being explicit about what this is and is not:
 
-Then apps/websites/webhooks call:
+- **Local-first, single user.** Accounts, teams and hosted billing are out of
+  scope. `REQUIRE_API_KEY` gives you a shared key, not a user system.
+- **Three providers, one interface.** Groq, Google AI Studio and DeepSeek ship
+  today; adding a fourth means implementing `ModelProvider` and registering it.
+- **Rules before models.** Routing is a transparent, inspectable scoring table.
+  ML ranking exists behind a flag and is not trusted by default.
+- **SQLite over migrations.** Tables are created from the models on first run.
+  For a long-lived deployment with schema changes, add Alembic.
+- **In-process state by default.** Breaker/quota/chaos state resets on restart
+  unless you set `REDIS_URL`. That is the right trade for one machine.
+- **No fabricated numbers.** Anything claimed in this README is either
+  reproducible from the repository or marked as a placeholder.
 
-```bash
-curl -X POST https://routellm.example.com/api/v1/route \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: rk_..." \
-  -d '{"prompt":"Hello from a webhook"}'
-```
+---
 
-or the OpenAI-compatible endpoint:
+## Troubleshooting
 
-```bash
-curl -X POST https://routellm.example.com/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: rk_..." \
-  -d '{"model":"routellm-auto","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-Full deployment steps, BYOK setup, fetch/SDK examples, and a minimal webhook
-receiver are in [`docs/HTTPS_AND_WEBHOOKS.md`](docs/HTTPS_AND_WEBHOOKS.md) and
-[`examples/webhook/`](examples/webhook/). Keep `rk_` keys server-side; do not
-embed them in public browser bundles.
-
-## 🚀 Hugging Face Space (one-process backend)
-
-The production backend deploys to a HF Space via `hf_app.py`: a single
-uvicorn process that serves the FastAPI gateway plus a Gradio status page
-mounted at `/ui`. The file is import-safe (no server starts on import) and
-falls back to plain FastAPI+uvicorn when Gradio/Spaces are absent, so local
-dev and CI never install Gradio. `/health` ALWAYS answers 200 —
-`{"status":"ok"|"degraded", "db_up":…, "redis_up":…}` — so infra probes never
-see a 503; component health lives in the payload instead.
-
-Owner deploy:
-
-```powershell
-$env:HF_TOKEN = "<token>"          # never committed or echoed
-powershell -File scripts/deploy_hf.ps1 -Token $env:HF_TOKEN
-python scripts/smoke_deployed.py --base-url https://<owner>-<space>.hf.space
-```
-
-ZeroGPU caveat: the Space never requests a GPU (`@spaces.GPU` is unused), and
-HF may also rate-limit a ZeroGPU Space that never claims one — expected and
-harmless for this CPU-only app. A cold Sleeping Space can take up to a minute
-to answer; §Cloudflare below shows how that is surfaced.
-
-## ☁️ Cloudflare Workers (dashboard + API proxy)
-
-Cloudflare Workers can host the React dashboard, but **cannot run the Python
-FastAPI backend, PostgreSQL, or Redis**. The repo's Worker serves the
-dashboard and proxies `/api/*` + `/v1/*` + `/health` + `/docs` **same-origin**
-to the HF Space — the browser never makes a cross-origin API call, so there
-is no CORS and no `VITE_API_BASE_URL` to misconfigure.
-
-```
-Browser → Worker (serves frontend/dist, proxies API paths)
-              └ BACKEND_URL → https://saboornotgonna-routellm.hf.space
-                    → Neon Postgres + Upstash Redis
-```
-
-Key proxy semantics (cloudflare/worker.js, all unit-tested):
-
-- `BACKEND_URL` — plain public var in `wrangler.jsonc` (no secret needed; it
-  is a Space URL). Legacy `ROUTELLM_API_ORIGIN` still honored; invalid values
-  fall back to the default instead of erroring.
-- 60 s upstream timeout; GET retried ONCE on 502/503/504/network errors;
-  POST/PUT/DELETE never replayed.
-- `x-routellm-source: backend` on proxied answers;
-  `x-routellm-source: worker-proxy` + `503 {"detail":"Backend unreachable or
-  waking up","upstream":"down"}` when the Space is down/asleep.
-- The dashboard turns that last shape into an amber **"Waking up…"** pill and
-  retries with ~1s→60s backoff — the documented cold-start UX.
-
-Cloudflare build settings:
-
-| Setting | Value |
+| Symptom | Cause and fix |
 |---|---|
-| Root directory | `/` |
-| Build command | `npm run build` |
-| Deploy command | `npm run deploy` |
+| `python run.py` says *Python 3.11+ is required* | Install a newer Python, or on Debian/Ubuntu `sudo apt install python3.12 python3.12-venv` |
+| Launcher reports *Port 8000 is busy* | It auto-advances and prints the port it used; pass `--port` to choose one |
+| Dashboard at `/` shows a status page instead of the app | `frontend/dist` is missing — run `npm ci && npm run build` in `frontend/`, or `python run.py --rebuild` |
+| Pages load but every number is empty | Backend not reachable: check `http://127.0.0.1:8000/health`. The pill in the top bar says which dependency is down |
+| `/health` reports `"db": "down"` | The SQLite file is missing or unwritable — check `ROUTELLM_DATA_DIR`, or your `DATABASE_URL` if you set one |
+| Saving a provider key returns 503 | No usable encryption key: make the data directory writable (a key is generated automatically), or set `PROVIDER_KEY_ENCRYPTION_KEY` |
+| Stored provider keys stop working after you deleted `data/` | The generated key is gone, so the ciphertext cannot be decrypted — re-enter the keys |
+| Every route fails with a connection error | No provider key is configured and demo mode is off, or this machine cannot reach the provider API |
+| `.\start.ps1` is blocked by PowerShell | `powershell -ExecutionPolicy Bypass -File .\start.ps1` |
 
-`npm run deploy` explicitly uses `wrangler.jsonc`, preserves dashboard
-variables/secrets (`--keep-vars`), and disables Wrangler autoconfig. The config
-pins a stable compatibility date (`2025-09-01`) so Cloudflare cannot reject a
-local "today" date as future (error 10021).
+Logs are JSON on stdout; set `LOG_LEVEL=DEBUG` for more. Secrets are redacted
+before anything is written.
 
-Full guide: [`DEPLOY.md`](DEPLOY.md) — Space secrets, ZeroGPU caveats,
-`scripts/deploy_hf.ps1` / `scripts/smoke_deployed.py`, local `wrangler dev`
-verification, and the troubleshooting table (address already in use, 503
-same-origin, cold start, CORS, `relation "…" does not exist`).
+---
 
-The repo uses an npm workspace so Cloudflare's root install includes the
-`frontend/` dependencies. The root build runs `tsc && vite build` in the
-workspace without a nested `npm ci`, fixing Cloudflare failures like
-`sh: 1: tsc: not found` and CI hangs during nested installs.
+## Roadmap
 
-## Hosting the backend on Hugging Face (Gradio SDK)
+- [ ] Real benchmark run with real keys, and a published report
+- [ ] Demo GIF and screenshots in this README
+- [ ] Alembic migrations for schema changes
+- [ ] More providers behind the same interface
+- [ ] Optional streaming for `/v1/chat/completions`
 
-The backend is deployable to a **Hugging Face Space** using the **Gradio SDK**
-(the Docker SDK is a paid feature). `backend/hf_app.py` is the entrypoint:
+Completed work is tracked in [CHANGELOG.md](CHANGELOG.md).
 
-```text
-python hf_app.py     # uvicorn on 0.0.0.0:7860, all API paths unchanged
-```
+---
 
-- FastAPI keeps its normal routes (`/health`, `/docs`, `/api/v1/*`, `/v1/*`).
-- A tiny Gradio status page is mounted at `/ui`; `GET /` redirects to it.
-- If Gradio is missing or conflicts with the pinned FastAPI/Starlette versions,
-  the app automatically runs in **plain** mode (API only) and logs which mode
-  is active.
-- Startup is non-fatal: an unreachable database/Redis logs a masked warning,
-  `/health` reports `degraded`, and the catalog/models endpoints fall back to
-  static data instead of 500ing. Schema creation is retried until it succeeds.
-- Nothing writes inside the app directory (Hugging Face's app dir is
-  read-only); scratch paths resolve to `/tmp` when `SPACE_ID` is set.
+## Contributing
 
-Deploy + owner checklist, env-var table and troubleshooting:
-[`DEPLOY.md`](DEPLOY.md). Scripts:
+Bug reports, provider adapters and dashboard polish are all welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) — it covers the dev loop, the test commands
+and the rules the suite enforces (no secrets, no invented numbers, demo traffic
+stays labelled).
 
-```bash
-scripts/deploy_hf.sh          # macOS/Linux
-pwsh scripts/deploy_hf.ps1    # Windows
-python scripts/smoke_deployed.py --api https://<owner>-<space>.hf.space \
-                                 --origin https://routellm.saboornasar66.workers.dev
-```
+Please also read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). For security issues,
+follow [SECURITY.md](SECURITY.md) rather than opening a public issue.
 
-## Production notes (deliberate MVP simplifications)
+---
 
-- **Migrations**: tables are created via `init_db()` (SQLModel `create_all`)
-  at backend startup; Alembic is the natural next step.
-- **Rate limiter**: slowapi with in-memory storage — single-instance only;
-  point its storage at Redis for multi-worker deployments.
-- **Operator provider keys stay in `.env`** (never committed; `.dockerignore`
-  excludes it from images). Per-caller BYOK provider keys are encrypted in the
-  database, not stored in `.env`.
-- **TLS**: Caddy terminates public HTTPS in docker-compose. The backend itself
-  still speaks HTTP behind the proxy; do not expose port 8000 publicly.
-- **Auth**: the `rk_` key system is demo/portfolio auth, not production OAuth or
-  a full multi-tenant account system.
+## Licence
+
+[MIT](LICENSE) © sarooo43.
+
+Not affiliated with LMSYS RouteLLM.

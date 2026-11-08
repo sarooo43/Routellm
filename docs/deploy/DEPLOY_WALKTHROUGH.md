@@ -109,7 +109,7 @@ A browser window opens. Sign in with the account that owns the `routellm`
 Worker and click **Allow**. The terminal then says `Successfully logged in`.
 
 If it says the Worker is on a different account, check
-`docs/CLOUDFLARE.md` §2 — the account id is `a7014a6c3b2a2ad8b4c889f5842d3218`.
+`CLOUDFLARE.md` §2 — the account id is `a7014a6c3b2a2ad8b4c889f5842d3218`.
 
 ---
 
@@ -206,4 +206,4 @@ follows, so nothing is served for a minute or two.
 | `You are not logged in` | no session | `npx wrangler login` |
 | `Could not resolve host` / TLS error | no internet or a proxy | check connectivity |
 | Deploy "succeeds" but nothing changes | you deployed from an old checkout | `git pull`, then rebuild and redeploy |
-| `Workers Builds` fails in 0s on GitHub | Cloudflare's dashboard build config, not this code | follow `docs/CLOUDFLARE.md` §2 — build `npm run build`, deploy `npm run deploy`, root `/` |
+| `Workers Builds` fails in 0s on GitHub | Cloudflare's dashboard build config, not this code | follow `CLOUDFLARE.md` §2 — build `npm run build`, deploy `npm run deploy`, root `/` |

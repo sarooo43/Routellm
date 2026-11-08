@@ -172,10 +172,10 @@ minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
 ---
 
 Deploying the Worker from your own machine, step by step:
-[`docs/DEPLOY_WALKTHROUGH.md`](./docs/DEPLOY_WALKTHROUGH.md).
+[`DEPLOY_WALKTHROUGH.md`](./DEPLOY_WALKTHROUGH.md).
 
 Verification runbook (per-layer gates with expected outputs):
-[`docs/VERIFICATION.md`](./docs/VERIFICATION.md).
+[`VERIFICATION.md`](./VERIFICATION.md).
 
 ## 6) Troubleshooting
 
@@ -190,7 +190,7 @@ Verification runbook (per-layer gates with expected outputs):
 | `Permission denied` writing a file | HF runs non-root with a read-only app dir | Nothing in the app writes next to the source. Use `ROUTELLM_RUNTIME_DIR=/tmp/routellm`. A read-only boot is covered by a test. |
 | Runtime error: `[Errno 98] error while attempting to bind on address ('0.0.0.0', 7860): address already in use` — but the log above it shows `Application startup complete` and `database_schema_ready` | **Another process in the container already owns port 7860.** Our code opens exactly one socket (`hf_app.py` → `uvicorn.run`), so the second listener is not ours. Observed on **ZeroGPU** hardware, where the platform patches Gradio's `launch()` (`spaces/zero/__init__.py`) and ships a CUDA torch build — machinery a plain REST API neither uses nor wants. | **Switch the Space to CPU basic** (Settings → Hardware). This backend has no GPU code path at all. `uvicorn` sets `SO_REUSEADDR`, so a `TIME_WAIT` leftover is *not* a valid explanation — a real listener is. Since the fix below, the app also probes the port **before** startup and logs `hf_app_port_unavailable` with the reason, exiting `2` instead of dying mid-boot. |
 | Runtime error **"No @spaces.GPU function detected during startup"** | The Space is on **ZeroGPU** hardware, which refuses to start unless a function decorated with `@spaces.GPU` was registered at import. Free accounts are often offered *only* ZeroGPU, so "switch to CPU" is not always possible. | Handled in code: on ZeroGPU (`SPACES_ZERO_GPU` set) `hf_app.py` declares one unused `@spaces.GPU` placeholder and sends the startup report the platform waits for (`spaces` normally sends it from inside `Blocks.launch()`, which this app never calls). This API does **no GPU work** — the placeholder is never invoked. On CPU the hooks are silent no-ops. |
-| Build fails with `Killed` / exit 137, `No space left`, or an empty log | OOM during install, a full build cache, or a platform-side failure — none of them dependency changes | See [`docs/HF_BUILD_TROUBLESHOOTING.md`](./HF_BUILD_TROUBLESHOOTING.md) for the log line that identifies each, in order: Rebuild → Factory rebuild → then re-check the resolution locally. |
+| Build fails with `Killed` / exit 137, `No space left`, or an empty log | OOM during install, a full build cache, or a platform-side failure — none of them dependency changes | See [`HF_BUILD_TROUBLESHOOTING.md`](./HF_BUILD_TROUBLESHOOTING.md) for the log line that identifies each, in order: Rebuild → Factory rebuild → then re-check the resolution locally. |
 | Space stuck on "Building" | Dependency resolution or a missing file referenced by `app_file` | Logs tab → look for `pip` output. `app_file` must be `hf_app.py` at the Space root. |
 | 404 at `/` | Root redirect missing (old deployment) | `hf_app.py` installs `GET /` → `/ui` (or `/docs`). Redeploy; `/docs` and `/health` always work even if `/ui` failed to mount. |
 | First request times out, then works | Space was asleep | Expected on free hardware. Retry, or pay for always-on hardware. |

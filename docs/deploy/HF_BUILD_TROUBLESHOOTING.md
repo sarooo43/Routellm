@@ -86,7 +86,7 @@ will succeed. The `hf-space-boot` CI job does the real install on every push.
 
 Paste those three and the cause is usually obvious in one look. With only the
 cache summary, the failure genuinely cannot be diagnosed — which is the
-situation `docs/VERIFICATION.md` §5 documents from the owner's side.
+situation `VERIFICATION.md` §5 documents from the owner's side.
 
 ## 6. This project's build is deterministic, and here is the proof
 

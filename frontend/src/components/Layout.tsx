@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { ChaosBanner } from './ChaosBanner'
+import { APP_SHORT_NAME } from '../appInfo'
 
 const COLLAPSE_STORAGE_KEY = 'routellm.sidebar.collapsed.v1'
 
@@ -63,7 +64,16 @@ export function Layout() {
           <Outlet />
         </main>
         <footer className="border-t border-white/[0.04] px-4 py-4 text-center text-[11px] text-text-secondary/50 sm:px-6 lg:px-8">
-          RouteLLM · intelligent routing, automatic fallback, live observability
+          {APP_SHORT_NAME} · intelligent routing, automatic fallback, live observability
+          <span className="mx-1.5 text-text-secondary/30">·</span>
+          <a
+            href="https://github.com/sarooo43/Routellm"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline-offset-2 hover:text-text-secondary hover:underline"
+          >
+            source
+          </a>
         </footer>
       </div>
     </div>

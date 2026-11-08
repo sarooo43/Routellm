@@ -170,9 +170,10 @@ def resolve_database_url(configured: Optional[str]) -> str:
     value = (configured or "").strip()
     if value:
         return value
-    url = default_database_url()
-    logger.info("database_defaulted_to_sqlite", url="sqlite+aiosqlite:///<data-dir>/routellm.db")
-    return url
+    # Deliberately silent: this resolver is called on every engine lookup, so
+    # logging here repeats the same line once per consumer. The startup banner
+    # in app/main.py announces the default exactly once.
+    return default_database_url()
 
 
 def encryption_key_path() -> Path:
