@@ -274,7 +274,7 @@ def scan_tree(root: Path = REPO_ROOT) -> list[Finding]:
     findings: list[Finding] = []
     for path in iter_tree_files(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:  # pragma: no cover
             continue
         findings.extend(
@@ -284,18 +284,55 @@ def scan_tree(root: Path = REPO_ROOT) -> list[Finding]:
 
 
 def _git(*args: str) -> str:
-    """Run a git command in the repo, returning stdout ('' on failure)."""
+    """Run a git command in the repo, returning decoded stdout ('' on failure).
+
+    Decoding is explicit and lossy on purpose. ``text=True`` would decode with
+    the locale codec and *raise* on the first non-UTF-8 byte, and history
+    contains plenty: an old PNG, a Windows-1252 character in someone's commit.
+    A scanner that crashes on a binary blob is a scanner that reports "clean".
+    """
     try:
         result = subprocess.run(
             ["git", *args],
             cwd=str(REPO_ROOT),
             capture_output=True,
-            text=True,
             check=False,
         )
     except OSError:  # pragma: no cover - git not installed
         return ""
-    return result.stdout if result.returncode == 0 else ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+def _git_raw(*args: str) -> bytes:
+    """Bytes-returning variant of :func:`_git`, for blob contents."""
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:  # pragma: no cover - git not installed
+        return b""
+    return result.stdout if result.returncode == 0 else b""
+
+
+def _looks_binary(data: bytes) -> bool:
+    """True for blobs that decode to noise (images, archives, compiled objects).
+
+    Credentials are text. Scanning a PNG costs time and can only produce false
+    positives, so the NUL-byte / undecodable-share heuristic that git itself
+    uses is applied first.
+    """
+    if b"\x00" in data[:8000]:
+        return True
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
 
 
 def scan_history() -> list[Finding]:
@@ -327,10 +364,12 @@ def scan_history() -> list[Finding]:
         kind = _git("cat-file", "-t", object_id).strip()
         if kind != "blob":
             continue
-        blob = _git("cat-file", "-p", object_id)
-        if not blob:
+        raw = _git_raw("cat-file", "-p", object_id)
+        if not raw or _looks_binary(raw):
             continue
-        findings.extend(scan_text(blob, f"git:{name}@{object_id[:8]}"))
+        findings.extend(
+            scan_text(raw.decode("utf-8", errors="replace"), f"git:{name}@{object_id[:8]}")
+        )
     return findings
 
 

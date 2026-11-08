@@ -116,6 +116,39 @@ def test_the_same_line_uncommented_is_a_finding(scanner):
 
 
 # --------------------------------------------------------------------------
+# Robustness: the scanner must never crash, because a crash reads as "clean".
+# --------------------------------------------------------------------------
+
+
+def test_binary_blobs_are_not_scanned(scanner):
+    """A PNG in history must not be decoded as text (CI found this one)."""
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256))
+    assert scanner._looks_binary(png) is True
+
+
+def test_non_utf8_bytes_are_handled_not_raised(scanner, monkeypatch):
+    """latin-1 bytes in a blob used to abort the whole history scan."""
+    blob = b"caf\xe9 in a README"
+
+    monkeypatch.setattr(scanner, "_git_raw", lambda *a: blob)
+    monkeypatch.setattr(scanner, "_git", lambda *a: "")
+    monkeypatch.setattr(scanner, "_looks_binary", lambda data: False)
+    # scan_history must return, not raise UnicodeDecodeError.
+    assert scanner.scan_history() == []
+
+
+def test_git_helper_decodes_independently_of_the_locale(scanner):
+    assert scanner._git("log", "-1", "--format=%H").strip().isalnum()
+
+
+def test_tree_scan_tolerates_undecodable_files(scanner, tmp_path):
+    (tmp_path / "blob.bin").write_bytes(b"\xff\xfe\x00\x00")
+    (tmp_path / "leak.py").write_text("key = 'gsk_" + "Y" * 48 + "'\n")
+    names = [f.pattern.name for f in scanner.scan_tree(tmp_path)]
+    assert names == ["groq-key"]
+
+
+# --------------------------------------------------------------------------
 # Scanning the repository itself.
 # --------------------------------------------------------------------------
 
@@ -124,6 +157,17 @@ def test_the_repository_has_no_credentials_in_the_tree(scanner):
     findings = scanner.scan_tree(scanner.REPO_ROOT)
     rendered = "\n".join(f.render(strict=True) for f in findings)
     assert not findings, f"credential-shaped strings in the working tree:\n{rendered}"
+
+
+def test_repository_scan_never_raises_on_binary_history(scanner):
+    """The whole-graph scan must report, not explode, whatever history holds.
+
+    A crash is indistinguishable from a clean run to a CI reader, which is how
+    a real credential slips through: this scanner used to die on the first
+    non-UTF-8 blob in the object database.
+    """
+    findings = scanner.scan_history()
+    assert isinstance(findings, list)
 
 
 def test_history_scan_is_clean_or_reports_nothing_actionable(scanner):
