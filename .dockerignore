@@ -1,0 +1,22 @@
+# Keep the container build context small and free of secrets/state.
+.git
+.github
+.venv
+frontend/node_modules
+**/node_modules
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+data
+backend/data
+*.db
+*.sqlite3
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+benchmark
+docs

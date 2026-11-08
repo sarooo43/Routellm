@@ -1,0 +1,122 @@
+name: Release
+
+# Publishes a ready-to-run archive on every version tag (v1.2.3).
+#
+# The zip contains backend/ + a PREBUILT frontend/dist, so someone without
+# Node.js can unzip it and run `python run.py` — the launcher only builds the
+# dashboard when dist is missing.
+#
+# Backend unit/integration tests stay in ci.yml: a release should not be the
+# first place a failure is discovered. This workflow builds, smoke-tests the
+# archive it is about to publish, and attaches it.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach the archive to (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and attach the release archive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.2"
+          cache: npm
+
+      - name: Build the dashboard
+        run: |
+          npm ci
+          npm run build --workspace frontend
+          test -f frontend/dist/index.html
+
+      - name: Stage the archive contents
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+            VERSION="${VERSION#v}"
+          fi
+          STAGE="routellm-${VERSION}"
+          mkdir -p "dist-release/${STAGE}"
+          # Backend without tests or caches: it is what runs, not what proves it.
+          rsync -a \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude '.pytest_cache' \
+            --exclude 'tests' \
+            --exclude '.env' \
+            --exclude 'data' \
+            backend "dist-release/${STAGE}/"
+          mkdir -p "dist-release/${STAGE}/frontend"
+          cp -r frontend/dist "dist-release/${STAGE}/frontend/dist"
+          cp run.py start.sh start.ps1 README.md LICENSE "dist-release/${STAGE}/"
+          # An example env file, never a real one.
+          test -f backend/.env.example && echo "env example present"
+          ( cd dist-release && zip -qr "${STAGE}.zip" "${STAGE}" )
+          echo "ARCHIVE=dist-release/${STAGE}.zip" >> "$GITHUB_ENV"
+          ls -lh "dist-release/${STAGE}.zip"
+
+      - name: Smoke-test the archive (fresh dir, no Node, no Postgres, no .env)
+        run: |
+          set -eu
+          TMP="$(mktemp -d)"
+          cd "$TMP"
+          unzip -q "$GITHUB_WORKSPACE/$ARCHIVE"
+          cd routellm-*
+          python -m venv .venv
+          ./.venv/bin/pip -q install -r backend/requirements.txt
+          # No provider keys, no database, no Redis: /health must still answer.
+          ( cd backend && ../.venv/bin/python -m uvicorn app.main:app \
+              --host 127.0.0.1 --port 8123 >server.log 2>&1 & echo $! >pid )
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8123/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8123/health
+          curl -fsS http://127.0.0.1:8123/ | head -c 200
+          curl -fsS http://127.0.0.1:8123/api/v1/catalog >/dev/null
+          kill "$(cat pid)" || true
+          echo "archive smoke test passed"
+
+      - name: Attach the archive to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ env.ARCHIVE }}
+          generate_release_notes: true
+          body: |
+            ## RouteLLM — local-first routing gateway
+
+            **Quick start (no Docker, no Postgres, no Redis):**
+
+            ```bash
+            unzip routellm-*.zip
+            cd routellm-*
+            python run.py
+            ```
+
+            The archive ships a prebuilt dashboard, so Node.js is not required.
+            Add a free provider key on the Providers page (Groq, Google AI
+            Studio or DeepSeek) — or explore Demo mode with no key at all.
