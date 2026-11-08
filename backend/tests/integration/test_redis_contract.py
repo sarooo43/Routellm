@@ -22,6 +22,11 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.config import settings
 
+#: Every key prefix this suite writes: the `contract:*` namespace plus the
+#: prefixes the real consumers (quota, breaker, chaos) derive themselves.
+_OWN_KEY_PATTERNS = ("contract:*", "quota:*", "circuit:*", "chaos:*")
+
+
 def _candidate_urls() -> list[str]:
     """Real servers worth testing against (never logged — may carry a password)."""
     urls = []
@@ -51,11 +56,22 @@ async def store(request):
     except (RedisConnectionError, OSError) as exc:  # pragma: no cover - env dependent
         await client.aclose()
         pytest.skip(f"real Redis not reachable: {type(exc).__name__}")
-    # Namespace the keys so a shared server is never mutated beyond our prefix.
+    # Start from a clean slate: quota counters are per provider per day, so a
+    # leftover key from an earlier run would make "within quota" false before
+    # the test writes anything. Only this suite's own key prefixes are cleared
+    # (plus the explicitly namespaced `contract:*` keys), so a shared server is
+    # never mutated outside them.
+    for pattern in _OWN_KEY_PATTERNS:
+        stale = await client.keys(pattern)
+        if stale:
+            await client.delete(*stale)
+
     yield client
-    keys = await client.keys("contract:*")
-    if keys:
-        await client.delete(*keys)
+
+    for pattern in _OWN_KEY_PATTERNS:
+        keys = await client.keys(pattern)
+        if keys:
+            await client.delete(*keys)
     await client.aclose()
 
 
