@@ -5,14 +5,13 @@ Endpoints (all under /api/v1):
 - GET  /models     per-provider health: breaker state + DB success rate + Redis quota
 - GET  /logs       paginated/filtered TaskLog feed
 - GET  /analytics  aggregate stats for the dashboard + cost-savings number
-- GET  /health     liveness probe that also verifies DB/Redis (always 200, with "ok"/"degraded" + up/down flags)
+- GET  /health     liveness probe that also verifies DB/Redis (503 when down)
 
 POST /route is rate-limited with slowapi. Every handler wraps its body in
 try/except: unexpected failures become a generic 500 + structured log, never
 a stack trace leaking to the caller.
 """
 
-import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -38,7 +37,7 @@ from app.core.quota_tracker import QuotaTracker
 from app.core.chaos import ChaosController
 from app.core.scorer import COST_PER_1K_TOKENS
 from app.api.chaos_routes import chaos_router
-from app.db.session import get_session
+from app.db.session import get_optional_session, get_session
 from app.models import ApiKeyDB, Feedback, ModelStatsDB, TaskLog
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
@@ -74,71 +73,58 @@ def _get_chaos() -> ChaosController:
 
 
 async def _health_components() -> dict[str, str]:
-    """Component probes with a hard 2s timeout each — a hung dependency must
-    degrade the health report, never hang the caller (HF Spaces / LBs kill
-    slow health checks)."""
+    """Probe every external dependency, each with its own short timeout.
+
+    Nothing here may raise: ``/health`` must answer even when Postgres and
+    Redis are both unreachable (that is exactly when an operator needs it).
+    """
     components: dict[str, str] = {}
 
     try:
         breaker = _get_breaker()
-        await asyncio.wait_for(breaker.redis.ping(), timeout=2.0)
-        components["redis"] = "ok"
+        from app.cache import ping_redis
+
+        components["redis"] = await ping_redis(
+            breaker.redis, timeout=settings.HEALTH_PROBE_TIMEOUT_S
+        )
     except Exception as e:
-        logger.warning("health_redis_unreachable", error=type(e).__name__)
+        logger.warning("health_redis_unreachable", error=str(e).strip()[:300])
         components["redis"] = "down"
 
-    if not settings.DATABASE_URL:
-        components["database"] = "not_configured"
-    else:
-        try:
-            from app.db.session import get_session_maker
+    from app.db.session import ping_database
 
-            async def _db_ping():
-                async with get_session_maker()() as session:
-                    await session.execute(text("SELECT 1"))
-
-            await asyncio.wait_for(_db_ping(), timeout=2.0)
-            components["database"] = "ok"
-        except Exception as e:
-            logger.warning("health_database_unreachable", error=type(e).__name__)
-            components["database"] = "down"
+    components["database"] = await ping_database(
+        timeout=settings.HEALTH_PROBE_TIMEOUT_S
+    )
 
     return components
 
 
-# Health payload extras (C5): process start time for uptime, and the version
-# string mirrored from the FastAPI app definition in main.py.
-_HEALTH_STARTED_AT = time.time()
-BACKEND_VERSION = "0.1.0"
-
-
 async def health_payload() -> tuple[dict[str, Any], int]:
-    """Returns (body, status_code) — ALWAYS a 200.
+    """Return ``(body, status_code)`` for both /health routes.
 
-    /health is a liveness probe for Space runtimes and LBs: it must never
-    return 503, otherwise a cold Neon / Upstash wakes nothing up and the
-    platform restarts the (otherwise healthy) process in a loop. Dependency
-    state is carried in the body: status "ok" or "degraded" + db/redis
-    "up"/"down" booleans alongside the historical "ok"/"down" strings
-    (frontend ConnectionStatus reads ``components``).
-
-    Shape: {status, service, version, uptime_s, db, redis,
-            components:{database,redis}}
+    The status code stays 200 in every case on purpose: a Space that answers
+    503 is indistinguishable to some clients from a dead container, and the
+    frontend's connectivity pill needs the JSON body (component states) to
+    explain *what* is down. ``status`` carries the degradation signal.
     """
     components = await _health_components()
     any_down = "down" in components.values()
     status = "degraded" if any_down else "ok"
-    db_value = components.get("database")
-    redis_value = components.get("redis")
-    payload: dict[str, Any] = {
+
+    from app import __version__ as package_version
+    from app.main import app_uptime_seconds
+
+    payload = {
         "status": status,
         "service": "routellm-backend",
-        "version": BACKEND_VERSION,
-        "uptime_s": int(time.time() - _HEALTH_STARTED_AT),
-        "db": db_value,
-        "redis": redis_value,
-        "db_up": db_value in ("ok", "not_configured"),
-        "redis_up": redis_value in ("ok", "not_configured"),
+        "version": package_version,
+        "uptime_s": app_uptime_seconds(),
+        # Flat aliases for simple monitors (`db`/`redis` are what the deploy
+        # smoke test and most uptime checkers look for).
+        "db": components.get("database", "down"),
+        "redis": components.get("redis", "down"),
+        # Kept for the dashboard pill, which inspects per-component values.
         "components": components,
     }
     return payload, 200
@@ -182,12 +168,19 @@ class RouteResponse(BaseModel):
 
 
 class ProviderStatusResponse(BaseModel):
+    """Per-provider health card.
+
+    Live fields are ``None`` when the backing store is unreachable — the deck
+    still renders every provider (fail-soft) and the UI shows "no live data"
+    instead of an error page for an observability outage.
+    """
+
     name: str
     status: str
-    success_rate_overall: float
-    requests_today: int
-    daily_quota_limit: int
-    quota_percentage_used: float
+    success_rate_overall: Optional[float] = None
+    requests_today: Optional[int] = None
+    daily_quota_limit: Optional[int] = None
+    quota_percentage_used: Optional[float] = None
     # DEV/DEMO ONLY — True while this provider has an active chaos injection.
     chaos_active: bool = False
 
@@ -196,6 +189,9 @@ class ModelsResponse(BaseModel):
     # Top-level switch mirrors settings.CHAOS_MODE_ENABLED so the frontend
     # only renders chaos controls when the backend actually allows them.
     chaos_mode_enabled: bool = False
+    # False → live telemetry (DB/Redis) was unavailable; the fields above are
+    # null rather than misleading zeros.
+    live_stats_available: bool = True
     providers: list[ProviderStatusResponse]
 
 
@@ -323,11 +319,15 @@ async def route_prompt(
 
 
 @router.get("/models", response_model=ModelsResponse)
-async def get_models(db_session: AsyncSession = Depends(get_session)):
+async def get_models(
+    db_session: Optional[AsyncSession] = Depends(get_optional_session),
+):
+    """Live provider health, degrading to null live fields on an outage."""
     try:
         breaker = _get_breaker()
         quota = _get_quota()
         items: list[ProviderStatusResponse] = []
+        live_stats_available = db_session is not None
 
         # DEV/DEMO ONLY: which providers currently have a forced failure.
         active_chaos: set[str] = set()
@@ -352,14 +352,12 @@ async def get_models(db_session: AsyncSession = Depends(get_session)):
                 logger.warning(
                     "models_quota_summary_unavailable", provider=name, error=str(e)
                 )
-                summary = {
-                    "requests_today": 0,
-                    "tokens_today": 0,
-                    "daily_limit": 0,
-                    "percentage_used": 0.0,
-                }
+                summary = None
+                live_stats_available = False
 
             try:
+                if db_session is None:
+                    raise RuntimeError("database unavailable")
                 stmt = select(ModelStatsDB).where(ModelStatsDB.provider_name == name)
                 rows = (await db_session.execute(stmt)).scalars().all()
             except Exception as e:
@@ -367,6 +365,7 @@ async def get_models(db_session: AsyncSession = Depends(get_session)):
                     "models_stats_query_unavailable", provider=name, error=str(e)
                 )
                 rows = []
+                live_stats_available = False
 
             if rows:
                 success_rate = round(
@@ -376,7 +375,12 @@ async def get_models(db_session: AsyncSession = Depends(get_session)):
                 # No history yet — optimistic assumption, consistent with the scorer.
                 success_rate = 0.75
 
-            if state == "OPEN":
+            if not live_stats_available:
+                # No telemetry at all → report "unknown" rather than a made-up
+                # success rate. Circuit state comes from Redis, which may still
+                # be alive when Postgres is not.
+                status = "unknown" if state == "CLOSED" else "circuit_open"
+            elif state == "OPEN":
                 status = "circuit_open"
             elif state == "HALF_OPEN" or success_rate < 0.7:
                 status = "degraded"
@@ -387,15 +391,32 @@ async def get_models(db_session: AsyncSession = Depends(get_session)):
                 ProviderStatusResponse(
                     name=name,
                     status=status,
-                    success_rate_overall=success_rate,
-                    requests_today=int(summary["requests_today"]),
-                    daily_quota_limit=int(summary["daily_limit"]),
-                    quota_percentage_used=float(summary["percentage_used"]),
+                    success_rate_overall=success_rate if live_stats_available else None,
+                    # All live fields move together: a half-populated card
+                    # (success rate null but requests "0") reads as a real
+                    # measurement and is worse than an honest blank.
+                    requests_today=(
+                        int(summary["requests_today"])
+                        if live_stats_available and summary is not None
+                        else None
+                    ),
+                    daily_quota_limit=(
+                        int(summary["daily_limit"])
+                        if live_stats_available and summary is not None
+                        else None
+                    ),
+                    quota_percentage_used=(
+                        float(summary["percentage_used"])
+                        if live_stats_available and summary is not None
+                        else None
+                    ),
                     chaos_active=name in active_chaos,
                 )
             )
         return ModelsResponse(
-            chaos_mode_enabled=settings.CHAOS_MODE_ENABLED, providers=items
+            chaos_mode_enabled=settings.CHAOS_MODE_ENABLED,
+            live_stats_available=live_stats_available,
+            providers=items,
         )
     except Exception as e:
         logger.error("models_endpoint_unexpected_error", error=str(e))
