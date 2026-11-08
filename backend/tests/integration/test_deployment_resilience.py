@@ -15,7 +15,7 @@ from app.api import routes as routes_module
 from app.cache import ping_redis
 from app.config import normalize_redis_url, redis_uses_tls, settings
 from app.main import app
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 
 
 @pytest.fixture
@@ -108,7 +108,7 @@ async def test_models_degrades_to_static_when_database_is_unreachable(
         assert resp.status_code == 200
         body = resp.json()
         assert body["live_stats_available"] is False
-        assert len(body["providers"]) == len(PROVIDER_REGISTRY)
+        assert len(body["providers"]) == len(routable_providers())
         for provider in body["providers"]:
             assert provider["success_rate_overall"] is None
             assert provider["requests_today"] is None
@@ -131,7 +131,7 @@ async def test_catalog_degrades_to_static_when_database_is_unreachable(
         assert resp.status_code == 200
         body = resp.json()
         assert body["live_stats_available"] is False
-        assert len(body["models"]) == len(PROVIDER_REGISTRY)
+        assert len(body["models"]) == len(routable_providers())
         for entry in body["models"]:
             assert entry["live_success_rate"] is None
             assert entry["display_name"]

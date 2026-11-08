@@ -21,7 +21,7 @@ from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import rank_models
 from app.models.api_key import ApiKeyDB
 from app.providers.base import ModelProvider, ProviderResponse
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 
 # With zero-history stats, default weights rank free+fast providers above
 # deepseek. To place a gate-blocked provider FIRST (so quota gating is
@@ -109,7 +109,13 @@ def fail(
 
 
 def expected_ranking(task_type: str, weights: dict | None = None) -> list[str]:
-    ranked = rank_models(task_type, list(PROVIDER_REGISTRY.keys()), {}, weights)
+    """Ranking of the providers automatic routing may use.
+
+    Mirrors the executor's candidate list: real providers only. The demo/mock
+    provider is reachable only when a request names it explicitly, so it is
+    never part of the automatic chain these tests assert on.
+    """
+    ranked = rank_models(task_type, routable_providers(), {}, weights)
     return [r.provider_name for r in ranked]
 
 

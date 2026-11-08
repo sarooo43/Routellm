@@ -39,7 +39,7 @@ from app.core.scorer import COST_PER_1K_TOKENS
 from app.api.chaos_routes import chaos_router
 from app.db.session import get_optional_session, get_session
 from app.models import ApiKeyDB, Feedback, ModelStatsDB, TaskLog
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -337,7 +337,7 @@ async def get_models(
             except Exception as e:
                 logger.warning("models_chaos_state_unavailable", error=str(e))
 
-        for name in PROVIDER_REGISTRY:
+        for name in routable_providers():
             try:
                 state = await breaker.get_state(name)
             except Exception as e:
@@ -522,7 +522,11 @@ async def get_analytics(db_session: AsyncSession = Depends(get_session)):
             )
         ).all()
 
-        model_usage_breakdown: dict[str, int] = {name: 0 for name in PROVIDER_REGISTRY}
+        # Real vendors only, so the chart's legend is stable; demo traffic (if
+        # any ever existed) is added on the fly by the loop below.
+        model_usage_breakdown: dict[str, int] = {
+            name: 0 for name in routable_providers()
+        }
         total_cost = 0.0
         total_tokens_all = 0
         for model_name, count, tokens in grouped:

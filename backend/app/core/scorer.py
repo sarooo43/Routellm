@@ -18,18 +18,22 @@ if TYPE_CHECKING:
 # 0.3 fallback applies to any unmapped provider/task combo so it still gets
 # some chance rather than zero.
 CAPABILITY_MATCH = {
-    "code": {"deepseek": 1.0, "groq": 0.5, "gemini": 0.4},
-    "reasoning": {"deepseek": 0.9, "gemini": 0.6, "groq": 0.5},
-    "summarization": {"gemini": 1.0, "groq": 0.6, "deepseek": 0.5},
-    "qa": {"groq": 1.0, "gemini": 0.8, "deepseek": 0.6},
-    "general": {"groq": 0.9, "gemini": 0.9, "deepseek": 0.7},
+    "code": {"deepseek": 1.0, "groq": 0.5, "gemini": 0.4, "mock": 0.2},
+    "reasoning": {"deepseek": 0.9, "gemini": 0.6, "groq": 0.5, "mock": 0.2},
+    "summarization": {"gemini": 1.0, "groq": 0.6, "deepseek": 0.5, "mock": 0.2},
+    "qa": {"groq": 1.0, "gemini": 0.8, "deepseek": 0.6, "mock": 0.2},
+    "general": {"groq": 0.9, "gemini": 0.9, "deepseek": 0.7, "mock": 0.2},
 }
 
 # Rough cost estimates ($ per 1K tokens) — refined with real data later.
-COST_PER_1K_TOKENS = {"groq": 0.0, "gemini": 0.0, "deepseek": 0.0002}
+COST_PER_1K_TOKENS = {"groq": 0.0, "gemini": 0.0, "deepseek": 0.0002, "mock": 0.0}
 
 # Rough expected latency (ms) — used when no historical stats exist yet.
-BASELINE_LATENCY_MS = {"groq": 300, "gemini": 600, "deepseek": 900}
+BASELINE_LATENCY_MS = {"groq": 300, "gemini": 600, "deepseek": 900, "mock": 400}
+
+#: Providers whose traffic must never be counted as a real measurement.
+#: Used by reports/benchmarks: a synthetic latency is not a benchmark result.
+DEMO_PROVIDERS = frozenset({"mock"})
 
 SLOWEST_BASELINE_MS = max(BASELINE_LATENCY_MS.values())
 

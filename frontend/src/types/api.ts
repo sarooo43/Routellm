@@ -18,6 +18,11 @@ export interface RouteRequest {
   prompt: string
   task_type?: string | null
   max_fallbacks?: number
+  /**
+   * Route to one named provider, skipping ranking. Also the only way to reach
+   * the demo (MOCK) provider — automatic routing never selects it.
+   */
+  force_provider?: string | null
 }
 
 export interface RouteResponse {
@@ -233,4 +238,41 @@ export interface ProviderKeyStatus {
 export interface DeleteProviderKeyResponse {
   status: string
   provider_name: string
+}
+
+/** One provider row in the onboarding checklist (presence only, never a key). */
+export interface SetupProvider {
+  name: string
+  display: string
+  console_url: string
+  free_note: string
+  configured: boolean
+  key_source: 'byok' | 'env' | null
+  usable: boolean
+}
+
+/** One step of the first-run checklist. */
+export interface SetupStep {
+  id: 'provider_key' | 'test_prompt' | 'try_failover' | string
+  title: string
+  done: boolean
+  detail: string
+}
+
+/** `GET /api/v1/setup/status` — what this installation still needs. */
+export interface SetupStatus {
+  local_mode: boolean
+  require_api_key: boolean
+  providers: SetupProvider[]
+  any_provider_configured: boolean
+  any_provider_usable: boolean
+  demo_mode_enabled: boolean
+  demo_available: boolean
+  demo_provider_name: string
+  chaos_mode_enabled: boolean
+  data_dir: string
+  database_driver: string | null
+  preferred_provider: string | null
+  preferred_console_url: string | null
+  steps: SetupStep[]
 }

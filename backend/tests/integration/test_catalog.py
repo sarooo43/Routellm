@@ -7,7 +7,7 @@ from app.core.model_catalog import MODEL_CATALOG
 from app.core.scorer import COST_PER_1K_TOKENS
 from app.main import app
 from app.models import ModelStatsDB
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ async def test_catalog_merges_static_and_live_data_for_all_providers(
     data = response.json()
     assert data["live_stats_available"] is True
     entries = data["models"]
-    assert [entry["provider_name"] for entry in entries] == list(PROVIDER_REGISTRY)
+    assert [entry["provider_name"] for entry in entries] == routable_providers()
 
     by_name = {entry["provider_name"]: entry for entry in entries}
     for name, entry in by_name.items():
@@ -80,7 +80,7 @@ async def test_catalog_merges_static_and_live_data_for_all_providers(
 async def test_catalog_is_public_and_empty_history_is_safe(client):
     response = await client.get("/api/v1/catalog")
     assert response.status_code == 200
-    assert len(response.json()["models"]) == len(PROVIDER_REGISTRY)
+    assert len(response.json()["models"]) == len(routable_providers())
     assert all(
         entry["current_status"] == "healthy"
         for entry in response.json()["models"]
@@ -116,7 +116,8 @@ async def test_catalog_fails_soft_when_db_stats_unavailable(client, breaker):
     data = response.json()
     assert data["live_stats_available"] is False
     entries = data["models"]
-    assert len(entries) == len(PROVIDER_REGISTRY)
+    # Real vendors only: the demo provider is reported by /setup/status.
+    assert len(entries) == len(routable_providers())
     for entry in entries:
         assert entry["live_success_rate"] is None
         assert entry["avg_latency_ms"] is None

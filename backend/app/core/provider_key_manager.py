@@ -17,7 +17,11 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-SUPPORTED_PROVIDERS = tuple(PROVIDER_REGISTRY.keys())
+#: BYOK targets. The demo provider has no key to store, so it is excluded even
+#: when it is registered.
+SUPPORTED_PROVIDERS = tuple(
+    name for name in PROVIDER_REGISTRY if name != "mock"
+)
 
 
 def is_supported_provider(provider_name: str) -> bool:

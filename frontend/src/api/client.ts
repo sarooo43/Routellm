@@ -2,6 +2,7 @@ import axios from 'axios'
 import { API_BASE_URL } from '../config'
 import type {
   Analytics,
+  SetupStatus,
   CatalogResponse,
   ChaosClearRequest,
   ChaosClearResponse,
@@ -173,5 +174,14 @@ export async function postFeedback(payload: FeedbackRequest): Promise<FeedbackRe
 
 export async function getFeedbackSummary(): Promise<FeedbackSummary> {
   const { data } = await api.get<FeedbackSummary>('/api/v1/feedback/summary')
+  return data
+}
+
+/**
+ * First-run readiness: which providers have keys and which onboarding steps
+ * remain. Presence-only, so it is safe to render anywhere.
+ */
+export async function getSetupStatus(): Promise<SetupStatus> {
+  const { data } = await withWakeRetry(() => api.get<SetupStatus>('/api/v1/setup/status'))
   return data
 }

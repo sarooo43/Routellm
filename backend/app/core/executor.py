@@ -26,7 +26,7 @@ from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import ModelStats, rank_models
 from app.models import Feedback, ModelStatsDB, TaskLog, UsageTracking
 from app.providers.base import ProviderResponse
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -575,8 +575,13 @@ async def execute_with_fallback(
     routing_method = _routing_method_in_effect()
 
     # BYOK isolation: a caller that configured provider keys may only route to
-    # those providers. Empty mapping keeps the legacy operator/demo path.
-    candidate_providers = list(PROVIDER_REGISTRY.keys())
+    # those providers. Empty mapping keeps the operator/local path.
+    #
+    # LOCAL-FIRST: `routable_providers()` drops the demo provider as soon as a
+    # real operator key exists, so synthetic traffic never mixes into real
+    # usage numbers. With no keys at all it is the only option, which is what
+    # makes a fresh clone work immediately.
+    candidate_providers = routable_providers()
     if provider_api_keys:
         candidate_providers = [
             name for name in candidate_providers if name in provider_api_keys
