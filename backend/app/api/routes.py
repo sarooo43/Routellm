@@ -46,11 +46,11 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-# DEV/DEMO ONLY: chaos routes exist only when the flag is explicitly true.
-# When off they are never registered — /api/v1/admin/chaos/* answers the
-# native 404 exactly like any unknown path (and stays out of /docs).
-if settings.CHAOS_MODE_ENABLED:
-    router.include_router(chaos_router)
+# DEV/DEMO ONLY: chaos routes are always registered, but a router-level
+# dependency answers the native 404 when CHAOS_MODE_ENABLED is false (see
+# chaos_routes.require_chaos_enabled). Gating per request keeps the flag
+# testable and keeps the routes out of /docs when disabled.
+router.include_router(chaos_router, include_in_schema=settings.CHAOS_MODE_ENABLED)
 
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 

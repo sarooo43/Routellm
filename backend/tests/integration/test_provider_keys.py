@@ -61,7 +61,9 @@ async def generate_key(client, label="BYOK test"):
     return body["api_key"], {"X-API-Key": body["api_key"]}
 
 
-async def test_provider_key_endpoints_require_routellm_key(client):
+async def test_provider_key_endpoints_require_routellm_key(client, monkeypatch):
+    # Key enforcement is a mode, not a universal: turn it on for this contract.
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", True)
     assert (await client.get("/api/v1/provider-keys")).status_code == 401
     assert (
         await client.put("/api/v1/provider-keys/groq", json={"api_key": "gsk_test_123456"})
@@ -239,6 +241,12 @@ async def test_missing_encryption_key_fails_closed_for_writes_and_byok_routing(
     _, headers = await generate_key(client)
     await client.put("/api/v1/provider-keys/groq", json={"api_key": "gsk_test_failclosed_123"}, headers=headers)
     monkeypatch.setattr(settings, "PROVIDER_KEY_ENCRYPTION_KEY", None)
+    # Unset alone no longer means "no key": local-first auto-generates one into
+    # the data dir, so simulate an unusable data dir to keep the fail-closed
+    # guarantee honest.
+    monkeypatch.setattr(
+        "app.core.provider_key_crypto.load_or_create_encryption_key", lambda _: None
+    )
 
     write = await client.put(
         "/api/v1/provider-keys/gemini", json={"api_key": "AIzaSyDUMMY_failclosed"}, headers=headers

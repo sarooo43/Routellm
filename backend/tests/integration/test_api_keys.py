@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.core import executor as executor_module
 from app.core.chaos import ChaosController
 from app.main import app
@@ -15,6 +16,14 @@ from tests.integration.conftest import StubProvider, fail, ok
 
 @pytest.fixture
 async def client(monkeypatch, db_session, breaker, tracker, redis_client, install_stubs):
+    """Client with API keys ENFORCED.
+
+    These tests describe the key-based auth layer itself, so they run in
+    ``REQUIRE_API_KEY=true`` mode. The local-first default (no key needed, usage
+    attributed to a stable local identity) is covered by
+    ``tests/integration/test_auth_matrix.py``.
+    """
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", True)
     from app.db.session import get_session
 
     async def override_session():
