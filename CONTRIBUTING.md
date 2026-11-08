@@ -54,14 +54,34 @@ cd backend
 ../.venv/bin/python -m pytest -q tests/integration/test_demo_mode.py
 ```
 
+To run the suite the way CI does (Postgres and a real Redis instead of the
+local defaults). This is what catches environment-dependent tests, and it is
+how the failures in `test_demo_mode.py` and `test_redis_contract.py` were
+found:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/routellm_test \
+REDIS_URL=redis://localhost:6379/0 \
+  ../.venv/bin/python -m pytest
+```
+
+CI runs that matrix on Python 3.11 and 3.12; the launcher supports 3.11+, so a
+change that needs a newer interpreter should say so.
+
 The frontend:
 
 ```bash
 cd frontend
 npm test          # vitest
 npx tsc -b        # type check
-npm run lint      # oxlint
+npx oxlint src    # lint
 npm run build     # production build
+```
+
+Secrets before you push:
+
+```bash
+python backend/scripts/check_secrets.py     # tree + full history, masked output
 ```
 
 Please add a test with a behavioural change. This project's tests are its
