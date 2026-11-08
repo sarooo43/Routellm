@@ -1,111 +1,52 @@
-# RouteLLM — full-stack orchestration with auto-HTTPS.
+# RouteLLM — optional single-service container.
 #
-# Fresh start:
-#   cp .env.example .env
-#   # set PROVIDER_KEY_ENCRYPTION_KEY (see .env.example) and optionally DOMAIN
-#   docker compose up --build -d
+# The supported local path needs no Docker at all:
 #
-# Notes:
-# - Caddy is the public entrypoint on :80/:443 and obtains/renews TLS certs for
-#   DOMAIN automatically. Set DOMAIN to a DNS name pointing at this host.
-# - backend/frontend/Postgres/Redis are bound to 127.0.0.1 for local debugging;
-#   public traffic should go through Caddy (https://DOMAIN).
-# - backend's DATABASE_URL/REDIS_URL are overridden in `environment` to point
-#   at the compose service hostnames; .env supplies secrets and provider keys.
-# - frontend's VITE_API_BASE_URL build arg defaults to same-origin (''); nginx
-#   proxies /api and /v1 to the backend, so remote browsers never call localhost.
-# - Postgres creds come from POSTGRES_* vars (see .env.example) so the DB and
-#   the backend's DATABASE_URL always stay in sync.
+#   python run.py
+#
+# This file is for people who prefer a container, or want to run it on a home
+# server. It runs ONE service: the backend, which also serves the built
+# dashboard. No Postgres, no Redis, no Caddy.
+#
+#   docker compose up --build
+#   # http://localhost:8000
+#
+# Provider keys go on the Providers page in the UI (encrypted at rest with a
+# key generated into the /data volume) or in an optional .env file next to
+# this one — see backend/.env.example.
+#
+# EXPOSURE: the port is published on 127.0.0.1 only, so nothing on your
+# network can reach it. Change to "8000:8000" deliberately if you want that.
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  routellm:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        # Same-origin: the backend serves the bundle it ships.
+        VITE_API_BASE_URL: ""
+    image: routellm:local
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-routellm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
-      POSTGRES_DB: ${POSTGRES_DB:-routellm}
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-
-  backend:
-    build: ./backend
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-routellm}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-routellm}
-      REDIS_URL: redis://redis:6379/0
     ports:
       - "127.0.0.1:8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    volumes:
+      # SQLite database, generated encryption key, logs. Named volume, so data
+      # survives `docker compose down` (but not `down -v`).
+      - routellm-data:/data
+    environment:
+      # Uncomment to pin configuration instead of using backend/.env:
+      # ROUTELLM_DATA_DIR: /data
+      # DATABASE_URL: postgresql://user:password@host:5432/routellm
+      # REDIS_URL: redis://host:6379/0
+      # REQUIRE_API_KEY: "true"
+      LOG_LEVEL: INFO
     healthcheck:
-      # /health pings DB + Redis too, so a green here needs both alive.
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5)"]
-      interval: 10s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
       timeout: 5s
-      retries: 6
+      retries: 3
       start_period: 15s
 
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_BASE_URL: ""
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:80"
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      backend:
-        condition: service_healthy
-      frontend:
-        condition: service_started
-
 volumes:
-  pgdata:
-  redisdata:
-  caddy_data:
-  caddy_config:
+  routellm-data:

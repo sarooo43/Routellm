@@ -18,7 +18,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import SQLAlchemyError
@@ -39,6 +39,11 @@ from app.db.session import (
     ensure_schema,
 )
 from app.db.url import mask_database_url, normalize_database_url
+from app.frontend import (
+    frontend_status,
+    install_root_status_page,
+    mount_frontend,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -158,6 +163,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "cross-process state, state resets when the process exits.",
         )
 
+    status = frontend_status(app)
+    if status["mounted"]:
+        logger.info(
+            "frontend_served_from_backend",
+            directory=status["directory"],
+            root="/",
+            spa_fallback=True,
+            assets="/assets",
+        )
+    elif status["reason"] == "serving_disabled":
+        logger.info(
+            "frontend_serving_disabled",
+            detail="SERVE_FRONTEND=false — the dashboard is served separately.",
+        )
+    else:
+        logger.info(
+            "frontend_not_built",
+            detail="frontend/dist not found — API only. Build it with "
+            "`cd frontend && npm ci && npm run build`, or run `python run.py --dev`.",
+        )
+
     if settings.ENABLE_ML_ROUTING:
         from app.core.ml_classifier import get_router_classifier
 
@@ -251,11 +277,13 @@ async def health():
     return JSONResponse(status_code=status_code, content=payload)
 
 
-@app.get("/", include_in_schema=False)
-async def root():
-    """Send the Space's landing page to the status UI (or /docs in plain mode).
-
-    Declared here rather than in ``hf_app.py`` so the redirect exists no matter
-    how the app is started; ``hf_app`` overrides it when Gradio is mounted.
-    """
-    return RedirectResponse(url="/docs", status_code=307)
+# --------------------------------------------------------------------------
+# Dashboard (must come LAST: routes match in registration order)
+#
+# Local-first serves the built SPA from this process so the app is one URL.
+# The catch-all only exists when frontend/dist is actually present; otherwise
+# / renders a small status page explaining how to build it, and the API paths
+# above are untouched either way.
+# --------------------------------------------------------------------------
+if mount_frontend(app) is None:
+    install_root_status_page(app)

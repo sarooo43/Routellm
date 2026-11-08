@@ -104,7 +104,7 @@ function kindBody(kind: ApiErrorKind, detail?: string): string {
     case 'network':
     case 'cors_or_unreachable':
       return IS_SAME_ORIGIN
-        ? `Requests go same-origin here — the Worker proxy could not reach the backend origin. Target: ${typeof window !== 'undefined' ? window.location.host : 'unknown host'}${API_BASE_URL || ' /api'}`
+        ? `Requests go to this page's own origin (${typeof window !== 'undefined' ? window.location.host : 'unknown host'}). Locally that means the backend process is not running — start it with "python run.py" and retry.`
         : `Configured API host: ${API_BASE_URL}. Check that it is reachable and served over HTTPS.`
     case 'backend_waking':
       return 'Free-tier Spaces sleep between uses. Waking one up can take up to a minute — retrying automatically in the background; use Retry if it just woke slow.'
