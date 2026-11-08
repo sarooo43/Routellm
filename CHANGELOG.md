@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- CI now tests the launcher's full support range: the backend suite runs on
+  Python 3.11 and 3.12, and the frontend job type-checks, lints and builds, so a
+  broken `frontend/dist` cannot reach a user's first run.
 - The dashboard's unreachable-backend copy now tells a local user to start the
   app instead of blaming a worker proxy; the Providers page uses the error
   taxonomy instead of answering "Is the backend running?" for every failure.

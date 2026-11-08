@@ -29,6 +29,12 @@ jobs:
   backend-tests:
     needs: secret-scan
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # run.py accepts 3.11+, so both ends of that promise are tested. The
+        # lower bound matters most: it is what an older distro ships.
+        python-version: ["3.11", "3.12"]
     defaults:
       run:
         working-directory: backend
@@ -60,7 +66,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install backend dependencies
