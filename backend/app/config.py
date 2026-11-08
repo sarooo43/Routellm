@@ -101,7 +101,7 @@ def normalize_redis_url(raw: Optional[str]) -> Optional[str]:
     the scheme. The only rewrite is the legacy/managed-provider habit of using
     ``redis://`` against a TLS-only host, which is left alone *on purpose*:
     silently upgrading the scheme would turn a clear connection error into a
-    confusing TLS handshake failure. See docs/DEPLOY.md troubleshooting.
+    confusing TLS handshake failure. See docs/deploy/HUGGINGFACE_AND_MANAGED.md troubleshooting.
     """
     if not raw:
         return None

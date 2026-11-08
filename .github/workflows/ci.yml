@@ -7,7 +7,27 @@ on:
     branches: [main]
 
 jobs:
+  secret-scan:
+    # Runs first and finishes in seconds: a leaked credential in the tree OR in
+    # history fails the build before anything is installed. Findings are
+    # masked, so the CI log never repeats a secret.
+    name: No credentials in tree or history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The history scan needs the real history, not a shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan working tree and git history
+        run: python backend/scripts/check_secrets.py
+
   backend-tests:
+    needs: secret-scan
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,6 +75,12 @@ jobs:
         env:
           DATABASE_URL: ""
           REDIS_URL: ""
+
+      - name: Verify the one-command launcher (no server started)
+        # --check validates Python, venv, requirements, dist and ports without
+        # binding anything, so it is safe to run in CI.
+        run: python run.py --check
+        working-directory: .
 
       - name: Verify the Hugging Face entrypoint imports
         run: python -c "import hf_app; print('hf_app modes:', hf_app.STATUS_UI_PATH)"
@@ -237,3 +263,13 @@ jobs:
 
       - name: Run frontend tests
         run: npm run test
+
+      - name: Type-check and lint
+        run: |
+          npx tsc -b
+          npx oxlint src
+
+      - name: Build the dashboard
+        # The launcher serves frontend/dist; a build failure must be caught in
+        # CI rather than by a user whose `python run.py` opens an empty page.
+        run: npx vite build

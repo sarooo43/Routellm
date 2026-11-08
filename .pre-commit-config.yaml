@@ -1,0 +1,24 @@
+# Pre-commit hooks. Optional — CI runs the same checks regardless.
+#
+#   pip install pre-commit
+#   pre-commit install
+#
+# The secret scan is the important one: it checks the staged tree AND the git
+# history, and masks what it finds so a hook failure never reprints a secret
+# into your terminal scrollback.
+repos:
+  - repo: local
+    hooks:
+      - id: check-secrets
+        name: check for credentials (tree + history, masked)
+        entry: python backend/scripts/check_secrets.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: backend-tests-quick
+        name: backend unit tests
+        entry: bash -c 'cd backend && python -m pytest tests/unit -q'
+        language: system
+        pass_filenames: false
+        files: ^backend/

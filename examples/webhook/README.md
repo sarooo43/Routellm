@@ -1,7 +1,7 @@
 # Webhook examples
 
 These examples call a RouteLLM gateway that is exposed over HTTPS via Caddy
-(`https://your-domain`). See [`docs/HTTPS_AND_WEBHOOKS.md`](../../docs/HTTPS_AND_WEBHOOKS.md)
+(`https://your-domain`). See [`HTTPS_AND_WEBHOOKS.md`](../../docs/deploy/HTTPS_AND_WEBHOOKS.md)
 for deployment and BYOK setup.
 
 - `call_routellm.sh` — curl one-liner.

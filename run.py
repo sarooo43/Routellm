@@ -114,6 +114,53 @@ def venv_bin(name: str) -> Path:
     return VENV_DIR / ("Scripts" if os.name == "nt" else "bin") / name
 
 
+def environment_report() -> list[tuple[bool, str]]:
+    """What `--check` prints: one line per prerequisite, nothing changed.
+
+    Deliberately read-only. A probe that installs dependencies is not a probe —
+    it is an install with extra steps, and it makes CI (or a curious user) pay
+    for a full build just to answer "is this machine ready?".
+    """
+    lines: list[tuple[bool, str]] = []
+
+    current = ".".join(str(part) for part in sys.version_info[:3])
+    lines.append(
+        (sys.version_info >= MIN_PYTHON, f"Python {current} (need {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+)")
+    )
+
+    python = venv_python()
+    if python.exists() and _requirements_up_to_date():
+        lines.append((True, f"virtualenv ready ({VENV_DIR.name})"))
+    elif python.exists():
+        lines.append((False, "virtualenv exists but dependencies changed — will install"))
+    else:
+        lines.append((False, "virtualenv missing — will be created and installed"))
+
+    if dist_is_usable():
+        lines.append((True, "dashboard build found (frontend/dist)"))
+    else:
+        version = node_version()
+        if version and version[0] >= 20:
+            lines.append((False, f"dashboard not built — will build with Node {version[0]}"))
+        elif version:
+            lines.append((False, f"dashboard not built and Node {version[0]} is too old (need 20+)"))
+        else:
+            lines.append((False, "dashboard not built and Node.js is missing (API still runs)"))
+
+    lines.append(
+        (
+            ENV_FILE.exists(),
+            "backend/.env present" if ENV_FILE.exists() else "backend/.env will be created from the example",
+        )
+    )
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        lines.append((True, f"data directory {DATA_DIR}"))
+    except OSError as exc:
+        lines.append((False, f"data directory {DATA_DIR} is not writable ({exc.strerror})"))
+    return lines
+
+
 def ensure_venv(reinstall: bool = False) -> Path:
     """Create ``.venv`` if needed and install requirements when they changed.
 
@@ -514,6 +561,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         check_python()
+
+        if args.check:
+            # Read-only: report what is present and what the launcher would do.
+            for ready, message in environment_report():
+                mark = ok("✓") if ready else warn("·")
+                print(f"  {mark} {message}")
+            try:
+                port, shifted = pick_port(args.host, args.port)
+            except LauncherError as exc:
+                print(f"  {warn('·')} {exc}")
+                return 1
+            host_for_url = "localhost" if args.host in ("127.0.0.1", "0.0.0.0", "::1") else args.host
+            print()
+            print(f"  Nothing was installed or started.")
+            print(f"  `python run.py` would serve http://{host_for_url}:{port}/"
+                  + (f"  (port {args.port} is busy)" if shifted else ""))
+            print()
+            return 0
+
         print(f"  {ok('✓')} Python {sys.version.split()[0]}")
 
         python = ensure_venv(reinstall=args.reinstall)

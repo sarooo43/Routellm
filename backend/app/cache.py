@@ -3,7 +3,7 @@
 Managed Redis (Upstash) is TLS-only and remote, which changes two defaults that
 matter for a small deployment:
 
-* the DSN must be ``rediss://`` (see docs/DEPLOY.md troubleshooting),
+* the DSN must be ``rediss://`` (see docs/deploy/HUGGINGFACE_AND_MANAGED.md troubleshooting),
 * every command needs a **short socket timeout**: a sleeping or unreachable
   Redis must never hold a request open, and ``/health`` must answer within its
   probe budget.
@@ -39,11 +39,20 @@ def create_redis_client(url: Optional[str] = None):
     raw = url if url is not None else settings.REDIS_URL
     normalized = normalize_redis_url(raw)
     if normalized is None:
-        logger.warning(
-            "redis_unavailable_fallback",
-            detail="REDIS_URL not set; using in-memory fakeredis. State does "
-            "not survive restarts and is NOT shared across instances (dev only).",
-        )
+        # Local-first: no Redis is the normal state, not a degraded one. Only a
+        # URL that was *set but unusable* is a warning worth waking someone for.
+        if (raw or "").strip():
+            logger.warning(
+                "redis_unavailable_fallback",
+                detail="REDIS_URL is not a redis:// or rediss:// DSN; using the "
+                "in-memory store instead. State does not survive restarts and "
+                "is not shared across instances.",
+            )
+        else:
+            logger.debug(
+                "redis_in_process_store",
+                detail="REDIS_URL unset — using the in-memory store.",
+            )
         from fakeredis import FakeAsyncRedis
 
         return FakeAsyncRedis(decode_responses=True)

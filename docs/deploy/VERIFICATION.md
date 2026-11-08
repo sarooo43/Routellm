@@ -161,7 +161,7 @@ origin, key generation and a real routed request.
 ## 6) The live dashboard 🔑 — owner only
 
 New to the terminal, or unsure where to run the deploy commands?
-[`docs/DEPLOY_WALKTHROUGH.md`](./DEPLOY_WALKTHROUGH.md) is the same steps with the
+[`DEPLOY_WALKTHROUGH.md`](./DEPLOY_WALKTHROUGH.md) is the same steps with the
 exact window to open on each OS and what success looks like.
 
 **If the header pill says "Offline" and DevTools shows `503` on `/api/v1/models`
@@ -176,7 +176,7 @@ curl -s https://routellm.saboornasar66.workers.dev/health
 `{"error":"routellm_backend_not_configured", …}` is that exact case. Fix:
 set `ROUTELLM_API_ORIGIN=https://saboornotgonna-routellm.hf.space` as a Worker
 variable and **redeploy** (a variable set after the last deploy is not live until
-the next publish). Full decision table: `docs/CLOUDFLARE.md` §3b.
+the next publish). Full decision table: `CLOUDFLARE.md` §3b.
 
 ## 6) The live dashboard 🔑 — owner only
 
@@ -229,7 +229,7 @@ code will fix it — it needs live provider keys.
 dashboard-level rejection before any build runs (build/deploy command,
 root directory, or compatibility date). It is not a test failure. Local proof
 that the config is valid: `npm run deploy:dry-run` (§3). Dashboard settings must
-match `docs/CLOUDFLARE.md` §2: root directory `/`, build `npm run build`,
+match `CLOUDFLARE.md` §2: root directory `/`, build `npm run build`,
 deploy `npm run deploy`, no `--compatibility-date` override.
 
 **Vite chunk-size warning on build.** A performance note about the single JS

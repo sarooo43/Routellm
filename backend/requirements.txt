@@ -6,7 +6,7 @@
 # Dev/test tooling lives in requirements-dev.txt.
 #
 # Versions are pinned to the exact set that was verified together (see
-# DEPLOY.md → "Verified dependency set"): Python 3.12, gradio 6.31.0 added on
+# docs/deploy/HUGGINGFACE_AND_MANAGED.md → "Verified dependency set"): Python 3.12, gradio 6.31.0 added on
 # top, `pip check` clean, full backend test suite green.
 
 # --- web framework -------------------------------------------------------
