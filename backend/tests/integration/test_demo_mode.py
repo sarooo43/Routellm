@@ -211,9 +211,17 @@ async def test_setup_status_explains_the_first_run(client):
     assert body["demo_available"] is True
     assert body["demo_provider_name"] == DEMO_PROVIDER_NAME
     assert body["chaos_mode_enabled"] is settings.CHAOS_MODE_ENABLED
-    # SQLAlchemy's driver name for aiosqlite is "aiosqlite"; either spelling
-    # proves the SQLite default rather than Postgres.
-    assert body["database_driver"] in {"sqlite", "aiosqlite"}
+    # The reported driver must match the database actually in use. Asserting
+    # "sqlite" outright breaks in CI, which sets DATABASE_URL so its Postgres
+    # service is exercised — the local default is covered by
+    # tests/unit/test_local.py, where the environment is controlled.
+    if settings.DATABASE_URL.startswith("postgres"):
+        # The driver name comes from the DSN: asyncpg for +asyncpg, psycopg...
+        assert body["database_driver"] in {"asyncpg", "postgresql", "psycopg"}
+    else:
+        # SQLAlchemy's driver name for aiosqlite is "aiosqlite"; either
+        # spelling proves the SQLite default rather than Postgres.
+        assert body["database_driver"] in {"sqlite", "aiosqlite"}
     # Every real provider is listed with a way to get a free key.
     names = [p["name"] for p in body["providers"]]
     assert names == ["groq", "gemini", "deepseek"]
