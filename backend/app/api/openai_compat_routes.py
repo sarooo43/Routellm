@@ -21,13 +21,25 @@ from app.core.api_key_manager import record_api_key_usage
 from app.core.executor import AttemptLog, ExecutionResult, execute_with_fallback
 from app.db.session import get_session
 from app.models import ApiKeyDB
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 AUTO_MODEL = "routellm-auto"
-MODEL_OWNERS = {"groq": "groq", "gemini": "google", "deepseek": "deepseek"}
+MODEL_OWNERS = {
+    "groq": "groq",
+    "gemini": "google",
+    "deepseek": "deepseek",
+    # Demo provider: named so a client never mistakes it for a vendor.
+    "mock": "routellm-demo",
+}
+
+#: Models a client may pass. The demo provider is deliberately absent from the
+#: advertised list — choosing a synthetic answer is an explicit, local-only
+#: action (see /api/v1/setup/status for the demo entry point), not something a
+#: production client can pick by name.
+ADVERTISED_PROVIDERS = ("groq", "gemini", "deepseek")
 
 
 class OpenAIChatMessage(BaseModel):
@@ -257,7 +269,7 @@ async def chat_completions(
         )
 
     if body.model != AUTO_MODEL and body.model not in PROVIDER_REGISTRY:
-        valid_models = ", ".join([AUTO_MODEL, *PROVIDER_REGISTRY])
+        valid_models = ", ".join([AUTO_MODEL, *ADVERTISED_PROVIDERS])
         return _error_response(
             400,
             f"Unknown model '{body.model}'. Valid options: {valid_models}",
@@ -297,8 +309,10 @@ async def chat_completions(
 async def list_models() -> OpenAIModelList:
     """List the automatic router and every currently registered provider."""
     models = [OpenAIModel(id=AUTO_MODEL, owned_by="routellm")]
-    models.extend(
-        OpenAIModel(id=name, owned_by=MODEL_OWNERS.get(name, name))
-        for name in PROVIDER_REGISTRY
-    )
+    for name in PROVIDER_REGISTRY:
+        if name not in ADVERTISED_PROVIDERS:
+            continue
+        models.append(
+            OpenAIModel(id=name, owned_by=MODEL_OWNERS.get(name, name))
+        )
     return OpenAIModelList(data=models)

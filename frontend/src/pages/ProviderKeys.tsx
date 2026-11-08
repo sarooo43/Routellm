@@ -132,8 +132,10 @@ export function ProviderKeys() {
       saveGeneratedKey(generated)
       syncLocal()
       await loadStatuses(getActiveKey())
-    } catch {
-      setError('Could not generate a RouteLLM key. Is the backend running?')
+    } catch (err) {
+      // Never guess "the backend is down": the taxonomy already knows whether
+      // this was a network failure, a 5xx, or a validation error.
+      setError(errorDetail(err, 'Could not generate a RouteLLM key.'))
     } finally {
       setGenerating(false)
     }
@@ -206,7 +208,7 @@ export function ProviderKeys() {
       <PageHeader
         eyebrow="Bring your own keys"
         title="Provider Keys"
-        description="Store upstream Groq, Gemini, and DeepSeek keys against one RouteLLM key. Routing decrypts them only for that caller’s requests."
+        description="The recommended way to add provider keys: paste a free Groq, Google AI Studio or DeepSeek key. Keys saved here win over the GROQ_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY environment variables and are decrypted only for your own requests."
       />
 
       <GlassCard hoverable={false} className="border-success/25 bg-success/[0.06]">
@@ -267,9 +269,8 @@ export function ProviderKeys() {
             {loading && <span className="ml-2 text-accent">Loading provider status…</span>}
           </p>
         )}
-        {/* Startup deploy log shows server_provider_keys is empty on this
-            deployment: routing fails until the caller configures a provider
-            key (BYOK). Render the operator-approved nudge. */}
+        {/* No-key nudge: routing still works (demo/MOCK answers, or operator
+            keys when configured), so this is guidance rather than an error. */}
         {activeKey && !loading && Object.values(statuses).length > 0 && (
           <div
             role="status"
@@ -388,7 +389,7 @@ export function ProviderKeys() {
                 <a
                   href={provider.consoleUrl}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   className="ml-auto inline-flex items-center gap-1 text-xs text-text-secondary transition hover:text-accent"
                 >
                   Get a key <ExternalLink size={12} aria-hidden="true" />
@@ -399,16 +400,24 @@ export function ProviderKeys() {
         })}
       </section>
 
-      <GlassCard hoverable={false} className="border-warning/25 bg-warning/[0.06]">
+      <GlassCard hoverable={false} className="border-white/[0.08] bg-white/[0.02]">
         <div className="flex gap-3">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
           <div className="text-sm text-text-secondary">
-            <p className="font-semibold text-text-primary">Operator note</p>
+            <p className="font-semibold text-text-primary">Where the encryption key comes from</p>
             <p className="mt-1">
-              The server must set <code className="font-mono">PROVIDER_KEY_ENCRYPTION_KEY</code>. If it is
-              missing, saving keys and BYOK routing fail closed with HTTP 503. Callers with no stored
-              provider keys keep the legacy operator/demo behavior. This is still lightweight demo auth,
-              not a full account system.
+              Running locally, the backend generates one into{' '}
+              <code className="font-mono">data/encryption.key</code> on first use (owner-only
+              permissions) and reuses it on every later run — nothing to configure. If that file is
+              deleted, previously stored provider keys can no longer be decrypted and must be re-entered.
+              A deployment can pin the key with{' '}
+              <code className="font-mono">PROVIDER_KEY_ENCRYPTION_KEY</code>; without one and without a
+              writable data directory, saving keys fails closed with HTTP 503.
+            </p>
+            <p className="mt-2">
+              These are per-identity keys, not accounts:{' '}
+              <code className="font-mono">REQUIRE_API_KEY=false</code> (the local default) attributes
+              usage to a single local identity, so no key is needed to get started.
             </p>
           </div>
         </div>

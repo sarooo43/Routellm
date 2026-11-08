@@ -53,6 +53,17 @@ class Settings(BaseSettings):
     # trained (scripts/train_router_model.py) AND validated. Requires the
     # model file backend/app/ml_models/router_classifier.pkl to exist.
     ENABLE_ML_ROUTING: bool = False
+    # LOCAL-FIRST: a MOCK provider (name "mock", model "mock-demo-v1") that
+    # answers without any network call, so a fresh clone can show routing,
+    # fallback, latency and cost behaviour with no key and no spend. Every
+    # response is prefixed with a DEMO marker and demo traffic is excluded from
+    # reports and benchmarks. It is never used while a real provider key is
+    # configured. Set false to remove it entirely.
+    DEMO_MODE_ENABLED: bool = True
+    # Simulated upstream latency for the demo provider, in milliseconds.
+    DEMO_LATENCY_MS: int = 350
+    # Probability (0.0-1.0) the demo provider fails, to exercise fallback.
+    DEMO_FAILURE_RATE: float = 0.0
     # Port to bind when the app is started as a script (run.py / hf_app.py).
     # 8000 for the local-first default; Hugging Face Spaces inject PORT=7860.
     PORT: int = 8000

@@ -8,7 +8,7 @@ from app.providers.base import ModelProvider
 from app.providers.deepseek_provider import DeepSeekProvider
 from app.providers.gemini_provider import GeminiProvider
 from app.providers.groq_provider import GroqProvider
-from app.providers.registry import PROVIDER_REGISTRY
+from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 
 GROQ_URL = GroqProvider.API_URL
 DEEPSEEK_URL = DeepSeekProvider.API_URL
@@ -234,7 +234,10 @@ async def test_deepseek_model_variant_kwarg():
 
 
 async def test_registry_contains_expected_providers():
-    assert set(PROVIDER_REGISTRY.keys()) == {"groq", "gemini", "deepseek"}
+    # Real providers are always registered; the demo provider is additive and
+    # excluded from automatic routing (routable_providers()).
+    assert set(routable_providers()) == {"groq", "gemini", "deepseek"}
+    assert set(PROVIDER_REGISTRY) >= {"groq", "gemini", "deepseek"}
     for name, provider in PROVIDER_REGISTRY.items():
         assert isinstance(provider, ModelProvider)
         assert provider.provider_name == name

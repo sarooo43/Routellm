@@ -1,13 +1,18 @@
 import { motion } from 'framer-motion'
-import { useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight, Coins, LibraryBig, Target, Timer, Zap } from 'lucide-react'
+import { DemoModeCard } from '../components/DemoModeCard'
 import { KpiCard } from '../components/KpiCard'
 import { LiveFeedTicker } from '../components/LiveFeedTicker'
+import { NoProviderKeyBanner } from '../components/NoProviderKeyBanner'
+import { OnboardingChecklist } from '../components/OnboardingChecklist'
 import { PageHeader } from '../components/PageHeader'
 import { TryItLive } from '../components/TryItLive'
 import { formatCount, formatDollars, formatMs, formatPercent } from '../lib/format'
 import { useAppStore } from '../store/useAppStore'
+import { getSetupStatus } from '../api/client'
+import type { SetupStatus } from '../types/api'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -24,12 +29,28 @@ const itemVariants = {
 export function Overview() {
   const analytics = useAppStore((state) => state.analytics)
   const pollAll = useAppStore((state) => state.pollAll)
+  const [setup, setSetup] = useState<SetupStatus | null>(null)
+  const [demoOpen, setDemoOpen] = useState(false)
+
+  const refreshSetup = useCallback(async () => {
+    try {
+      setSetup(await getSetupStatus())
+    } catch {
+      // The page's own error state covers an unreachable backend; onboarding
+      // must not turn that into a second, competing message.
+      setSetup(null)
+    }
+  }, [])
 
   useEffect(() => {
     pollAll()
+    // Fetch-on-mount by design: onboarding readiness is external state, and a
+    // fetch is inherently "set state after an async boundary".
+    // eslint-disable-next-line react/set-state-in-effect
+    void refreshSetup()
     const interval = setInterval(pollAll, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
-  }, [pollAll])
+  }, [pollAll, refreshSetup])
 
   const costSaved = analytics
     ? analytics.estimated_cost_if_single_model - analytics.total_cost_estimate
@@ -49,6 +70,16 @@ export function Overview() {
           </Link>
         }
       />
+
+      <OnboardingChecklist onTryDemo={() => setDemoOpen(true)} />
+      <NoProviderKeyBanner />
+
+      {(demoOpen || setup?.demo_available) && (
+        <DemoModeCard
+          available={setup ? setup.demo_available : true}
+          providerName={setup?.demo_provider_name ?? 'mock'}
+        />
+      )}
 
       <motion.div
         variants={containerVariants}
