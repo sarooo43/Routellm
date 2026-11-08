@@ -280,29 +280,59 @@ async def test_chaos_injected_forced_provider_fails_without_fallback(
 # --------------------------------------------------------------------------
 
 
-async def test_chaos_admin_routes_404_when_disabled(client_default_app):
-    # Default (production-safe) app: chaos router was never mounted, so the
-    # endpoints answer FastAPI's native 404 — exactly like unknown paths.
+async def test_chaos_defaults_to_enabled_locally():
+    """LOCAL-FIRST: chaos ships ON.
+
+    It is a demo feature and this tool runs on the user's own machine behind
+    127.0.0.1, so the reason it was off on a public Space (anyone could inject
+    failures) no longer applies. An operator who disagrees sets
+    CHAOS_MODE_ENABLED=false.
+    """
+    assert settings.CHAOS_MODE_ENABLED is True
+
+
+async def test_chaos_admin_routes_404_when_disabled(client_chaos_disabled):
+    # With the flag off every chaos path answers FastAPI's native 404 body,
+    # exactly like a path that was never registered.
+    unknown = await client_chaos_disabled.get("/api/v1/admin/chaos/does-not-exist")
     for method, path in (
         ("post", "/api/v1/admin/chaos/inject"),
         ("post", "/api/v1/admin/chaos/clear"),
         ("get", "/api/v1/admin/chaos/status"),
     ):
-        resp = await client_default_app.request(method, path)
+        resp = await client_chaos_disabled.request(method, path)
         assert resp.status_code == 404
-    injected = await client_default_app.post(
+        assert resp.json() == unknown.json()
+    injected = await client_chaos_disabled.post(
         "/api/v1/admin/chaos/inject",
         json={"provider_name": "groq"},
     )
     assert injected.status_code == 404
 
 
-@pytest.fixture
-async def client_default_app(db_session):
-    """httpx client against the default app with chaos flag OFF."""
+async def test_chaos_routes_hidden_from_openapi_when_disabled():
+    """Docs must not advertise a surface that answers 404.
+
+    ``include_in_schema`` is decided once, at import time, from the flag as
+    configured for the process; the per-request gate above is what guarantees
+    the 404 either way.
+    """
+    from app.api.routes import chaos_router as mounted_chaos_router
     from app.main import app
 
-    assert settings.CHAOS_MODE_ENABLED is False  # production-safe default
+    documented = "/api/v1/admin/chaos/status" in app.openapi()["paths"]
+    expected = all(
+        route.include_in_schema for route in mounted_chaos_router.routes
+    )
+    assert documented is expected
+
+
+@pytest.fixture
+async def client_chaos_disabled(db_session, monkeypatch):
+    """The real app with CHAOS_MODE_ENABLED turned off."""
+    from app.main import app
+
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", False)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac

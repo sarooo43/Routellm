@@ -30,6 +30,7 @@ from sqlmodel import SQLModel
 
 import app.models  # noqa: F401  (registers all model tables on SQLModel.metadata)
 from app.config import settings
+from app.local import resolve_database_url
 from app.db.url import (
     InvalidDatabaseUrl,
     describe_redis_url,  # noqa: F401  (re-exported for convenience)
@@ -60,25 +61,56 @@ class DatabaseUnavailableError(RuntimeError):
     """
 
 
+def effective_database_url() -> Optional[str]:
+    """The DSN actually in use: explicit ``DATABASE_URL`` or the SQLite default.
+
+    Local-first: with nothing configured this resolves to
+    ``sqlite+aiosqlite:///<data dir>/routellm.db``, so a fresh clone has a
+    working database with no setup. Returns ``None`` only if the local
+    directory could not be created.
+    """
+    try:
+        return resolve_database_url(settings.DATABASE_URL)
+    except OSError as exc:  # data dir unusable (read-only host, etc.)
+        logger.warning("local_database_unavailable", error=str(exc)[:200])
+        return None
+
+
 def database_url_normalized() -> str:
-    """Return the normalized asyncpg DSN, raising DatabaseUnavailableError.
+    """Return the normalized async DSN, raising DatabaseUnavailableError.
 
     The error message contains **only** the masked DSN, so a misconfigured
     Space logs ``postgresql+asyncpg://user:****@host/db`` and never the
     password.
     """
-    if not settings.DATABASE_URL:
+    raw = effective_database_url()
+    if not raw:
         raise DatabaseUnavailableError(
-            "DATABASE_URL is not configured. Set it in .env, e.g. "
-            "postgresql+asyncpg://user:password@localhost:5432/routellm"
+            "No database is configured and the local data directory is not "
+            "writable. Set ROUTELLM_DATA_DIR to a writable path, or set "
+            "DATABASE_URL, e.g. postgresql+asyncpg://user:password@localhost:5432/routellm"
         )
     try:
-        return normalize_database_url(settings.DATABASE_URL).url
+        return normalize_database_url(raw).url
     except InvalidDatabaseUrl as exc:
         raise DatabaseUnavailableError(
-            f"DATABASE_URL is invalid: {exc} "
-            f"(value: {mask_database_url(settings.DATABASE_URL)})"
+            f"DATABASE_URL is invalid: {exc} (value: {mask_database_url(raw)})"
         ) from exc
+
+
+def _is_sqlite(url: str) -> bool:
+    """True for an aiosqlite DSN (no pool sizing, no pre-ping)."""
+    return url.lower().startswith("sqlite")
+
+
+def sqlite_connect_args() -> dict[str, float]:
+    """``connect_args`` for a file-backed SQLite database.
+
+    ``timeout`` is SQLite's `busy_timeout`: a concurrent write waits instead of
+    raising ``database is locked`` immediately. The dashboard polling while a
+    routing log commits is exactly that case.
+    """
+    return {"timeout": 30.0}
 
 
 def get_engine() -> AsyncEngine:
@@ -94,16 +126,24 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         url = database_url_normalized()
         try:
-            _engine = create_async_engine(
-                url,
-                echo=False,
-                pool_pre_ping=True,
-                pool_recycle=1800,
-            )
+            if _is_sqlite(url):
+                # SQLite has no server: pre-ping/pool-recycle are meaningless,
+                # and a file-backed DB keeps a single writer. Pooling settings
+                # are left at SQLAlchemy's async defaults for aiosqlite.
+                _engine = create_async_engine(
+                    url, echo=False, connect_args=sqlite_connect_args()
+                )
+            else:
+                _engine = create_async_engine(
+                    url,
+                    echo=False,
+                    pool_pre_ping=True,
+                    pool_recycle=1800,
+                )
         except Exception as e:  # malformed URL that passed normalization
             raise DatabaseUnavailableError(
                 f"database engine unavailable: {e} "
-                f"(value: {mask_database_url(settings.DATABASE_URL)})"
+                f"(value: {mask_database_url(effective_database_url() or '')})"
             ) from e
     return _engine
 
@@ -144,7 +184,7 @@ async def ensure_schema() -> bool:
     global _schema_ready
     if _schema_ready:
         return True
-    if not settings.DATABASE_URL:
+    if not effective_database_url():
         return False
     async with _engine_lock:
         if _schema_ready:  # another coroutine won the race
@@ -161,7 +201,7 @@ async def ensure_schema() -> bool:
             _schema_ready = True
             logger.info(
                 "database_schema_ready",
-                database=mask_database_url(settings.DATABASE_URL),
+                database=mask_database_url(effective_database_url() or ""),
             )
             return True
         except DatabaseUnavailableError as e:
@@ -169,7 +209,7 @@ async def ensure_schema() -> bool:
         except (SQLAlchemyError, OSError) as e:
             logger.warning(
                 "database_schema_failed_will_retry",
-                database=mask_database_url(settings.DATABASE_URL),
+                database=mask_database_url(effective_database_url() or ""),
                 error=str(e).strip()[:400],
             )
         except Exception as e:  # defensive: never break startup
@@ -211,9 +251,7 @@ async def get_optional_session() -> AsyncGenerator[Optional[AsyncSession], None]
     except Exception as e:
         logger.warning(
             "optional_session_unavailable",
-            database=mask_database_url(settings.DATABASE_URL)
-            if settings.DATABASE_URL
-            else None,
+            database=mask_database_url(effective_database_url() or "") or None,
             error=str(e).strip()[:300],
         )
         yield None
@@ -231,7 +269,7 @@ async def init_db() -> None:
 
 async def ping_database(timeout: float = 2.0) -> str:
     """Return ``"ok"``/``"down"``/``"not_configured"`` for the health probe."""
-    if not settings.DATABASE_URL:
+    if not effective_database_url():
         return "not_configured"
     try:
         async def _probe() -> None:
@@ -246,7 +284,7 @@ async def ping_database(timeout: float = 2.0) -> str:
     except Exception as e:
         logger.warning(
             "health_database_unreachable",
-            database=mask_database_url(settings.DATABASE_URL),
+            database=mask_database_url(effective_database_url() or ""),
             error=str(e).strip()[:300],
         )
         return "down"

@@ -4,6 +4,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.config import settings
+from app.core import provider_key_crypto as crypto_module
 from app.core.provider_key_crypto import (
     ProviderKeyEncryptionError,
     decrypt_provider_key,
@@ -38,7 +39,15 @@ def test_hint_only_exposes_last_four(encryption_key):
 
 
 def test_missing_encryption_key_fails_closed(monkeypatch):
+    """No configured key *and* no auto-generated one must fail closed.
+
+    LOCAL-FIRST NOTE: an unset key is normally auto-generated into the data
+    dir, so the only true "no key" state is an unusable data dir. Simulating
+    that by making the generator report failure keeps the guarantee tested
+    without depending on filesystem permissions.
+    """
     monkeypatch.setattr(settings, "PROVIDER_KEY_ENCRYPTION_KEY", None)
+    monkeypatch.setattr(crypto_module, "load_or_create_encryption_key", lambda _: None)
     with pytest.raises(ProviderKeyEncryptionError):
         encrypt_provider_key("gsk_test_1234567890abcdef")
 

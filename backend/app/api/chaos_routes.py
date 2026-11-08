@@ -1,10 +1,13 @@
 """DEV/DEMO ONLY — Chaos admin endpoints (/api/v1/admin/chaos/*).
 
-This router is mounted by app.api.routes **only** when
-settings.CHAOS_MODE_ENABLED is true. When the flag is off these routes are
-never registered at all, so unknown paths still answer FastAPI's native
-404 — the demo surface is unreachable in a default production deployment
-(also absent from the OpenAPI /docs schema).
+LOCAL-FIRST: the flag is ON by default (this tool runs on your own machine
+behind 127.0.0.1), and gating is evaluated **per request** by
+:func:`require_chaos_enabled`. With ``CHAOS_MODE_ENABLED=false`` every path
+here answers FastAPI's native 404 body — indistinguishable from a path that
+does not exist — and the routes are also hidden from the OpenAPI /docs schema.
+Evaluating the flag at request time (rather than at import time) keeps the
+gate honest for anything that changes the setting after startup, and makes
+the contract directly testable.
 
 The executor (core/executor.py) independently re-checks
 settings.CHAOS_MODE_ENABLED before honoring any chaos key, so even a stale
@@ -13,9 +16,10 @@ Redis key from an earlier chaotic session cannot affect a clean deployment.
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.core.chaos import (
     DEFAULT_DURATION_SECONDS,
     ChaosController,
@@ -26,7 +30,21 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-chaos_router = APIRouter(tags=["chaos (DEV/DEMO ONLY)"])
+async def require_chaos_enabled() -> None:
+    """404 like an unknown path unless chaos mode is explicitly enabled.
+
+    The body FastAPI produces for an unmatched route is ``{"detail": "Not
+    Found"}``; raising the same shape here keeps the "disabled means
+    unreachable" contract byte-for-byte.
+    """
+    if not settings.CHAOS_MODE_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+chaos_router = APIRouter(
+    tags=["chaos (DEV/DEMO ONLY)"],
+    dependencies=[Depends(require_chaos_enabled)],
+)
 
 
 def _get_chaos() -> ChaosController:

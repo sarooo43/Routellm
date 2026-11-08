@@ -15,7 +15,8 @@ pytest-cov==7.1.0
 
 # --- test doubles --------------------------------------------------------
 # Async SQLite engine for the integration fixtures (tests/integration/conftest.py).
-aiosqlite==0.22.1
+# aiosqlite is a RUNTIME dependency now (requirements.txt) — it
+# provides the default local database driver.
 # httpx request mocking for provider adapters.
 respx==0.23.1
 

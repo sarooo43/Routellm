@@ -9,8 +9,23 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # LOCAL-FIRST: leave DATABASE_URL empty to get SQLite in the data dir.
+    # Set it (postgres:// or sqlite+aiosqlite://) to override.
     DATABASE_URL: Optional[str] = None
+    # LOCAL-FIRST: leave REDIS_URL empty to get the in-process store.
     REDIS_URL: Optional[str] = None
+    # Directory for SQLite, the generated encryption key and logs.
+    # Defaults to <repo>/data, falling back to the OS user-data dir.
+    ROUTELLM_DATA_DIR: str = ""
+    # LOCAL-FIRST: when false (the default) /api/v1/route and
+    # /v1/chat/completions work without X-API-Key and usage is attributed to a
+    # default local identity. Set true to require keys on every protected route.
+    REQUIRE_API_KEY: bool = False
+    # Serve the built frontend (frontend/dist) from this process so the app is
+    # a single URL. Disable for a separate Vite dev server.
+    SERVE_FRONTEND: bool = True
+    # Optional explicit path to the built frontend directory.
+    FRONTEND_DIST_DIR: str = ""
     GROQ_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
@@ -27,18 +42,24 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"
-    # DEV/DEMO ONLY: fault-injection endpoints + executor fake failures.
-    # Never enabled by default; must be explicitly set via .env (docker/env).
+    # Fault-injection endpoints + executor fake failures (a demo feature).
+    # On by default because this tool runs locally, on your machine, behind
+    # 127.0.0.1 — the risk that justified keeping it off on a public Space does
+    # not apply. Set CHAOS_MODE_ENABLED=false to disable.
     # See core/chaos.py — a Chaos Monkey-style demo control for the dashboard.
-    CHAOS_MODE_ENABLED: bool = False
+    CHAOS_MODE_ENABLED: bool = True
     # EXPERIMENTAL: ML-assisted routing (learned capability scores blended
     # with the rule-based table, 60/40). Off until the router model is
     # trained (scripts/train_router_model.py) AND validated. Requires the
     # model file backend/app/ml_models/router_classifier.pkl to exist.
     ENABLE_ML_ROUTING: bool = False
-    # Port to bind when the app is started as a script (hf_app.py). Hugging
-    # Face Spaces require 7860; docker-compose/uvicorn pass --port explicitly.
-    PORT: int = 7860
+    # Port to bind when the app is started as a script (run.py / hf_app.py).
+    # 8000 for the local-first default; Hugging Face Spaces inject PORT=7860.
+    PORT: int = 8000
+    # LOCAL-FIRST SECURITY: loopback only. Binding to 0.0.0.0 exposes the
+    # gateway (and your provider keys' spending power) to your whole network,
+    # so it requires an explicit --host flag or HOST=0.0.0.0 plus a warning.
+    HOST: str = "127.0.0.1"
     # Set to "1"/"true" to force the Hugging Face filesystem rules (no writes
     # inside the app dir) when testing a read-only deployment elsewhere.
     ROUTELLM_READ_ONLY_APP_DIR: str = ""

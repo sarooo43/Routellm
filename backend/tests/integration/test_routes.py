@@ -15,6 +15,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.api.routes import limiter
+from app.config import settings
 from app.core import quota_tracker as quota_module
 from app.main import app
 from app.models import TaskLog
@@ -178,7 +179,9 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
         "providers",
     }
     assert body["live_stats_available"] is True
-    assert body["chaos_mode_enabled"] is False  # flag off in the test env
+    # LOCAL-FIRST: chaos is enabled by default; the route reports the setting
+    # truthfully either way.
+    assert body["chaos_mode_enabled"] is settings.CHAOS_MODE_ENABLED
 
     items = {item["name"]: item for item in body["providers"]}
     assert set(items.keys()) == {"groq", "gemini", "deepseek"}

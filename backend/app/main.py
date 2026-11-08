@@ -1,9 +1,14 @@
 """FastAPI application factory and process lifecycle hooks.
 
-Startup is intentionally **non-fatal**: a Space that wakes before Neon/Upstash
-are reachable must still serve ``/health``, ``/docs`` and the static catalog.
-Any unreachable dependency is logged (masked) and reported by ``/health``
-instead of aborting the process, which is what produced crash loops before.
+Startup is intentionally **non-fatal**: a host that boots before Postgres or
+Redis is reachable (or a laptop whose SQLite file is briefly locked) must still
+serve ``/health``, ``/docs`` and the static catalog. Any unreachable dependency
+is logged (masked) and reported by ``/health`` instead of aborting the process.
+
+LOCAL-FIRST DEFAULT: with no configuration at all the app uses SQLite at
+``<data dir>/routellm.db`` and an in-process store in place of Redis, so
+``python run.py`` is the whole setup. Postgres/Redis are opt-in via
+``DATABASE_URL``/``REDIS_URL``.
 """
 
 import os
@@ -28,7 +33,11 @@ from app.config import (
     redis_uses_tls,
     settings,
 )
-from app.db.session import DatabaseUnavailableError, ensure_schema
+from app.db.session import (
+    DatabaseUnavailableError,
+    effective_database_url,
+    ensure_schema,
+)
 from app.db.url import mask_database_url, normalize_database_url
 from app.utils.logger import get_logger
 
@@ -57,11 +66,16 @@ def _provider_keys_configured() -> list[str]:
 
 
 def _database_driver() -> str | None:
-    """Normalized driver name for the startup log (never the DSN)."""
-    if not settings.DATABASE_URL:
+    """Normalized driver name for the startup log (never the DSN).
+
+    Reports the driver of the *effective* URL, so a local run says ``sqlite``
+    rather than nothing at all.
+    """
+    url = effective_database_url()
+    if not url:
         return None
     try:
-        return normalize_database_url(settings.DATABASE_URL).driver
+        return normalize_database_url(url).driver
     except Exception:
         return "invalid"
 
@@ -88,11 +102,11 @@ def log_startup_diagnostics(mode: str | None = None) -> None:
         cors_origins=_cors_origins_for_log(),
         database={
             "configured": bool(settings.DATABASE_URL),
-            "dsn": mask_database_url(settings.DATABASE_URL)
-            if settings.DATABASE_URL
-            else None,
+            "local_default": not bool(settings.DATABASE_URL),
+            "dsn": mask_database_url(effective_database_url() or ""),
             "driver": _database_driver(),
         },
+        require_api_key=settings.REQUIRE_API_KEY,
         redis={
             "configured": bool(settings.REDIS_URL),
             "tls": redis_uses_tls(settings.REDIS_URL),
@@ -102,7 +116,18 @@ def log_startup_diagnostics(mode: str | None = None) -> None:
         byok_encryption_configured=bool(settings.PROVIDER_KEY_ENCRYPTION_KEY),
         chaos_mode=settings.CHAOS_MODE_ENABLED,
         ml_routing=settings.ENABLE_ML_ROUTING,
+        data_dir=str(_data_dir_for_log()),
     )
+
+
+def _data_dir_for_log() -> str:
+    """Where local state lives (a path, never a secret)."""
+    from app.local import data_dir
+
+    try:
+        return str(data_dir(create=False))
+    except OSError:  # pragma: no cover - unreadable host
+        return "<unavailable>"
 
 
 @asynccontextmanager
@@ -113,23 +138,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (Gradio's ``mount_gradio_app`` does exactly that) can re-apply it without
     duplicating the logic.
     """
-    if settings.DATABASE_URL:
-        # Non-fatal: a brand-new/empty or sleeping database is a normal
-        # condition on a free Space. ensure_schema() logs and returns False;
-        # the session dependency retries on the next request.
-        await ensure_schema()
-    else:
-        logger.warning(
-            "database_not_configured",
-            detail="DATABASE_URL unset — DB-backed endpoints will answer 503.",
+    # Non-fatal either way: a brand-new or sleeping database is a normal
+    # condition. ensure_schema() logs and returns False; the session
+    # dependency retries on the next request. With no DATABASE_URL this runs
+    # against the SQLite file in the data dir, which is what makes a fresh
+    # clone work with zero manual steps.
+    if not settings.DATABASE_URL:
+        logger.info(
+            "database_defaulted_to_sqlite",
+            detail="DATABASE_URL unset — using the local SQLite file.",
         )
+    await ensure_schema()
 
-    # Stop a misconfigured deployment from silently becoming a paid one.
     if not os.environ.get("REDIS_URL", "").strip():
-        logger.warning(
-            "redis_not_configured",
-            detail="Using in-memory fakeredis: no cross-process state, resets "
-            "on every restart. Set REDIS_URL=rediss://... on Hugging Face.",
+        # Local-first: this is the expected state, not a misconfiguration.
+        logger.info(
+            "redis_in_process_store",
+            detail="REDIS_URL unset — using the in-process store: no "
+            "cross-process state, state resets when the process exits.",
         )
 
     if settings.ENABLE_ML_ROUTING:

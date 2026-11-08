@@ -10,6 +10,7 @@ routing request and are never logged or returned by the API.
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.config import settings
+from app.local import load_or_create_encryption_key
 
 
 class ProviderKeyEncryptionError(RuntimeError):
@@ -17,13 +18,24 @@ class ProviderKeyEncryptionError(RuntimeError):
 
 
 def _fernet() -> Fernet:
-    """Build a Fernet instance from the configured encryption key."""
+    """Build a Fernet instance from the configured (or auto-generated) key.
+
+    Local-first behaviour: when ``PROVIDER_KEY_ENCRYPTION_KEY`` is unset, a key
+    is generated once into ``<data dir>/encryption.key`` (mode 0o600) and reused
+    on every later run, so saving a provider key in the UI works with no setup.
+    Deleting that file makes previously stored provider keys unreadable — they
+    must be re-entered.
+
+    The key is never included in an exception message or a log line.
+    """
     key = settings.PROVIDER_KEY_ENCRYPTION_KEY
     if not key:
+        key = load_or_create_encryption_key(None)
+    if not key:
         raise ProviderKeyEncryptionError(
-            "PROVIDER_KEY_ENCRYPTION_KEY is not configured. Generate one with: "
-            'python -c "from cryptography.fernet import Fernet; '
-            'print(Fernet.generate_key().decode())"'
+            "No encryption key is available for provider-key storage. Either "
+            "set PROVIDER_KEY_ENCRYPTION_KEY, or make the data directory "
+            "writable so one can be generated (see ROUTELLM_DATA_DIR)."
         )
     try:
         return Fernet(key.encode("utf-8") if isinstance(key, str) else key)

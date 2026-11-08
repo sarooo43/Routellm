@@ -25,10 +25,14 @@ httpx==0.28.1
 # --- BYOK at rest (Fernet/AES) -------------------------------------------
 cryptography==50.0.2
 
-# --- database (Postgres via asyncpg; SQLModel on SQLAlchemy 2.x) ---------
+# --- database (SQLite by default; Postgres via asyncpg when configured) --
 sqlmodel==0.0.48
 asyncpg==0.32.0
 greenlet==3.5.6
+# LOCAL-FIRST: the default database is SQLite in <data dir>/routellm.db, so the
+# aiosqlite driver is a runtime dependency (a fresh clone must run with no
+# Postgres, no Redis and no setup).
+aiosqlite==0.22.1
 
 # --- cache / circuit breaker / quota ------------------------------------
 redis==8.1.0

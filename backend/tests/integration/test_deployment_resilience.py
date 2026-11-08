@@ -143,9 +143,23 @@ async def test_catalog_degrades_to_static_when_database_is_unreachable(
 async def test_protected_routes_still_answer_clean_503_without_a_database(
     client, monkeypatch
 ):
+    """A broken database must surface as a clean 503, never a 500.
+
+    LOCAL-FIRST NOTE: an unset DATABASE_URL now means "use SQLite", so the only
+    way to have *no* database at all is a data directory that cannot be created
+    (read-only host, bad permissions). That is simulated here by making the
+    data-dir resolver raise OSError, which is exactly what the real code path
+    does when the directory is unusable.
+    """
+    import app.local as local_module
+
+    def _unwritable(*_args, **_kwargs):
+        raise OSError("data directory is not writable (simulated)")
+
+    monkeypatch.setattr(local_module, "data_dir", _unwritable)
     monkeypatch.setattr(settings, "DATABASE_URL", None)
     resp = await client.post("/api/v1/route", json={"prompt": "hi"})
-    assert resp.status_code == 503
+    assert resp.status_code == 503, resp.text
     assert resp.json() == {"detail": "Database temporarily unavailable"}
 
 
@@ -212,12 +226,35 @@ async def test_ensure_schema_returns_false_instead_of_raising(monkeypatch):
         await session_module.reset_engine()
 
 
-async def test_unset_database_url_skips_schema_creation(monkeypatch):
+async def test_unset_database_url_defaults_to_sqlite(monkeypatch, tmp_path):
+    """LOCAL-FIRST: no DATABASE_URL means SQLite in the data dir, not "no DB".
+
+    Previously this asserted ``ensure_schema() is False`` — the app refused to
+    serve data without configuration. A fresh clone must now just work, so the
+    assertion is inverted: the schema is created against a real SQLite file.
+    """
+    import app.db.session as session_module
+
+    monkeypatch.setenv("ROUTELLM_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "DATABASE_URL", None)
+    monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", str(tmp_path))
+    await session_module.reset_engine()
+    try:
+        assert await session_module.ensure_schema() is True
+        assert session_module.schema_ready() is True
+        assert (tmp_path / "routellm.db").exists(), "SQLite file was not created"
+    finally:
+        await session_module.reset_engine()
+
+
+async def test_effective_database_url_reports_the_sqlite_default(monkeypatch, tmp_path):
     import app.db.session as session_module
 
     monkeypatch.setattr(settings, "DATABASE_URL", None)
-    await session_module.reset_engine()
-    assert await session_module.ensure_schema() is False
+    monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", str(tmp_path))
+    url = session_module.effective_database_url()
+    assert url is not None and url.startswith("sqlite+aiosqlite:///")
+    assert str(tmp_path) in url
 
 
 # --------------------------------------------------------------------------
