@@ -23,7 +23,7 @@ import type {
   RouteResponse,
 } from '../types/api'
 import { getActiveKey, markKeyRevoked, saveGeneratedKey } from './keyStorage'
-import { runWithWakeRetry as withWakeRetry } from './wake'
+import { requestHealthReprobe, runWithWakeRetry as withWakeRetry } from './wake'
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -33,6 +33,22 @@ export const api = axios.create({
   // double-waiting.
   timeout: 30_000,
 })
+
+/**
+ * A request that never got a response means the connectivity pill is stale.
+ * Ask it to re-probe so the header cannot read "Online" while the page shows a
+ * transport error. 5xx is deliberately excluded: the backend did answer, so
+ * the connection is fine.
+ */
+api.interceptors?.response.use(
+  (response) => response,
+  (error) => {
+    if (axios.isAxiosError?.(error) && !error.response) {
+      requestHealthReprobe()
+    }
+    return Promise.reject(error)
+  },
+)
 
 export async function getModels(): Promise<ModelsResponse> {
   const { data } = await withWakeRetry(() => api.get<ModelsResponse>('/api/v1/models'))

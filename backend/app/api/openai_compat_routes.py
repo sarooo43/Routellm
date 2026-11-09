@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_api_key, require_provider_api_keys
 from app.core.api_key_manager import record_api_key_usage
+from app.core.error_messages import explain_route_failure
 from app.core.executor import AttemptLog, ExecutionResult, execute_with_fallback
 from app.db.session import get_session
 from app.models import ApiKeyDB
@@ -295,9 +296,12 @@ async def chat_completions(
     if not result.success:
         # A named provider has a one-provider chain; its failure is also an
         # upstream failure, never an excuse to fall back to another provider.
+        # The message is the same diagnosis the dashboard shows, so an SDK user
+        # reads "this machine could not open a connection", not "ConnectError".
         return _error_response(
             502,
-            "All providers failed to generate a response",
+            explain_route_failure(result.error, result.fallback_chain_attempted)
+            or "All providers failed to generate a response",
             "upstream_error",
             "all_providers_failed",
         )

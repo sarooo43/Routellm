@@ -204,7 +204,9 @@ async def test_forced_unconfigured_byok_provider_fails_without_upstream_call(cli
     assert response.status_code == 200
     body = response.json()
     assert body["success"] is False
-    assert body["error"] == "missing_provider_key"
+    # Still identifiable as "no key configured", now with the fix attached.
+    assert body["error"].startswith("missing_provider_key:")
+    assert "aistudio.google.com" in body["error"]
     assert stubs["gemini"].calls == 0
     assert stubs["groq"].calls == 0
 

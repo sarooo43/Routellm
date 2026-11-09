@@ -5,7 +5,7 @@ import { API_BASE_URL, IS_SAME_ORIGIN } from '../config'
 /**
  * Reusable, taxonomy-aware error state used by every page.
  *
- * "Backend is not reachable" wording appears ONLY for genuinely
+ * "No response from the backend" wording appears ONLY for genuinely
  * network-shaped failures (kind network / cors_or_unreachable) — 401/403
  * tell the user to add a key, 503 to pause, and specific kinds keep their
  * own actionable copy. `detail` (server detail, if any) is shown as muted
@@ -21,8 +21,8 @@ interface ErrorStateProps {
 }
 
 const KIND_META: Record<ApiErrorKind, { title: string; icon: typeof WifiOff; tone: 'danger' | 'warn' | 'neutral' }> = {
-  network: { title: 'Backend is not reachable', icon: WifiOff, tone: 'danger' },
-  cors_or_unreachable: { title: 'Backend is not reachable', icon: WifiOff, tone: 'danger' },
+  network: { title: 'No response from the backend', icon: WifiOff, tone: 'danger' },
+  cors_or_unreachable: { title: 'No response from the backend', icon: WifiOff, tone: 'danger' },
   backend_waking: { title: 'Waking up the backend', icon: Clock, tone: 'warn' },
   unauthorized: { title: 'Add or generate an API key', icon: KeyRound, tone: 'neutral' },
   forbidden: { title: 'This key lacks access', icon: ShieldOff, tone: 'warn' },
@@ -103,8 +103,12 @@ function kindBody(kind: ApiErrorKind, detail?: string): string {
   switch (kind) {
     case 'network':
     case 'cors_or_unreachable':
+      // Never assert that the process is dead: the usual cause is a dropped
+      // connection or a stalled request, and telling someone to "start the
+      // backend" when it is already running sends them in a circle. State what
+      // happened, name the origin, and give both fixes.
       return IS_SAME_ORIGIN
-        ? `Requests go to this page's own origin (${typeof window !== 'undefined' ? window.location.host : 'unknown host'}). Locally that means the backend process is not running — start it with "python run.py" and retry.`
+        ? `The request to this page's own origin (${typeof window !== 'undefined' ? window.location.host : 'unknown host'}) got no response. The backend may have stopped or be restarting, or the connection was interrupted — retry, and if it persists run "python run.py" and check the terminal for errors.`
         : `Configured API host: ${API_BASE_URL}. Check that it is reachable and served over HTTPS.`
     case 'backend_waking':
       return 'Free-tier Spaces sleep between uses. Waking one up can take up to a minute — retrying automatically in the background; use Retry if it just woke slow.'

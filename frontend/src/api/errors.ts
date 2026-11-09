@@ -3,13 +3,24 @@
  * "Is the backend running?" message with real diagnostics.
  *
  * `kind` drives WHAT the user is told:
- *  - network / cors_or_unreachable → "Backend is not reachable" (with host
- *    info + Retry) — ONLY these two kinds mean the wording is accurate;
+ *  - network / cors_or_unreachable → "No response from the backend" (with
+ *    host info + Retry) — ONLY these two kinds mean the wording is accurate,
+ *    and it must not assert that the process is dead: it usually is not;
  *  - unauthorized / forbidden → "Add or generate an API key" with a link;
  *  - rate_limited → includes retry-after when the server sends it;
  *  - service_unavailable → "Database temporarily unavailable" + auto-retry;
  *  - not_found / validation / server_error → actionable specifics.
+ *
+ * The server's own `detail` is always preferred over a generic sentence: the
+ * backend usually knows exactly what is wrong ("Provider key must be between 8
+ * and 512 characters"), and paraphrasing that into "Request failed" throws away
+ * the only actionable part.
  */
+
+/** True only for the two kinds that mean "nothing answered". */
+export function isReachabilityKind(kind: ApiErrorKind): boolean {
+  return kind === 'network' || kind === 'cors_or_unreachable'
+}
 
 export type ApiErrorKind =
   | 'network'
@@ -47,6 +58,46 @@ interface WithResponse {
 }
 
 /**
+ * Pull a readable sentence out of FastAPI/Pydantic error bodies.
+ *
+ * 422 is the awkward one: the endpoint's own `detail` is a string, but an
+ * automatic request-validation failure supplies a list of objects with `loc`
+ * and `msg`, which stringifies to noise. Both shapes are handled so the message
+ * names the offending field instead of printing `[object Object]`.
+ */
+function extractDetail(data: unknown): string | undefined {
+  if (typeof data === 'string') return data
+  if (!data || typeof data !== 'object') return undefined
+  const maybeDetail = (data as { detail?: unknown }).detail
+  if (typeof maybeDetail === 'string') return maybeDetail
+  if (Array.isArray(maybeDetail)) {
+    const parts = maybeDetail
+      .map((entry) => {
+        if (typeof entry === 'string') return entry
+        if (entry && typeof entry === 'object') {
+          const { loc, msg } = entry as { loc?: unknown[]; msg?: unknown }
+          const field = Array.isArray(loc)
+            ? loc.filter((p) => p !== 'body' && p !== 'query').join('.')
+            : ''
+          if (typeof msg === 'string') return field ? `${field}: ${msg}` : msg
+        }
+        return null
+      })
+      .filter((p): p is string => Boolean(p))
+    if (parts.length) return parts.join('; ')
+  }
+  return undefined
+}
+
+function parseRetryAfter(headers: unknown): number | undefined {
+  const raw = (headers as { 'retry-after'?: unknown } | undefined)?.['retry-after']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const seconds = Number(value)
+  // Round up: telling someone to retry in 0s when 0.4s remains is pointless.
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined
+}
+
+/**
  * Flatten any thrown value into an ApiError. Network-shaped failures (no
  * response object at all) are split into `network` vs `cors_or_unreachable`
  * heuristically: ERR_NETWORK/timeout codes are real transport failures,
@@ -68,7 +119,15 @@ export function toApiError(err: unknown): ApiError {
 
   switch (response.status) {
     case 400:
-      return new ApiError('validation', 'The request was not valid.', 400, undefined, serverDetail)
+    case 422:
+      // The server explains what was wrong with the request; repeat it.
+      return new ApiError(
+        'validation',
+        serverDetail ?? 'The request was not valid.',
+        response.status,
+        undefined,
+        serverDetail,
+      )
     case 401:
       return new ApiError('unauthorized', 'Add or generate an API key to continue.', 401, undefined, serverDetail)
     case 403:
@@ -84,6 +143,7 @@ export function toApiError(err: unknown): ApiError {
           : 'Rate limited — too many requests, slow down and retry.',
         429,
         retryAfter,
+        serverDetail,
       )
     }
     case 502:
@@ -104,7 +164,7 @@ export function toApiError(err: unknown): ApiError {
       }
       return new ApiError(
         'service_unavailable',
-        'The service is temporarily unavailable.',
+        serverDetail ?? 'The service is temporarily unavailable.',
         response.status,
         undefined,
         serverDetail,
@@ -112,32 +172,9 @@ export function toApiError(err: unknown): ApiError {
     }
     default: {
       if (response.status >= 500) {
-        return new ApiError('server_error', `Backend error (${response.status}).`, response.status, undefined, serverDetail)
+        return new ApiError('server_error', serverDetail ?? `Backend error (${response.status}).`, response.status, undefined, serverDetail)
       }
-      return new ApiError('validation', `Request failed (${response.status}).`, response.status, undefined, serverDetail)
+      return new ApiError('validation', serverDetail ?? `Request failed (${response.status}).`, response.status, undefined, serverDetail)
     }
   }
-}
-
-function parseRetryAfter(headers: unknown): number | undefined {
-  const raw = (headers as Record<string, unknown> | undefined)?.['retry-after']
-  const seconds = Number(raw)
-  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : undefined
-}
-
-function extractDetail(data: unknown): string | undefined {
-  if (typeof data === 'object' && data !== null && data !== undefined) {
-    const detail = (data as { detail?: unknown }).detail
-    if (typeof detail === 'string') return detail
-    // Wrangler fail-closed shape: { error: ..., detail: ... } — covered above;
-    // OpenAI/other shapes fall through to undefined.
-  }
-  if (typeof data === 'string') return data
-  return undefined
-}
-
-/** True network/reachability kinds — the ONLY cases where "not reachable"
- *  wording is accurate. */
-export function isReachabilityKind(kind: ApiErrorKind): boolean {
-  return kind === 'network' || kind === 'cors_or_unreachable'
 }

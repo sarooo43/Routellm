@@ -143,9 +143,14 @@ async def test_post_route_all_providers_fail_still_200(client, install_stubs):
     assert resp.status_code == 200  # business failure, not an HTTP error
     data = resp.json()
     assert data["success"] is False
-    assert data["error"] == "all_providers_failed"
+    # The summary now explains the FIRST failure rather than repeating a bare
+    # code that tells the reader nothing.
+    assert data["error"].startswith("rate_limited:")
+    assert "groq" in data["error"]
     assert data["model_used"] is None
     assert len(data["fallback_chain_attempted"]) == 3
+    # Every attempt is explained in the chain the Explorer renders.
+    assert all(a["error"] for a in data["fallback_chain_attempted"])
 
 
 # --------------------------------------------------------------------------

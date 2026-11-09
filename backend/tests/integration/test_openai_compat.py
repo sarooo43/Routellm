@@ -22,12 +22,11 @@ from app.models import TaskLog
 from tests.integration.conftest import StubProvider, expected_ranking, fail, ok
 
 CHAT_URL = "/v1/chat/completions"
-UPSTREAM_ERROR = {
-    "error": {
-        "message": "All providers failed to generate a response",
-        "type": "upstream_error",
-        "code": "all_providers_failed",
-    }
+#: The envelope shape is fixed; the message is a diagnosis, so only its
+#: structure and code are asserted (see test_failure_messaging for the wording).
+UPSTREAM_ERROR_SHAPE = {
+    "type": "upstream_error",
+    "code": "all_providers_failed",
 }
 
 
@@ -176,7 +175,11 @@ async def test_named_provider_failure_never_falls_back(client, stubs):
     stubs["deepseek"].responses = [fail("deepseek", error="timeout")]
     response = await client.post(CHAT_URL, json=chat_body(model="deepseek"))
     assert response.status_code == 502
-    assert response.json() == UPSTREAM_ERROR
+    error = response.json()["error"]
+    assert error["type"] == UPSTREAM_ERROR_SHAPE["type"]
+    assert error["code"] == UPSTREAM_ERROR_SHAPE["code"]
+    assert error["message"].startswith("network_unreachable:")
+    assert "deepseek" in error["message"]
     assert stubs["deepseek"].calls == 1
     assert stubs["groq"].calls == stubs["gemini"].calls == 0
 
@@ -330,7 +333,10 @@ async def test_total_provider_failure_returns_502_and_records_every_attempt(
         stub.responses = [fail(name, error="provider_server_error")]
     response = await client.post(CHAT_URL, json=chat_body(task_type="qa"))
     assert response.status_code == 502
-    assert response.json() == UPSTREAM_ERROR
+    error = response.json()["error"]
+    assert error["type"] == UPSTREAM_ERROR_SHAPE["type"]
+    assert error["code"] == UPSTREAM_ERROR_SHAPE["code"]
+    assert error["message"].startswith("provider_unavailable:")
     assert all(stub.calls == 1 for stub in stubs.values())
     assert breaker.failure_calls == expected_ranking("qa")
     assert breaker.success_calls == []

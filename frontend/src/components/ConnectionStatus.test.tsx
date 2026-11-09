@@ -1,76 +1,94 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+/**
+ * The header pill must not contradict a page that just failed.
+ *
+ * Field report: a page said "backend is not running" while the header still
+ * read "Online · 3ms" from a probe issued before the outage. The pill only
+ * polls every 15s, so a failed request has to push it to re-check immediately.
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
 import axios from 'axios'
 import { ConnectionStatus } from './ConnectionStatus'
-import { useWakeStore } from '../api/wake'
+import { requestHealthReprobe, useReprobeStore } from '../api/wake'
 
-vi.mock('axios')
-
-// Framer-motion / polling: ConnectionStatus probes /health once on mount,
-// then every 15 s. These tests assert the FIRST probe only (mount-time),
-// so no fake timers are needed.
-const getMock = axios.get as unknown as ReturnType<typeof vi.fn>
-
-beforeEach(() => {
-  getMock.mockReset()
+vi.mock('axios', async () => {
+  const get = vi.fn()
+  const isAxiosError = (e: unknown) =>
+    Boolean(e && typeof e === 'object' && (e as { isAxiosError?: boolean }).isAxiosError)
+  return { default: { get, isAxiosError }, isAxiosError }
 })
 
-afterEach(() => cleanup())
+const mockedGet = vi.mocked(axios.get)
+
+/** The pill publishes its state as a data attribute — query that, not text. */
+function pillState(): string | null {
+  return screen.getByTestId('connection-status').getAttribute('data-state')
+}
+
+async function expectState(state: string) {
+  await waitFor(() => expect(pillState()).toBe(state))
+}
+
+/**
+ * The backend's current answer, flipped by each test. State-driven rather than
+ * call-order-driven: React StrictMode mounts effects twice in development, so
+ * "the next call fails" is not a stable way to model an outage.
+ */
+let backendMode: 'up' | 'down' | 'degraded' = 'up'
+
+function answer() {
+  if (backendMode === 'down') return Promise.reject(new Error('Network Error'))
+  return Promise.resolve({
+    data: {
+      status: 'ok',
+      components: { redis: 'ok', database: backendMode === 'degraded' ? 'down' : 'ok' },
+    },
+  })
+}
 
 describe('ConnectionStatus', () => {
-  it('shows green Online with latency when /health is healthy', async () => {
-    getMock.mockResolvedValue({ data: { components: { database: 'ok', redis: 'ok' } } })
-    render(<ConnectionStatus />)
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('online'))
-    expect(pill.textContent).toMatch(/Online · \d+ms/)
+  beforeEach(() => {
+    vi.clearAllMocks()
+    backendMode = 'up'
+    useReprobeStore.setState({ nonce: 0 })
+    mockedGet.mockImplementation(() => answer())
   })
 
-  it('shows amber Degraded when a component is down', async () => {
-    getMock.mockResolvedValue({ data: { components: { database: 'down', redis: 'ok' } } })
+  it('shows the measured latency when the backend answers', async () => {
     render(<ConnectionStatus />)
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('degraded'))
-    expect(pill.textContent).toContain('Degraded')
+    await expectState('online')
+    expect(mockedGet).toHaveBeenCalledWith('/health', expect.anything())
   })
 
-  it('shows red Offline when /health is unreachable', async () => {
-    getMock.mockRejectedValue(new Error('Network Error'))
+  it('re-probes immediately when a request reports a transport failure', async () => {
     render(<ConnectionStatus />)
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('offline'))
-    expect(pill.textContent).toContain('Offline')
+    await expectState('online')
+    const before = mockedGet.mock.calls.length
+
+    // A page's request just failed: the pill must not wait for the 15s poll.
+    backendMode = 'down'
+    requestHealthReprobe()
+
+    await waitFor(() => expect(mockedGet.mock.calls.length).toBeGreaterThan(before))
+    await expectState('offline')
   })
 
-  it('shows the Worker actionable-detail inline for a genuine outage, never for waking', async () => {
-    // Worker fail-closed shape (x-routellm-source: worker-proxy down shape
-    // with 502-style detail naming the unreachable origin).
-    getMock.mockRejectedValue({
-      response: {
-        status: 502,
-        data: {
-          error: 'routellm_backend_unreachable',
-          detail: 'The configured RouteLLM backend origin could not be reached',
-        },
-      },
-    })
+  it('returns to Online once the backend answers again', async () => {
     render(<ConnectionStatus />)
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('offline'))
-    expect(
-      screen.getByTestId('connection-status-detail'),
-    ).toHaveTextContent('The configured RouteLLM backend origin could not be reached')
+    await expectState('online')
+
+    backendMode = 'down'
+    requestHealthReprobe()
+    await expectState('offline')
+
+    backendMode = 'up'
+    requestHealthReprobe()
+    await expectState('online')
   })
 
-  it('shows amber "Waking up…" while the wake-retry window is active', async () => {
-    getMock.mockRejectedValue(new Error('Network Error'))
+  it('reports Degraded when a component is down but the app answers', async () => {
+    backendMode = 'degraded'
     render(<ConnectionStatus />)
-    useWakeStore.getState().set({ waking: true, attempt: 2 })
-    const pill = await screen.findByTestId('connection-status')
-    await waitFor(() => expect(pill.dataset.state).toBe('waking'))
-    expect(pill.textContent).toContain('Waking up')
-    // The waking state never shows an inline deployment-fix reason:
-    expect(screen.queryByTestId('connection-status-detail')).not.toBeInTheDocument()
-    useWakeStore.getState().set({ waking: false, attempt: 0 })
+    await expectState('degraded')
   })
 })

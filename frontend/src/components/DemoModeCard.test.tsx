@@ -86,6 +86,6 @@ describe('DemoModeCard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /send a demo prompt/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
-    expect(screen.queryByText(/backend is not reachable/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/no response from the backend/i)).not.toBeInTheDocument()
   })
 })
