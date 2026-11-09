@@ -24,6 +24,25 @@ interface WakeState {
   set: (update: { waking: boolean; attempt: number }) => void
 }
 
+/**
+ * Bumped whenever a real request fails with a transport-shaped error.
+ *
+ * The health pill polls every 15s, so without this the UI can contradict
+ * itself: a page says "no response from the backend" while the header still
+ * reads "Online · 3ms" from a probe issued before the outage. Data loaders call
+ * requestHealthReprobe(); the pill re-probes immediately when the counter
+ * changes.
+ */
+export const useReprobeStore = create<{ nonce: number; bump: () => void }>((set) => ({
+  nonce: 0,
+  bump: () => set((state) => ({ nonce: state.nonce + 1 })),
+}))
+
+/** Ask the connectivity pill to check now instead of at the next poll. */
+export function requestHealthReprobe(): void {
+  useReprobeStore.getState().bump()
+}
+
 export const useWakeStore = create<WakeState>((set) => ({
   waking: false,
   attempt: 0,

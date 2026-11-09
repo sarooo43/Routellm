@@ -104,3 +104,40 @@ describe('ApiError', () => {
     expect(err.serverDetail).toBe('detail')
   })
 })
+
+describe('validation errors carry the server message', () => {
+  it('uses the endpoint detail from a 422 instead of a generic sentence', () => {
+    const err = toApiError({
+      response: {
+        status: 422,
+        data: { detail: 'Provider key must be between 8 and 512 characters.' },
+      },
+    })
+    expect(err.kind).toBe('validation')
+    // The old behaviour showed "Request failed (422)" and threw this away.
+    expect(err.message).toBe('Provider key must be between 8 and 512 characters.')
+    expect(err.serverDetail).toBe('Provider key must be between 8 and 512 characters.')
+  })
+
+  it('names the field when Pydantic returns a validation list', () => {
+    const err = toApiError({
+      response: {
+        status: 422,
+        data: { detail: [{ loc: ['body', 'api_key'], msg: 'Field required' }] },
+      },
+    })
+    expect(err.message).toBe('api_key: Field required')
+    expect(err.message).not.toContain('[object Object]')
+  })
+
+  it('never echoes a submitted secret back in the message', () => {
+    const err = toApiError({
+      response: {
+        status: 422,
+        data: { detail: [{ loc: ['body', 'api_key'], msg: 'String should have at least 8 characters' }] },
+      },
+    })
+    // Pydantic's `input` field would contain the secret; it must not surface.
+    expect(err.message).not.toContain('input')
+  })
+})

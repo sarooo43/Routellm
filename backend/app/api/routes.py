@@ -28,6 +28,7 @@ from app.api.dependencies import require_api_key, require_provider_api_keys
 from app.config import settings
 from app.core.api_key_manager import record_api_key_usage
 from app.core.circuit_breaker import CircuitBreaker
+from app.core.error_messages import explain, explain_route_failure
 from app.core.executor import (
     ExecutionResult,
     _ensure_shared_clients,
@@ -256,6 +257,13 @@ class AnalyticsResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
+def _explain_result(result) -> Optional[str]:
+    """Human summary of a failed route, naming the provider that failed first."""
+    if not result.error and not result.fallback_chain_attempted:
+        return None
+    return explain_route_failure(result.error, result.fallback_chain_attempted) or result.error
+
+
 @router.post("/route", response_model=RouteResponse)
 @limiter.limit(settings.ROUTE_RATE_LIMIT)
 async def route_prompt(
@@ -293,19 +301,30 @@ async def route_prompt(
             model_used=result.model_used,
             wall_ms=round((time.perf_counter() - start) * 1000, 2),
         )
+        # Translate the provider's error code once, at the edge, for the
+        # dashboard. The stored log keeps the raw code: /logs is for diagnosis,
+        # the response body is for the person who just clicked Send.
+        attempts = [
+            AttemptResponse(
+                **{
+                    **attempt.model_dump(),
+                    "error": attempt.error
+                    if attempt.success
+                    else explain(attempt.error, attempt.provider_name) or attempt.error,
+                }
+            )
+            for attempt in result.fallback_chain_attempted
+        ]
         return RouteResponse(
             success=result.success,
             result=result.result_text,
             model_used=result.model_used,
             confidence_score=result.confidence_score,
-            fallback_chain_attempted=[
-                AttemptResponse(**attempt.model_dump())
-                for attempt in result.fallback_chain_attempted
-            ],
+            fallback_chain_attempted=attempts,
             latency_ms=result.total_latency_ms,
             tokens_used=result.tokens_used,
             request_id=result.request_id,
-            error=result.error,
+            error=_explain_result(result),
             routing_method=result.routing_method,
         )
     except Exception as e:

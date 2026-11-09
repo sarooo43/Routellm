@@ -13,9 +13,28 @@ vi.mock('axios', async () => {
   const get = vi.fn()
   const put = vi.fn()
   const del = vi.fn()
+  // The client registers a response interceptor (health re-probe on transport
+  // failures). The stub mirrors that surface so the module can load, and the
+  // handlers are exposed for the tests that assert the behaviour.
+  const handlers: Array<{ rejected?: (e: unknown) => unknown }> = []
   return {
     default: {
-      create: () => ({ post, get, put, delete: del }),
+      create: () => ({
+        post,
+        get,
+        put,
+        delete: del,
+        interceptors: {
+          response: {
+            use: (_ok: unknown, rejected: (e: unknown) => unknown) => {
+              handlers.push({ rejected })
+            },
+          },
+        },
+      }),
+      isAxiosError: (e: unknown) =>
+        Boolean(e && typeof e === 'object' && (e as { isAxiosError?: boolean }).isAxiosError),
+      __handlers: handlers,
     },
   }
 })

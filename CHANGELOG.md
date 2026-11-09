@@ -57,6 +57,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   auth-mode matrix, demo-mode honesty, launcher behaviour, and packaging
   invariants.
 
+### Fixed
+
+- **A failed provider call no longer shows a raw exception class.** A route
+  that could not reach a provider used to answer
+  `unexpected_error: ConnectError`, which starts people debugging the gateway
+  when the gateway is fine. Responses now carry a diagnosis that names the
+  provider, says what actually failed and what to do next
+  (`network_unreachable: this machine could not open a connection to groq …`).
+  Covers missing keys, rejected keys, provider outages, rate limits and chaos
+  injections, on `/api/v1/route` and `/v1/chat/completions`. The stored log
+  keeps the raw code for debugging.
+- **The dashboard no longer claims the backend has stopped.** The
+  unreachable-state title is now "No response from the backend" with retry and
+  start instructions, instead of asserting the process is dead.
+- **The connectivity pill re-probes when a request fails**, so the header cannot
+  read "Online" while the page underneath is showing an error.
+- **Validation errors show the server's sentence.** A 422 from the provider-key
+  form used to be flattened to "Request failed"; it now says e.g. "Provider key
+  must be between 8 and 512 characters."
+- **Tests: `cleanup()` was never registered.** Rendered trees leaked between
+  tests, so queries matched several elements and files were ~5x slower.
+
 ### Changed
 
 - CI now tests the launcher's full support range: the backend suite runs on
