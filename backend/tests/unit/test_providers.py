@@ -56,7 +56,8 @@ async def test_groq_rate_limit():
     )
     resp = await GroqProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "rate_limit_exceeded"
+    assert resp.outcome == "rate_limit_exceeded"
+    assert resp.error.startswith("rate_limit_exceeded:")
     assert resp.latency_ms >= 0
 
 
@@ -67,7 +68,8 @@ async def test_groq_timeout():
     )
     resp = await GroqProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "timeout"
+    assert resp.outcome == "timeout"
+    assert resp.error.startswith("network_error:")
     assert resp.latency_ms >= 0
 
 
@@ -89,7 +91,8 @@ async def test_groq_server_error():
     )
     resp = await GroqProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "provider_server_error"
+    assert resp.outcome == "provider_server_error"
+    assert resp.error.startswith("provider_server_error:")
 
 
 # ----------------------------- Gemini -----------------------------
@@ -118,7 +121,8 @@ async def test_gemini_rate_limit():
     )
     resp = await GeminiProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "rate_limit_exceeded"
+    assert resp.outcome == "rate_limit_exceeded"
+    assert resp.error.startswith("rate_limit_exceeded:")
 
 
 @respx.mock
@@ -128,7 +132,8 @@ async def test_gemini_timeout():
     )
     resp = await GeminiProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "timeout"
+    assert resp.outcome == "timeout"
+    assert resp.error.startswith("network_error:")
 
 
 @respx.mock
@@ -149,7 +154,8 @@ async def test_gemini_server_error():
     )
     resp = await GeminiProvider().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "provider_server_error"
+    assert resp.outcome == "provider_server_error"
+    assert resp.error.startswith("provider_server_error:")
 
 
 # ----------------------------- DeepSeek -----------------------------
@@ -182,7 +188,8 @@ async def test_deepseek_rate_limit():
     )
     resp = await _deepseek().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "rate_limit_exceeded"
+    assert resp.outcome == "rate_limit_exceeded"
+    assert resp.error.startswith("rate_limit_exceeded:")
 
 
 @respx.mock
@@ -192,7 +199,8 @@ async def test_deepseek_timeout():
     )
     resp = await _deepseek().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "timeout"
+    assert resp.outcome == "timeout"
+    assert resp.error.startswith("network_error:")
 
 
 @respx.mock
@@ -215,7 +223,8 @@ async def test_deepseek_server_error():
     )
     resp = await _deepseek().generate("Say hi")
     assert resp.success is False
-    assert resp.error == "provider_server_error"
+    assert resp.outcome == "provider_server_error"
+    assert resp.error.startswith("provider_server_error:")
 
 
 # ----------------------------- Extras -----------------------------

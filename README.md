@@ -307,10 +307,29 @@ Being explicit about what this is and is not:
 | Saving a provider key returns 503 | No usable encryption key: make the data directory writable (a key is generated automatically), or set `PROVIDER_KEY_ENCRYPTION_KEY` |
 | Stored provider keys stop working after you deleted `data/` | The generated key is gone, so the ciphertext cannot be decrypted — re-enter the keys |
 | Every route fails with a connection error | No provider key is configured and demo mode is off, or this machine cannot reach the provider API |
+| Providers page says the key is fine but routes fail | Fixed: the badge used to mean "a row exists". Each provider now has a **Test connection** button that makes the same call routing makes and reports the real verdict — `valid`, `auth_failed`, `model_not_found`, `rate_limited`, `network_error` — plus the model it used |
+| `model_not_found: … has no model named 'x'` | The key is fine; the model is not. The app discovers models per key, so this means a pinned override (`GROQ_MODEL` / `GEMINI_MODEL` / `DEEPSEEK_MODEL`) points at a retired model — clear it, or pick one from the Providers-page dropdown |
+| `auth_failed: … rejected the credential (HTTP 401)` | The only error that means "check your key". Re-copy it from the provider console; nothing else in this list blames the key |
+| `network_error: could not open a connection` | This machine cannot reach the provider (proxy, firewall, DNS). Not a key problem |
+| Want to check every provider from a terminal | `python backend/scripts/check_providers.py` — reads keys from the environment or `.env` (never from flags), prints the key masked to its last 4 characters, the first chat models each key can use, the model the app would choose, and the result of a real 1-token request. Exit code 0 means every configured provider works |
 | `.\start.ps1` is blocked by PowerShell | `powershell -ExecutionPolicy Bypass -File .\start.ps1` |
 
 Logs are JSON on stdout; set `LOG_LEVEL=DEBUG` for more. Secrets are redacted
-before anything is written.
+before anything is written, and provider error bodies are kept to ~200 sanitized
+characters so you can see *what the provider actually said* without leaking a key.
+
+### Which providers and models are used
+
+Models are **discovered, not hardcoded**: on the first request for a provider the
+gateway asks that provider's list-models endpoint with your key, keeps the
+chat-capable ids, and picks the first one available from an ordered preference
+list. The result is cached for an hour (in memory, and in the database so a
+restart does not re-discover) and refreshed automatically if a model disappears.
+
+To pin a model instead, set `GROQ_MODEL`, `GEMINI_MODEL` or `DEEPSEEK_MODEL`, or
+choose one in the Providers page. Endpoints are fixed and tested verbatim:
+Groq `https://api.groq.com/openai/v1`, Gemini `v1beta …/models/<model>:generateContent`,
+DeepSeek `https://api.deepseek.com/v1`.
 
 ---
 

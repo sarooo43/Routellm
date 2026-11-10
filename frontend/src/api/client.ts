@@ -18,6 +18,7 @@ import type {
   LogsResponse,
   ModelsResponse,
   ProviderKeyStatus,
+  ProviderTestResult,
   RevokeKeyResponse,
   RouteRequest,
   RouteResponse,
@@ -123,6 +124,37 @@ export async function deleteProviderKey(
   const { data } = await api.delete<DeleteProviderKeyResponse>(
     `/api/v1/provider-keys/${encodeURIComponent(providerName)}`,
     { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/**
+ * Live-test one provider with the caller's stored key.
+ *
+ * Same server code path as real routing (same URL builder, same model
+ * resolution, a 1-token prompt), so a green result predicts a working route.
+ */
+export async function testProvider(
+  apiKey: string,
+  providerName: string,
+): Promise<ProviderTestResult> {
+  const { data } = await api.post<ProviderTestResult>(
+    `/api/v1/provider-test/${encodeURIComponent(providerName)}`,
+    {},
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Chat models the caller's key can actually use, for the model dropdown. */
+export async function getProviderModels(
+  apiKey: string,
+  providerName: string,
+  refresh = false,
+): Promise<string[]> {
+  const { data } = await api.get<string[]>(
+    `/api/v1/provider-test/${encodeURIComponent(providerName)}/models`,
+    { headers: { 'X-API-Key': apiKey }, params: refresh ? { refresh: true } : undefined },
   )
   return data
 }

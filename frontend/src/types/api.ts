@@ -235,6 +235,35 @@ export interface ProviderKeyStatus {
   updated_at: string | null
 }
 
+/**
+ * Real result of a live provider probe.
+ *
+ * `verdict` is the honest classification: only `auth_failed` may be described
+ * as a key problem. `model_not_found` means the key works but the model does
+ * not — the opposite of what the old "Configured" badge implied.
+ */
+export type ProviderVerdict =
+  | 'valid'
+  | 'auth_failed'
+  | 'model_not_found'
+  | 'rate_limited'
+  | 'bad_request'
+  | 'provider_error'
+  | 'network_error'
+  | 'not_configured'
+
+export interface ProviderTestResult {
+  provider: string
+  display: string
+  verdict: ProviderVerdict
+  key_valid: boolean
+  model: string | null
+  latency_ms: number | null
+  error: string | null
+  available_models: string[]
+  model_source: string | null
+}
+
 export interface DeleteProviderKeyResponse {
   status: string
   provider_name: string

@@ -6,6 +6,7 @@ Importing this package registers every table on ``SQLModel.metadata`` so
 
 from app.models.api_key import ApiKeyDB  # noqa: E402
 from app.models.feedback import Feedback
+from app.models.model_cache import DiscoveredModelCacheDB  # noqa: E402
 from app.models.model_config import ModelConfigDB  # noqa: E402
 from app.models.model_stats import ModelStatsDB  # noqa: E402
 from app.models.provider_key import ProviderKeyDB  # noqa: E402
@@ -14,6 +15,7 @@ from app.models.usage_tracking import UsageTracking  # noqa: E402
 
 __all__ = [
     "ApiKeyDB",
+    "DiscoveredModelCacheDB",
     "Feedback",
     "ModelConfigDB",
     "ModelStatsDB",

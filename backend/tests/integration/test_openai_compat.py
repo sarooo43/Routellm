@@ -279,7 +279,7 @@ async def test_task_type_override_reaches_classifier_and_persistence(
     )
     assert response.status_code == 200
     assert stubs["deepseek"].kwargs_seen == [
-        {"model_variant": "deepseek-coder", "temperature": 0.7}
+        {"prefer_code_model": True, "temperature": 0.7}
     ]
     log = (await db_session.execute(select(TaskLog))).scalars().one()
     assert log.task_type == "code"
@@ -296,7 +296,7 @@ async def test_generation_options_reach_the_executor_on_both_paths(
     assert response.status_code == 200
     expected = {"temperature": 0.2, "max_tokens": 64}
     if model == "deepseek":
-        expected["model_variant"] = "deepseek-chat"
+        expected["prefer_code_model"] = False
     assert stubs["groq" if model == "routellm-auto" else model].kwargs_seen == [expected]
 
 

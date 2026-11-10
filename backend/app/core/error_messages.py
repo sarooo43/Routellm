@@ -80,8 +80,21 @@ def _classify(code: str) -> str:
         return "rate_limited"
     if lowered.startswith("unexpected_error: http 5"):
         return "provider_down"
-    if lowered.startswith("unexpected_error: http 4"):
+    # Explicit status families. This used to be a single "any 4xx is auth"
+    # rule, which reported a 404 for a RETIRED MODEL as a bad API key and sent
+    # users off to rotate a key that was fine.
+    if lowered.startswith(("model_not_found", "endpoint_not_found")):
+        return "model_not_found"
+    if lowered.startswith("bad_request"):
+        return "bad_request"
+    if lowered.startswith(("unexpected_error: http 401", "unexpected_error: http 403")):
         return "auth"
+    if lowered.startswith("unexpected_error: http 404"):
+        return "model_not_found"
+    if lowered.startswith("unexpected_error: http 429"):
+        return "rate_limited"
+    if lowered.startswith("unexpected_error: http 4"):
+        return "bad_request"
     if lowered.startswith("chaos_injected"):
         return "chaos"
     return "unknown"
@@ -103,8 +116,15 @@ def explain(error: Optional[str], provider: Optional[str] = None) -> Optional[st
     # before the prefix is stripped.
     if raw.lower().startswith("unexpected_error: http 5"):
         family, bare = "provider_down", raw
-    elif raw.lower().startswith("unexpected_error: http 4"):
+    elif raw.lower().startswith(("unexpected_error: http 401", "unexpected_error: http 403")):
         family, bare = "auth", raw
+    elif raw.lower().startswith("unexpected_error: http 404"):
+        family, bare = "model_not_found", raw
+    elif raw.lower().startswith("unexpected_error: http 429"):
+        family, bare = "rate_limited", raw
+    elif raw.lower().startswith("unexpected_error: http 4"):
+        # 400/405/422: we built the request wrong. Never "your key".
+        family, bare = "bad_request", raw
     else:
         bare = raw.split(":", 1)[-1].strip() if raw.lower().startswith("unexpected_error") else raw
         family = _classify(bare)
@@ -118,6 +138,14 @@ def explain(error: Optional[str], provider: Optional[str] = None) -> Optional[st
             f"request that failed. Check internet access, a corporate proxy or "
             f"VPN, or a firewall rule, then retry."
         )
+
+    # Messages produced by app/providers/outcomes.py are already precise and
+    # already redacted: pass them through untouched rather than re-wrapping
+    # them in generic prose.
+    if family in {"model_not_found", "bad_request"} and raw.lower().startswith(
+        ("model_not_found", "endpoint_not_found", "bad_request")
+    ):
+        return raw
 
     if family == "missing_key":
         where = f" at {console}" if console else ""
@@ -153,6 +181,19 @@ def explain(error: Optional[str], provider: Optional[str] = None) -> Optional[st
             f"chaos_injected: this failure was simulated on purpose by chaos "
             f"mode, not produced by {name}. Turn chaos mode off to see the real "
             f"behaviour."
+        )
+
+    if family == "model_not_found":
+        return (
+            f"model_not_found: {name} has no such model ({raw}). The URL and your "
+            f"key are fine — the model name is retired, misspelled, or not enabled "
+            f"for your account. Pick a different model on the Providers page."
+        )
+
+    if family == "bad_request":
+        return (
+            f"bad_request: {name} rejected the request as malformed ({raw}). This is "
+            f"a bug in how the gateway built the request, not your key."
         )
 
     return (

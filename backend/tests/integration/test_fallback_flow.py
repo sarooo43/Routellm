@@ -317,7 +317,7 @@ async def test_max_fallbacks_zero_treated_as_one(
     assert gemini.calls == 0
 
 
-# ---------------------- DeepSeek model_variant dispatch ----------------------
+# ------------------ DeepSeek code-model preference dispatch ------------------
 
 
 async def test_deepseek_gets_coder_variant_for_code_task(
@@ -338,7 +338,9 @@ async def test_deepseek_gets_coder_variant_for_code_task(
     )
     assert result.success is True
     assert result.model_used == "deepseek"
-    assert deepseek.kwargs_seen == [{"model_variant": "deepseek-coder"}]
+    # A preference, not a model id: naming a model here would bypass discovery
+    # and 404 the moment the alias is retired.
+    assert deepseek.kwargs_seen == [{"prefer_code_model": True}]
 
 
 async def test_deepseek_gets_chat_variant_for_general_task(
@@ -358,4 +360,4 @@ async def test_deepseek_gets_chat_variant_for_general_task(
         quota_tracker=tracker,
     )
     assert result.success is True
-    assert deepseek.kwargs_seen == [{"model_variant": "deepseek-chat"}]
+    assert deepseek.kwargs_seen == [{"prefer_code_model": False}]
