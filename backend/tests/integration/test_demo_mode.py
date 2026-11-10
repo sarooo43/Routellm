@@ -215,7 +215,7 @@ async def test_setup_status_explains_the_first_run(client):
     # "sqlite" outright breaks in CI, which sets DATABASE_URL so its Postgres
     # service is exercised — the local default is covered by
     # tests/unit/test_local.py, where the environment is controlled.
-    if settings.DATABASE_URL.startswith("postgres"):
+    if (settings.DATABASE_URL or "").startswith("postgres"):
         # The driver name comes from the DSN: asyncpg for +asyncpg, psycopg...
         assert body["database_driver"] in {"asyncpg", "postgresql", "psycopg"}
     else:

@@ -115,3 +115,28 @@ async def get_decrypted_provider_keys(
         return {}
     rows = await list_provider_keys(db_session, api_key_id)
     return {row.provider_name: decrypt_provider_key(row.encrypted_key) for row in rows}
+
+
+async def get_provider_key(
+    db_session: AsyncSession, api_key_id: int, provider_name: str
+) -> Optional[str]:
+    """One caller-scoped provider key, decrypted, or None when absent.
+
+    Used by the connection test so it exercises the CALLER's own credential —
+    the same one routing would use — rather than an operator key that might be
+    fine while the user's is not.
+    """
+    keys = await get_decrypted_provider_keys(db_session, api_key_id)
+    return keys.get(provider_name)
+
+
+def server_key_for(provider_name: str) -> Optional[str]:
+    """The operator's environment key for a provider, or None.
+
+    Read from settings (not os.environ) so tests and .env files behave the same
+    way routing does.
+    """
+    from app.config import settings
+
+    value = getattr(settings, f"{provider_name.upper()}_API_KEY", None)
+    return (value or "").strip() or None

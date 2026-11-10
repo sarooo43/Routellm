@@ -13,6 +13,11 @@ class ProviderResponse(BaseModel):
     error: Optional[str] = None
     provider_name: str
     model_name: str
+    #: Machine-readable failure family ("auth_failed", "model_not_found",
+    #: "network_error", ...). Callers decide whether to open the circuit
+    #: breaker from THIS, not by pattern-matching the human sentence — the
+    #: sentence is prose and prose changes.
+    outcome: Optional[str] = None
 
 
 class ModelProvider(ABC):
@@ -28,7 +33,11 @@ def elapsed_ms(start: float) -> float:
 
 
 def make_error(
-    provider_name: str, model_name: str, error: str, latency_ms: float
+    provider_name: str,
+    model_name: str,
+    error: str,
+    latency_ms: float,
+    outcome: Optional[str] = None,
 ) -> ProviderResponse:
     return ProviderResponse(
         success=False,
@@ -38,6 +47,7 @@ def make_error(
         error=error,
         provider_name=provider_name,
         model_name=model_name,
+        outcome=outcome,
     )
 
 

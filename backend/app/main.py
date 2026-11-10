@@ -27,6 +27,7 @@ from app.api.catalog_routes import router as catalog_router
 from app.api.keys_routes import router as keys_router
 from app.api.openai_compat_routes import router as openai_compat_router
 from app.api.provider_keys_routes import router as provider_keys_router
+from app.api.provider_test_routes import router as provider_test_router
 from app.api.setup_routes import router as setup_router
 from app.api.routes import health_payload, limiter, router
 from app.config import (
@@ -275,6 +276,7 @@ app.include_router(catalog_router, prefix="/api/v1")
 app.include_router(keys_router, prefix="/api/v1")
 app.include_router(provider_keys_router, prefix="/api/v1")
 app.include_router(setup_router, prefix="/api/v1")
+app.include_router(provider_test_router, prefix="/api/v1")
 app.include_router(openai_compat_router)
 
 

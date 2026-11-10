@@ -17,6 +17,7 @@ import {
   type StoredApiKey,
 } from '../api/keyStorage'
 import { GlassCard } from '../components/GlassCard'
+import { ProviderConnectionPanel } from '../components/ProviderConnectionPanel'
 import { PageHeader } from '../components/PageHeader'
 import { toApiError } from '../api/errors'
 import { relativeTime } from '../lib/format'
@@ -395,6 +396,15 @@ export function ProviderKeys() {
                   Get a key <ExternalLink size={12} aria-hidden="true" />
                 </a>
               </div>
+
+              {/* "Configured" above only means a row exists. This is the part
+                  that proves the key works, using the same call routing makes. */}
+              <ProviderConnectionPanel
+                apiKey={activeKey?.api_key ?? ''}
+                provider={provider.name}
+                display={provider.display}
+                enabled={Boolean(activeKey) && configured && !busy}
+              />
             </GlassCard>
           )
         })}

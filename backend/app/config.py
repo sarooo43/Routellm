@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
+    # Model overrides. Empty = DISCOVER it: ask the provider which models this
+    # key can actually use and pick the first from an ordered preference list.
+    # Set one of these only when you need a specific model, e.g. after a
+    # provider retires the default (that failure used to surface as a bogus
+    # "your key is invalid" message).
+    GROQ_MODEL: str = ""
+    GEMINI_MODEL: str = ""
+    DEEPSEEK_MODEL: str = ""
+    # How long a discovered model list is cached before it is re-fetched.
+    MODEL_CACHE_TTL_SECONDS: int = 3600
     # Fernet key used to encrypt per-caller provider API keys (BYOK) at rest.
     # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

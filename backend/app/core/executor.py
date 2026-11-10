@@ -31,6 +31,14 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+#: Outcomes that mean "the request was wrong", not "the provider is down".
+#: These must never open the circuit breaker: a retired model name (404) is a
+#: config bug on our side, and a 400 is a malformed request. Counting them as
+#: outages would blacklist a perfectly healthy provider.
+CONFIG_ERROR_OUTCOMES = frozenset(
+    {"bad_request", "model_not_found", "endpoint_not_found", "not_found"}
+)
+
 
 class AttemptLog(BaseModel):
     provider_name: str
@@ -349,10 +357,29 @@ async def _chaos_active(
         return False
 
 
+async def _invalidate_models(provider_name: str, api_key: Optional[str]) -> None:
+    """Forget the cached model list so the next call asks the provider again."""
+    try:
+        from app.providers.model_registry import model_catalog
+
+        # Every key for this provider: a retired model is retired for all of
+        # them. Both tiers, or the stale list comes straight back from the DB.
+        await model_catalog.invalidate_everywhere(provider_name)
+        logger.info("model_cache_invalidated", provider=provider_name)
+    except Exception as exc:  # pragma: no cover - cache is best-effort
+        logger.warning("model_cache_invalidate_failed", provider=provider_name, error=str(exc))
+
+
 def _deepseek_kwargs(task_type: str) -> dict:
-    return {
-        "model_variant": "deepseek-coder" if task_type == "code" else "deepseek-chat",
-    }
+    """Steer DeepSeek toward its code model **without hardcoding a model id**.
+
+    This used to send ``model_variant="deepseek-coder"`` for every code task.
+    That value reached the provider as an explicit model override, so discovery
+    was bypassed for exactly the requests most likely to 404 — the retired-alias
+    bug in one line. A preference flag cannot name a model that no longer
+    exists, and the provider falls back to discovery when it is ignored.
+    """
+    return {"prefer_code_model": task_type == "code"}
 
 
 def _generation_kwargs(
@@ -447,6 +474,12 @@ async def _execute_forced_single_provider(
         provider = PROVIDER_REGISTRY[provider_name]
         try:
             response = await provider.generate(prompt, **kwargs)
+            if response.outcome == "model_not_found":
+                # The model we chose is gone (or was never enabled). Invalidate
+                # the discovery cache so the next request re-lists models
+                # instead of repeating the same 404 for an hour.
+                force_refresh = True
+                await _invalidate_models(provider_name, kwargs.get("provider_api_key"))
         except Exception as e:
             # Naive deployments have no error net at all: a raised exception
             # would crash the caller. This catch ONLY converts it into the
@@ -732,7 +765,25 @@ async def execute_with_fallback(
         try:
             if response.success:
                 await breaker.record_success(provider_name)
-            elif user_key_used and response.error == "auth_failed":
+            elif response.outcome in CONFIG_ERROR_OUTCOMES:
+                # 400 / 404 / 405 mean WE built the request wrong or named a
+                # model that does not exist. The provider is up and answering;
+                # opening the breaker would take a healthy provider out of
+                # rotation for every caller because of one bad model string.
+                #
+                # A SUCCESS is recorded instead: the provider demonstrably
+                # responded, which is the only thing the breaker is entitled to
+                # conclude from this.
+                await breaker.record_success(provider_name)
+                logger.info(
+                    "breaker_skipped_config_error",
+                    request_id=request_id,
+                    provider=provider_name,
+                    outcome=response.outcome,
+                    detail="config error (400/404) — the provider is reachable, "
+                    "so this is not an outage",
+                )
+            elif user_key_used and response.error.startswith("auth_failed"):
                 logger.info(
                     "breaker_skipped_user_key_auth_error",
                     request_id=request_id,
