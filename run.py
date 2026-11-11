@@ -51,8 +51,19 @@ ENV_EXAMPLE = BACKEND_DIR / ".env.example"
 ENV_FILE = BACKEND_DIR / ".env"
 DATA_DIR = REPO_ROOT / "data"
 
-#: ANSI colours, disabled when stdout is not a TTY (CI logs, Windows cmd).
+#: ANSI colours, disabled when the stream is not a TTY (CI logs, Windows cmd).
 _COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+# Windows consoles default to a legacy codepage (cp1252 on most Western
+# locales) that cannot encode the launcher's checkmark glyphs — the very
+# first status line then died with UnicodeEncodeError before anything ran.
+# Reconfigure to UTF-8 with replacement so the launcher works on ANY console,
+# including piped output. Best-effort: odd embedded interpreters may refuse.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+except (AttributeError, ValueError, OSError):  # pragma: no cover - exotic streams
+    pass
 
 
 def _c(code: str, text: str) -> str:
