@@ -12,7 +12,7 @@ vi.mock('../api/client', () => ({
   deleteProviderKey: vi.fn(),
   getProviderModels: vi.fn(),
   testProviderModel: vi.fn(),
-  testProviderConnection: vi.fn(),
+  testProvider: vi.fn(),
   setPinnedModel: vi.fn(),
 }))
 

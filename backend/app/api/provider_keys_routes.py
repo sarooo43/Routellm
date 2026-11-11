@@ -9,8 +9,11 @@ Model explorer endpoints (all scoped per caller key, fail-soft, never
 return a key):
 - GET  /{provider}/models                    discovered list + statuses
 - POST /{provider}/models/{model_id}/test    one 1-token request
-- POST /{provider}/test-connection           candidate walk (Auto mode)
 - PUT  /{provider}/model                     pin a model (or null = Auto)
+
+The Auto "Test connection" flow lives in ONE route only:
+POST /api/v1/provider-test/{provider} (see provider_test_routes) — the same
+candidate walk real routing uses, with the shared quota guard.
 """
 
 import asyncio
@@ -210,23 +213,6 @@ class ProviderModelTestResponse(BaseModel):
     error: Optional[str] = None
 
 
-class WalkStepInfo(BaseModel):
-    model: str
-    skipped: bool
-    reason: str
-    success: bool = False
-
-
-class ProviderConnectionTestResponse(BaseModel):
-    """Result of the Auto candidate walk (same code path as real routing)."""
-
-    provider_name: str
-    success: bool
-    working_model: Optional[str] = None
-    attempted: list[WalkStepInfo] = []
-    skipped: list[WalkStepInfo] = []
-
-
 class SetPinnedModelRequest(BaseModel):
     """Pin a model (or null to return to Auto)."""
 
@@ -369,21 +355,31 @@ async def test_provider_model(
     api_key: ApiKeyDB = Depends(require_api_key),
     db_session: AsyncSession = Depends(get_session),
 ) -> ProviderModelTestResponse:
-    """One 1-token request through the SAME code path as real routing."""
+    """One 1-token request through the SAME code path as real routing.
+
+    Each test spends the caller's provider quota, so the shared guard applies
+    (10 tests/min per key, max 5 in flight — 429 + Retry-After beyond that).
+    """
     if not md.is_valid_model_id(model_id):
         raise HTTPException(status_code=422, detail="Invalid model id")
     stored_key = await _require_decrypted_key(db_session, api_key.id, provider_name)
 
-    walk = await md.walk_candidates(
-        provider_name,
-        "ping",
-        {"max_tokens": 1, "provider_api_key": stored_key},
-        stored_key,
-        first_model=model_id,
-        max_attempts=1,
-        db_session=db_session,
-        api_key_id=api_key.id,
-    )
+    from app.core.test_endpoint_guard import check_and_acquire, release
+
+    check_and_acquire(api_key.id)
+    try:
+        walk = await md.walk_candidates(
+            provider_name,
+            "ping",
+            {"max_tokens": 1, "provider_api_key": stored_key},
+            stored_key,
+            first_model=model_id,
+            max_attempts=1,
+            db_session=db_session,
+            api_key_id=api_key.id,
+        )
+    finally:
+        release(api_key.id)
     step = walk.steps[-1] if walk.steps else None
     status = _classify_test_result(walk.response.error)
     return ProviderModelTestResponse(
@@ -394,52 +390,6 @@ async def test_provider_model(
         error=md.sanitize_error_message(walk.response.error or "")
         if walk.response.error
         else None,
-    )
-
-
-@router.post("/{provider_name}/test-connection")
-async def test_provider_connection(
-    provider_name: str,
-    api_key: ApiKeyDB = Depends(require_api_key),
-    db_session: AsyncSession = Depends(get_session),
-) -> ProviderConnectionTestResponse:
-    """Auto-mode Test button: candidate walk, skipped models with reasons."""
-    stored_key = await _require_decrypted_key(db_session, api_key.id, provider_name)
-    walk = await md.walk_candidates(
-        provider_name,
-        "ping",
-        {"max_tokens": 1, "provider_api_key": stored_key},
-        stored_key,
-        first_model=None,
-        max_attempts=3,
-        db_session=db_session,
-        api_key_id=api_key.id,
-    )
-    attempted = [
-        WalkStepInfo(
-            model=step.model,
-            skipped=step.skipped,
-            reason=step.reason,
-            success=step.success,
-        )
-        for step in walk.steps
-        if not step.skipped
-    ]
-    skipped = [
-        WalkStepInfo(
-            model=step.model,
-            skipped=True,
-            reason=step.reason,
-        )
-        for step in walk.steps
-        if step.skipped
-    ]
-    return ProviderConnectionTestResponse(
-        provider_name=provider_name,
-        success=walk.response.success,
-        working_model=walk.model_used,
-        attempted=attempted,
-        skipped=skipped,
     )
 
 

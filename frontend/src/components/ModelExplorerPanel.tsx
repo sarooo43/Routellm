@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   BadgeCheck,
   CheckCircle2,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   Pin,
   RefreshCw,
   Search,
+  ShieldQuestion,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -18,6 +20,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   getProviderModels,
   setPinnedModel,
+  testProvider,
   testProviderModel,
 } from '../api/client'
 import { toApiError } from '../api/errors'
@@ -28,11 +31,28 @@ import type {
   ModelTier,
   ProviderModelInfo,
   ProviderModelsResponse,
+  ProviderTestResult,
+  ProviderVerdict,
 } from '../types/api'
 import { ErrorState } from './ErrorState'
 import { Skeleton } from './Skeleton'
 
 const TEST_BATCH_SIZE = 5
+
+/** Verdict styling for the one Test-connection button (PR #15 taxonomy). */
+const VERDICT_STYLE: Record<ProviderVerdict, { label: string; className: string }> = {
+  valid: { label: 'Works', className: 'border-success/25 bg-success/10 text-success' },
+  auth_failed: { label: 'Key rejected', className: 'border-danger/25 bg-danger/10 text-danger' },
+  model_not_found: {
+    label: 'Model unavailable',
+    className: 'border-warning/25 bg-warning/10 text-warning',
+  },
+  rate_limited: { label: 'Rate limited', className: 'border-warning/25 bg-warning/10 text-warning' },
+  bad_request: { label: 'Request rejected', className: 'border-warning/25 bg-warning/10 text-warning' },
+  provider_error: { label: 'Provider problem', className: 'border-warning/25 bg-warning/10 text-warning' },
+  network_error: { label: 'Cannot reach provider', className: 'border-warning/25 bg-warning/10 text-warning' },
+  not_configured: { label: 'No key', className: 'border-white/[0.08] bg-white/[0.04] text-text-secondary' },
+}
 
 const TIER_BADGE: Record<ModelTier, string> = {
   free: 'border-success/25 bg-success/10 text-success',
@@ -85,6 +105,9 @@ export function ModelExplorerPanel({
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // One Test-connection flow (the single route: POST /provider-test/{provider}).
+  const [connResult, setConnResult] = useState<ProviderTestResult | null>(null)
+  const [connTesting, setConnTesting] = useState(false)
   const mounted = useRef(true)
 
   // The page passes a fresh inline callback per render; keeping it in a ref
@@ -101,6 +124,12 @@ export function ModelExplorerPanel({
       mounted.current = false
     }
   }, [])
+
+  // A different key invalidates any verdict shown here: it belonged to the
+  // previous key, and leaving it up would be exactly the lie this replaces.
+  useEffect(() => {
+    setConnResult(null)
+  }, [routellmKey, providerName])
 
   const updateParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -244,6 +273,35 @@ export function ModelExplorerPanel({
     onTestedRef.current?.(anyWorks || models.some((m) => m.status === 'works'))
   }, [models, routellmKey, providerName])
 
+  /**
+   * THE Test-connection button (Auto mode): one route, one code path with
+   * routing. The server walks ranked candidates, skipping models this key
+   * was already denied; `attempted`/`skipped` report that walk. After a
+   * verdict the model list is refreshed so status chips agree with it.
+   */
+  const onTestConnection = useCallback(async () => {
+    setConnTesting(true)
+    setNotice(null)
+    try {
+      const result = await testProvider(routellmKey, providerName)
+      if (!mounted.current) return
+      setConnResult(result)
+      if (result.verdict === 'valid') onTestedRef.current?.(true)
+      // The server-side test writes per-model statuses (works/denied);
+      // refresh quietly so the chips match the verdict.
+      void load(true)
+    } catch (err) {
+      if (!mounted.current) return
+      setConnResult(null)
+      const apiError = toApiError(err)
+      setNotice(
+        `Could not run the test: ${apiError.serverDetail ?? apiError.message}`,
+      )
+    } finally {
+      if (mounted.current) setConnTesting(false)
+    }
+  }, [routellmKey, providerName, load])
+
   const onUseModel = useCallback(
     async (modelId: string | null) => {
       setBusyModel(modelId ?? '__auto__')
@@ -305,7 +363,75 @@ export function ModelExplorerPanel({
           ) : null}
           {autoMode ? 'Turn Auto off' : 'Turn Auto on'}
         </button>
+        <button
+          type="button"
+          onClick={() => void onTestConnection()}
+          disabled={connTesting}
+          className="rl-btn-ghost border border-white/[0.1] px-2.5 py-1 text-xs disabled:opacity-40"
+          aria-label={`Test ${providerDisplay} connection`}
+          data-testid={`test-connection-${providerName}`}
+        >
+          {connTesting ? (
+            <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+          ) : (
+            <ShieldQuestion size={12} aria-hidden="true" />
+          )}
+          {connTesting ? 'Testing…' : 'Test connection (Auto)'}
+        </button>
+        {connResult && (
+          <span
+            className={`rl-badge ${VERDICT_STYLE[connResult.verdict].className}`}
+            role="status"
+            aria-label={`${providerDisplay} connection status`}
+            data-testid={`connection-verdict-${providerName}`}
+          >
+            {connResult.verdict === 'valid' ? (
+              <CheckCircle2 size={12} aria-hidden="true" />
+            ) : (
+              <AlertTriangle size={12} aria-hidden="true" />
+            )}
+            {VERDICT_STYLE[connResult.verdict].label}
+            {connResult.model && (
+              <>
+                {' · '}
+                <code className="font-mono">{connResult.model}</code>
+              </>
+            )}
+          </span>
+        )}
       </div>
+
+      {/* The walk report: which candidates were tried or skipped, in order. */}
+      {connResult && (connResult.attempted?.length || connResult.skipped?.length) ? (
+        <ul
+          className="mt-2 space-y-1 text-xs text-text-secondary"
+          data-testid={`connection-walk-${providerName}`}
+          aria-label={`${providerDisplay} candidate walk`}
+        >
+          {(connResult.skipped ?? []).map((step) => (
+            <li key={`skip-${step.model}`} className="flex items-center gap-1.5">
+              <CircleSlash size={11} aria-hidden="true" />
+              <code className="font-mono">{step.model}</code> skipped — {step.reason}
+            </li>
+          ))}
+          {(connResult.attempted ?? []).map((step) => (
+            <li key={`try-${step.model}`} className="flex items-center gap-1.5">
+              {step.success ? (
+                <CheckCircle2 size={11} className="text-success" aria-hidden="true" />
+              ) : (
+                <XCircle size={11} className="text-danger" aria-hidden="true" />
+              )}
+              <code className="font-mono">{step.model}</code>
+              {step.success ? ' worked' : ` failed — ${step.reason}`}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {connResult && connResult.verdict !== 'valid' && connResult.error && (
+        <p className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-xs leading-relaxed text-text-secondary">
+          {connResult.error}
+        </p>
+      )}
 
       {/* Controls */}
       <div className="mt-3 flex flex-wrap items-center gap-2">

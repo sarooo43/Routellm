@@ -348,17 +348,10 @@ export interface ProviderModelTestResponse {
   error: string | null
 }
 
+/** One candidate in the Test-connection walk (attempted or skipped). */
 export interface ProviderConnectionTestStep {
   model: string
   skipped: boolean
   reason: string
   success: boolean
-}
-
-export interface ProviderConnectionTestResponse {
-  provider_name: string
-  success: boolean
-  working_model: string | null
-  attempted: ProviderConnectionTestStep[]
-  skipped: ProviderConnectionTestStep[]
 }

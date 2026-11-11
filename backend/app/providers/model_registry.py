@@ -471,9 +471,8 @@ class ModelCatalog:
             # Cold process (first request after a restart): a database row
             # written less than TTL ago is as good as a fresh fetch and costs
             # no provider call.
-            persisted = await self._load_persisted(spec.name, api_key)
-            if persisted:
-                ids, meta = persisted
+            ids, meta = await self._load_persisted(spec.name, api_key)
+            if ids:
                 self.store(spec.name, api_key, ids, source="cache", meta=meta)
                 return ids, meta, "db_cache"
 

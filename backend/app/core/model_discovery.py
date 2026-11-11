@@ -644,6 +644,7 @@ async def walk_candidates(
 
     steps: list[WalkStep] = []
     replacement_hint: Optional[str] = None
+    last_response: Optional[ProviderResponse] = None
     tried: set[str] = set()
 
     while ordered and len(tried) < max_attempts:
@@ -665,6 +666,7 @@ async def walk_candidates(
         call_kwargs = dict(kwargs)
         call_kwargs["model"] = model_id
         response = await provider_obj.generate(prompt, **call_kwargs)
+        last_response = response
 
         error = response.error or ""
         if response.success:
@@ -747,15 +749,20 @@ async def walk_candidates(
         break
 
     last = steps[-1] if steps else None
-    final_response = ProviderResponse(
-        success=False,
-        text="",
-        tokens_used=0,
-        latency_ms=last.latency_ms if last else 0.0,
-        error=(last.error if last and last.error else "all_candidates_failed"),
-        provider_name=provider_name,
-        model_name=(last.model if last else "unknown"),
-    )
+    if last is not None and last_response is not None:
+        # Reuse the LAST real provider response so outcome classification
+        # (response.outcome) survives — synthesizing a new one would lose it.
+        final_response = last_response
+    else:
+        final_response = ProviderResponse(
+            success=False,
+            text="",
+            tokens_used=0,
+            latency_ms=last.latency_ms if last else 0.0,
+            error=(last.error if last and last.error else "all_candidates_failed"),
+            provider_name=provider_name,
+            model_name=(last.model if last else "unknown"),
+        )
     return WalkResult(
         response=final_response,
         steps=steps,

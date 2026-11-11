@@ -10,13 +10,14 @@ import { ModelExplorerPanel } from './ModelExplorerPanel'
 vi.mock('../api/client', () => ({
   getProviderModels: vi.fn(),
   testProviderModel: vi.fn(),
-  testProviderConnection: vi.fn(),
+  testProvider: vi.fn(),
   setPinnedModel: vi.fn(),
 }))
 
 import {
   getProviderModels,
   setPinnedModel,
+  testProvider,
   testProviderModel,
 } from '../api/client'
 
@@ -244,6 +245,64 @@ describe('ModelExplorerPanel', () => {
     await waitFor(() => expect(screen.getByTestId('auto-badge-groq')).toBeInTheDocument())
   })
 
+  it('runs the one Test-connection flow: verdict badge plus attempted/skipped walk', async () => {
+    vi.mocked(testProvider).mockResolvedValue({
+      provider: 'groq',
+      display: 'Groq',
+      verdict: 'valid',
+      key_valid: true,
+      model: 'llama-3.3-70b-versatile',
+      latency_ms: 250,
+      error: null,
+      available_models: ['llama-3.3-70b-versatile'],
+      model_source: 'discovered',
+      attempted: [
+        { model: 'llama-3.3-70b-versatile', skipped: false, reason: '', success: true },
+      ],
+      skipped: [
+        {
+          model: 'gemma2-9b-it',
+          skipped: true,
+          reason: 'denied: a previous call returned model_not_found for this key',
+          success: false,
+        },
+      ],
+    })
+    renderPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test Groq connection' }))
+
+    await waitFor(() => expect(testProvider).toHaveBeenCalledWith(SECRET, 'groq'))
+    const verdict = await screen.findByTestId('connection-verdict-groq')
+    expect(verdict).toHaveTextContent('Works')
+    expect(verdict).toHaveTextContent('llama-3.3-70b-versatile')
+    const walk = screen.getByTestId('connection-walk-groq')
+    expect(walk).toHaveTextContent('gemma2-9b-it skipped')
+    expect(walk).toHaveTextContent('llama-3.3-70b-versatile worked')
+    // The DOM never shows the key used to authenticate the calls.
+    expect(document.body.textContent).not.toContain(SECRET)
+  })
+
+  it('shows an auth-failed verdict without pretending the models are the problem', async () => {
+    vi.mocked(testProvider).mockResolvedValue({
+      provider: 'groq',
+      display: 'Groq',
+      verdict: 'auth_failed',
+      key_valid: false,
+      model: null,
+      latency_ms: null,
+      error: 'The API key was rejected (401). Replace the key on the Providers page.',
+      available_models: [],
+      model_source: null,
+    })
+    renderPanel()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test Groq connection' }))
+
+    expect(await screen.findByTestId('connection-verdict-groq')).toHaveTextContent('Key rejected')
+    expect(screen.getByText(/Replace the key/)).toBeInTheDocument()
+  })
+
   it('tests all pending models and reports progress', async () => {
     vi.mocked(testProviderModel).mockImplementation(async (_key, _provider, modelId) => ({
       provider_name: 'groq',
@@ -293,7 +352,7 @@ describe('ModelExplorerPanel', () => {
     vi.mocked(getProviderModels).mockRejectedValue({ code: 'ECONNABORTED' })
     renderPanel()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Backend is not reachable')
+    expect(await screen.findByRole('alert')).toHaveTextContent('No response from the backend')
   })
 
   it('never renders the RouteLLM key anywhere in the DOM', async () => {

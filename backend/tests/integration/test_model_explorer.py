@@ -225,17 +225,16 @@ async def test_denied_model_is_skipped_on_the_next_request(
 async def test_test_connection_reports_walk_steps_and_working_model(
     client, stub_gemini, fake_discovery
 ):
+    """The ONE Test-connection route: POST /provider-test/{provider}."""
     headers = await generate_key(client)
     await client.put(
         "/api/v1/provider-keys/gemini", json={"api_key": GEMINI_SECRET}, headers=headers
     )
-    response = await client.post(
-        "/api/v1/provider-keys/gemini/test-connection", headers=headers
-    )
+    response = await client.post("/api/v1/provider-test/gemini", headers=headers)
     assert response.status_code == 200
     body = response.json()
-    assert body["success"] is True
-    assert body["working_model"] == "gemini-3.8-flash"
+    assert body["verdict"] == "valid"
+    assert body["model"] == "gemini-3.8-flash"
     # Auto walks rank order: the newest plain flash is tried first and works,
     # so nothing else is attempted on this request.
     attempted = [step["model"] for step in body["attempted"]]
@@ -433,7 +432,7 @@ async def test_explorer_endpoints_require_routellm_key(client, monkeypatch):
         await client.get("/api/v1/provider-keys/gemini/models")
     ).status_code == 401
     assert (
-        await client.post("/api/v1/provider-keys/gemini/test-connection")
+        await client.post("/api/v1/provider-test/gemini")
     ).status_code == 401
     assert (
         await client.put(
