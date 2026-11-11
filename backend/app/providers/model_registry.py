@@ -28,6 +28,9 @@ missing database is not an error, it just means no warm cache.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
@@ -35,7 +38,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from app.config import settings
+from app.config import MODEL_PREFERENCE_GROUPS, MODEL_TIER_TABLE, settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -182,24 +185,123 @@ def is_chat_capable(spec: ProviderSpec, model_id: str) -> bool:
     return not any(marker in lowered for marker in spec.non_chat_markers)
 
 
-def choose_model(spec: ProviderSpec, available: Iterable[str]) -> str:
-    """First preference the account actually offers, else its first chat model.
+def key_fingerprint(api_key: str) -> str:
+    """Stable, non-reversible cache key for one upstream provider key.
 
-    Order matters and is asserted by tests: a *stable* default beats an
-    alphabetical accident, and the hardcoded default still wins when it is
-    available, so behaviour does not change for users it already worked for.
+    Only the first 16 hex chars of a SHA-256 are used — enough to scope caches
+    per key, useless for reconstructing the secret. The single fingerprint
+    implementation for every cache and DB row in the system.
     """
-    offered = [m for m in available]
-    if not offered:
+    return hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:16]
+
+
+def parse_version_tuple(model_id: str) -> Optional[tuple[int, ...]]:
+    """Parse the FIRST numeric version group in an id as numbers.
+
+    gemini-3.8-flash -> (3, 8); gemini-2.0-flash -> (2, 0);
+    gemini-10.0-flash -> (10, 0) so 10.0 > 9.0 numerically, never lexically.
+    Returns None when the id carries no version.
+    """
+    match = re.search(r"(?<![\w.])(\d+(?:\.\d+)*)", (model_id or "").lower())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def preference_group(provider: str, model_id: str) -> int:
+    """Index of the first matching preference group from owner-editable config.
+
+    ``MODEL_PREFERENCE_GROUPS[provider]`` is an ordered list of
+    ``{match, exclude, note}`` patterns; a model lands in the first group
+    whose ``match`` substring it contains and none of whose ``exclude``
+    substrings it does. The final ``""`` group is the catch-all. Returns
+    ``len(groups)`` when the provider has no table.
+    """
+    lowered = (model_id or "").lower()
+    groups = MODEL_PREFERENCE_GROUPS.get(provider)
+    if not groups:
+        return 0
+    for index, group in enumerate(groups):
+        match = group.get("match", "")
+        if match and match not in lowered:
+            continue
+        if any(excl in lowered for excl in group.get("exclude", [])):
+            continue
+        return index
+    return len(groups)
+
+
+def estimated_tier(provider: str, model_id: str) -> str:
+    """Static tier ESTIMATE from owner-editable config.
+
+    Provider list-models responses expose NO pricing, so "free"/"paid" is an
+    estimate and every caller must label it ``tier_source="estimated"``.
+    Returns "unknown" when nothing matches — never a guess dressed as data.
+    """
+    lowered = (model_id or "").lower()
+    for entry in MODEL_TIER_TABLE.get(provider, []):
+        match = entry.get("match", "")
+        if not match or match in lowered:
+            return entry.get("tier", "unknown")
+    return "unknown"
+
+
+def rank_candidate_ids(
+    spec: ProviderSpec,
+    ids: Iterable[str],
+    created: Optional[dict[str, int]] = None,
+) -> list[str]:
+    """THE model ordering for the whole system (choose_model + candidate walk).
+
+    Order: owner-editable preference group, then the spec's static
+    ``preferred_models`` order (a tiebreak, so legacy deployments keep their
+    documented choice), then numeric version DESC (3.8 > 2.5 > 2.0, and
+    10.0 > 9.0 — parsed as numbers, never compared as strings), then the
+    provider's ``created`` timestamp DESC where the API gives one, then the
+    id for determinism. Non-chat ids are dropped; duplicates collapse
+    case-insensitively.
+    """
+    created = created or {}
+    preferred_index = {m.lower(): i for i, m in enumerate(spec.preferred_models)}
+
+    def sort_key(model_id: str):
+        group = preference_group(spec.name, model_id)
+        pref = preferred_index.get(model_id.lower(), len(spec.preferred_models))
+        version = parse_version_tuple(model_id)
+        return (
+            group,
+            pref,
+            tuple(-part for part in (version or ())),
+            -created.get(model_id, 0),
+            model_id,
+        )
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for model_id in ids:
+        lowered = model_id.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(model_id)
+    return sorted(
+        [m for m in unique if is_chat_capable(spec, m)],
+        key=sort_key,
+    )
+
+
+def choose_model(spec: ProviderSpec, available: Iterable[str]) -> str:
+    """First candidate in the shared ranking the account actually offers.
+
+    Delegates to :func:`rank_candidate_ids` so routing, the Test connection
+    button and the model dropdown CANNOT disagree about order. Order matters
+    and is asserted by tests: a *stable* default beats an alphabetical
+    accident, and behaviour does not change for users it already worked for.
+    """
+    ranked = rank_candidate_ids(spec, list(available))
+    if not ranked:
         return spec.default_model
-    by_lower = {m.lower(): m for m in offered}
-    for preferred in spec.preferred_models:
-        if preferred.lower() in by_lower:
-            return by_lower[preferred.lower()]
-    for model in offered:
-        if is_chat_capable(spec, model):
-            return model
-    return spec.default_model
+    return ranked[0]
 
 
 @dataclass
@@ -207,6 +309,9 @@ class _CacheEntry:
     models: list[str]
     fetched_at: float
     source: str = "discovered"
+    #: Wire facts per model id (display name, created, context window...),
+    #: captured at discovery time. Missing/empty for legacy cache rows.
+    meta: dict[str, dict] = field(default_factory=dict)
 
     def fresh(self, now: float, ttl_s: float = MODEL_CACHE_TTL_S) -> bool:
         return (now - self.fetched_at) < ttl_s
@@ -236,10 +341,7 @@ class ModelCatalog:
 
     @staticmethod
     def _key(provider: str, api_key: Optional[str]) -> tuple[str, str]:
-        import hashlib
-
-        digest = hashlib.sha256((api_key or "").encode()).hexdigest()[:16]
-        return provider, digest
+        return provider, key_fingerprint(api_key or "")
 
     def peek(self, provider: str, api_key: Optional[str]) -> Optional[list[str]]:
         """Cached list if fresh, else None. Never performs I/O."""
@@ -248,10 +350,27 @@ class ModelCatalog:
             return list(entry.models)
         return None
 
-    def store(self, provider: str, api_key: Optional[str], models: list[str], source: str = "discovered") -> None:
+    def store(
+        self,
+        provider: str,
+        api_key: Optional[str],
+        models: list[str],
+        source: str = "discovered",
+        meta: Optional[dict[str, dict]] = None,
+    ) -> None:
         self._cache[self._key(provider, api_key)] = _CacheEntry(
-            models=list(models), fetched_at=time.monotonic(), source=source
+            models=list(models),
+            fetched_at=time.monotonic(),
+            source=source,
+            meta=meta or {},
         )
+
+    def peek_meta(self, provider: str, api_key: Optional[str]) -> dict[str, dict]:
+        """Wire facts for the cached list, or {} when nothing is cached."""
+        entry = self._cache.get(self._key(provider, api_key))
+        if entry and entry.fresh(time.monotonic(), self._ttl):
+            return dict(entry.meta)
+        return {}
 
     def invalidate(self, provider: str, api_key: Optional[str] = None) -> None:
         """Drop one in-memory entry, or every entry for a provider."""
@@ -299,6 +418,29 @@ class ModelCatalog:
     def clear(self) -> None:  # pragma: no cover - test hygiene
         self._cache.clear()
 
+    async def list_records(
+        self,
+        spec: ProviderSpec,
+        api_key: Optional[str],
+        *,
+        force_refresh: bool = False,
+    ) -> tuple[list[dict], str]:
+        """Discovered chat models WITH their wire facts, and the cache source.
+
+        Same discovery call and cache as :meth:`list_models` — there is no
+        second fetch. Each record is a tolerant dict: ``id`` always present;
+        ``display_name``, ``created``, ``context_window``, ``max_output``,
+        ``capabilities`` present when the provider exposed them (Gemini has no
+        ``created``; Groq has no capability field).
+        """
+        ids, meta, source = await self._discover(spec, api_key, force_refresh=force_refresh)
+        records = []
+        for model_id in ids:
+            record = {"id": model_id}
+            record.update(meta.get(model_id, {}))
+            records.append(record)
+        return records, source
+
     async def list_models(
         self,
         spec: ProviderSpec,
@@ -311,28 +453,40 @@ class ModelCatalog:
         Returns ``([], "unavailable")`` when discovery fails — the caller falls
         back to the configured default rather than failing the route.
         """
+        ids, _meta, source = await self._discover(spec, api_key, force_refresh=force_refresh)
+        return ids, source
+
+    async def _discover(
+        self,
+        spec: ProviderSpec,
+        api_key: Optional[str],
+        *,
+        force_refresh: bool = False,
+    ) -> tuple[list[str], dict[str, dict], str]:
+        """The single discovery path: memory cache → DB cache → live fetch."""
         if not force_refresh:
-            cached = self.peek(spec.name, api_key)
-            if cached is not None:
-                return cached, "cache"
+            entry = self._cache.get(self._key(spec.name, api_key))
+            if entry and entry.fresh(time.monotonic(), self._ttl):
+                return list(entry.models), dict(entry.meta), "cache"
             # Cold process (first request after a restart): a database row
             # written less than TTL ago is as good as a fresh fetch and costs
             # no provider call.
             persisted = await self._load_persisted(spec.name, api_key)
             if persisted:
-                self.store(spec.name, api_key, persisted, source="cache")
-                return persisted, "db_cache"
+                ids, meta = persisted
+                self.store(spec.name, api_key, ids, source="cache", meta=meta)
+                return ids, meta, "db_cache"
 
-        models = await self._fetch(spec, api_key)
-        if not models:
-            return [], "unavailable"
-        self.store(spec.name, api_key, models)
-        await self._save_persisted(spec.name, api_key, models)
-        return models, "discovered"
+        ids, meta = await self._fetch(spec, api_key)
+        if not ids:
+            return [], {}, "unavailable"
+        self.store(spec.name, api_key, ids, meta=meta)
+        await self._save_persisted(spec.name, api_key, ids, meta)
+        return ids, meta, "discovered"
 
     # ---- persistence: advisory only, never fatal -------------------------
 
-    async def _load_persisted(self, provider: str, api_key: Optional[str]) -> list[str]:
+    async def _load_persisted(self, provider: str, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
         try:
             import json
 
@@ -352,24 +506,24 @@ class ModelCatalog:
                     )
                 ).scalars().first()
             if row is None:
-                return []
+                return [], {}
             if (time.time() - float(row.fetched_at or 0.0)) >= self._ttl:
-                return []
-            loaded = json.loads(row.models_json)
-            return [m for m in loaded if isinstance(m, str)]
+                return [], {}
+            ids, meta = _load_cached_payload(row.models_json)
+            return ids, meta
         except Exception as exc:  # noqa: BLE001 - cache is advisory
             logger.debug("model_cache_db_read_skipped", provider=provider, error=type(exc).__name__)
-            return []
+            return [], {}
 
-    async def _save_persisted(self, provider: str, api_key: Optional[str], models: list[str]) -> None:
+    async def _save_persisted(
+        self, provider: str, api_key: Optional[str], ids: list[str], meta: dict[str, dict]
+    ) -> None:
         try:
-            import json
-
             from sqlalchemy import select
 
             from app.models.model_cache import DiscoveredModelCacheDB
 
-            _, fingerprint = self._key(provider, api_key)
+            fingerprint = key_fingerprint(api_key or "")
             maker = self.session_maker()
             async with maker() as session:
                 row = (
@@ -380,7 +534,11 @@ class ModelCatalog:
                         )
                     )
                 ).scalars().first()
-                payload = json.dumps(models[:200])
+                # v2 payload keeps the wire facts so the explorer UI survives a
+                # restart; old rows (a bare list of ids) stay readable forever.
+                payload = json.dumps(
+                    {"v": 2, "models": [_record_for_storage(m, meta.get(m, {})) for m in ids[:MAX_CACHED_MODELS]]}
+                )
                 if row is None:
                     session.add(
                         DiscoveredModelCacheDB(
@@ -398,7 +556,7 @@ class ModelCatalog:
         except Exception as exc:  # noqa: BLE001 - never break discovery
             logger.debug("model_cache_db_write_skipped", provider=provider, error=type(exc).__name__)
 
-    async def _fetch(self, spec: ProviderSpec, api_key: Optional[str]) -> list[str]:
+    async def _fetch(self, spec: ProviderSpec, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
         url = spec.models_url()
         headers = {}
         if api_key and spec.name == "gemini":
@@ -416,7 +574,7 @@ class ModelCatalog:
                 host=spec.host,
                 error=type(exc).__name__,
             )
-            return []
+            return [], {}
 
         if response.status_code != 200:
             logger.info(
@@ -425,54 +583,250 @@ class ModelCatalog:
                 status=response.status_code,
                 # Never log the body here: it can echo credential hints.
             )
-            return []
+            _capture_provider_shape(spec.name, "list_models", response)
+            return [], {}
 
         try:
             data = response.json()
         except Exception:  # pragma: no cover - non-JSON 200
-            return []
+            return [], {}
 
-        ids = _extract_model_ids(spec, data)
+        _capture_provider_shape(spec.name, "list_models", response, data=data)
+        ids, meta = _extract_model_ids(spec, data)
         logger.info(
             "model_discovery_ok",
             provider=spec.name,
             models=len(ids),
             sample=ids[:3],
         )
-        return ids
+        return ids, meta
 
 
-def _extract_model_ids(spec: ProviderSpec, data: dict) -> list[str]:
-    """Read both list shapes: OpenAI ``{data:[{id}]}`` and Gemini ``{models:[{name}]}``."""
-    raw: list[str] = []
-    if isinstance(data.get("data"), list):
-        raw = [str(item.get("id", "")) for item in data["data"] if isinstance(item, dict)]
-    elif isinstance(data.get("models"), list):
-        for item in data["models"]:
-            if not isinstance(item, dict):
+#: Cap on how many models one cache row keeps. A runaway list (500+ models,
+#: Step 3 hardening) must not bloat the DB row or the UI.
+MAX_CACHED_MODELS = 500
+
+#: Wire-fact fields worth keeping per model, whitelisted by NAME. Values are
+#: sanitized (ints kept, strings truncated) — a hostile provider response can
+#: never smuggle long text into the cache row.
+_META_FIELDS = (
+    "display_name",
+    "created",
+    "context_window",
+    "max_output",
+    "max_completion_tokens",
+    "capabilities",
+)
+
+
+def _record_for_storage(model_id: str, meta: dict) -> dict:
+    record = {"id": model_id}
+    for field_name in _META_FIELDS:
+        value = meta.get(field_name)
+        if isinstance(value, int):
+            record[field_name] = value
+        elif isinstance(value, str):
+            record[field_name] = value[:80]
+        elif isinstance(value, list):
+            record[field_name] = [str(item)[:40] for item in value[:10]]
+    return record
+
+
+def _load_cached_payload(models_json: str) -> tuple[list[str], dict[str, dict]]:
+    """Read a persisted cache row. Tolerant of EVERY historical shape.
+
+    * v2 (current): ``{"v": 2, "models": [{"id": ..., "created": ...}]}`` —
+      ids plus wire facts.
+    * v1 (PR #15): a bare JSON list of id strings — ids only, no facts.
+    * Anything unreadable: empty list, never an exception.
+    """
+    import json
+
+    try:
+        loaded = json.loads(models_json)
+    except Exception:
+        return [], {}
+    ids: list[str] = []
+    meta: dict[str, dict] = {}
+    items: list = []
+    if isinstance(loaded, dict) and isinstance(loaded.get("models"), list):
+        items = loaded["models"]
+    elif isinstance(loaded, list):
+        items = loaded
+    for item in items:
+        if isinstance(item, str):
+            if item:
+                ids.append(item)
+        elif isinstance(item, dict):
+            model_id = str(item.get("id") or "").strip()
+            if not model_id:
                 continue
-            # Gemini: "models/gemini-2.0-flash" plus supportedGenerationMethods.
-            methods = item.get("supportedGenerationMethods")
-            if isinstance(methods, list) and methods and "generateContent" not in methods:
-                continue
-            name = str(item.get("name", ""))
-            if name.startswith("models/"):
-                name = name[len("models/"):]
-            raw.append(name)
-
-    cleaned = [m for m in raw if m and is_chat_capable(spec, m)]
-    # Preserve provider order but drop duplicates.
-    seen: set[str] = set()
+            ids.append(model_id)
+            facts = {k: v for k, v in item.items() if k != "id"}
+            if facts:
+                meta[model_id] = facts
+    # Duplicate ids collapse (first occurrence wins); cap runaway lists.
     unique: list[str] = []
-    for model in cleaned:
-        if model not in seen:
-            seen.add(model)
-            unique.append(model)
-    return unique
+    seen: set[str] = set()
+    for model_id in ids[:MAX_CACHED_MODELS]:
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        unique.append(model_id)
+    return unique, {k: meta[k] for k in unique if k in meta}
+
+
+def _extract_model_ids(spec: ProviderSpec, data: dict) -> tuple[list[str], dict[str, dict]]:
+    """Read both list shapes: OpenAI ``{data:[{id}]}`` and Gemini ``{models:[{name}]}``.
+
+    Tolerant by contract (Step 3 hardening): a non-dict body, an empty list,
+    missing fields, unexpected types or duplicate ids degrade to fewer/empty
+    results — a parse failure NEVER raises into the endpoint.
+    """
+    ids: list[str] = []
+    meta: dict[str, dict] = {}
+    if not isinstance(data, dict):
+        return [], {}
+    entries: list = []
+    if isinstance(data.get("data"), list):
+        entries = data["data"]
+    elif isinstance(data.get("models"), list):
+        entries = data["models"]
+
+    for item in entries[:MAX_CACHED_MODELS]:
+        if isinstance(item, str):
+            # Some OpenAI-compatible providers list bare strings.
+            name = item.removeprefix("models/").strip()
+            if name:
+                ids.append(name)
+            continue
+        if not isinstance(item, dict):
+            continue
+        # Gemini: "models/gemini-2.0-flash" plus supportedGenerationMethods.
+        methods = item.get("supportedGenerationMethods")
+        if isinstance(methods, list) and methods and "generateContent" not in methods:
+            continue
+        name = str(item.get("id") or item.get("name") or "")
+        if name.startswith("models/"):
+            name = name[len("models/"):]
+        name = name.strip()
+        if not name:
+            continue
+        ids.append(name)
+        facts: dict = {}
+        display = item.get("displayName") or item.get("display_name")
+        if isinstance(display, str) and display:
+            facts["display_name"] = display[:80]
+        created = item.get("created")
+        if isinstance(created, int) and not isinstance(created, bool):
+            facts["created"] = created
+        for key, alias in (("context_window", "context_window"), ("inputTokenLimit", "context_window")):
+            value = item.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                facts.setdefault(alias, value)
+        for key, alias in (
+            ("max_completion_tokens", "max_output"),
+            ("outputTokenLimit", "max_output"),
+        ):
+            value = item.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                facts.setdefault(alias, value)
+        if isinstance(methods, list) and methods:
+            facts["capabilities"] = [str(m)[:40] for m in methods[:10]]
+        if facts:
+            meta[name] = facts
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for name in ids:
+        if name in seen:
+            continue
+        seen.add(name)
+        if is_chat_capable(spec, name):
+            cleaned.append(name)
+    return cleaned, {k: meta[k] for k in cleaned if k in meta}
 
 
 #: Process-wide cache. Cheap to construct, so tests build their own.
 model_catalog = ModelCatalog()
+
+
+# --------------------------------------------------------------------------
+# Debug capture (OFF by default) — real wire shapes, sanitized
+# --------------------------------------------------------------------------
+
+
+def _capture_provider_shape(provider: str, kind: str, response, data=None) -> None:
+    """Append a sanitized shape sample to data/provider_shapes/<provider>.json.
+
+    Enabled only by ROUTELLM_CAPTURE_PROVIDER_SHAPES=true. Writes FIELD NAMES
+    plus a truncated, key-REDACTED sample of the body so an operator can send
+    us the real wire shape without sharing a key. Every write is best-effort:
+    a missing or read-only data directory simply disables the capture. Tested
+    to never contain a credential.
+    """
+    if not settings.ROUTELLM_CAPTURE_PROVIDER_SHAPES:
+        return
+    try:
+        from app.local import data_dir
+
+        target_dir = data_dir(create=True) / "provider_shapes"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{provider}.json"
+
+        from app.providers.outcomes import redact
+
+        try:
+            body = response.text or ""
+        except Exception:  # pragma: no cover
+            body = ""
+        entry = {
+            "captured_at": time.time(),
+            "kind": kind,
+            "status": getattr(response, "status_code", None),
+            "body_field_names": sorted(
+                _collect_field_names(data if data is not None else body)
+            ),
+            "body_sample": redact(" ".join(body.split())[:1000]),
+        }
+        existing = []
+        if target.is_file():
+            try:
+                loaded = json.loads(target.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    existing = loaded
+            except Exception:
+                existing = []
+        existing.append(entry)
+        target.write_text(json.dumps(existing[-50:], indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - capture must never break discovery
+        logger.debug("provider_shape_capture_failed", provider=provider, kind=kind)
+
+
+def _collect_field_names(payload) -> list[str]:
+    """Field NAMES only (never values), recursing shallowly."""
+    names: list[str] = []
+
+    def walk(node, depth: int) -> None:
+        if depth > 4:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                names.append(str(key))
+                if isinstance(value, (dict, list)):
+                    walk(value, depth + 1)
+        elif isinstance(node, list):
+            for item in node[:3]:
+                if isinstance(item, (dict, list)):
+                    walk(item, depth + 1)
+
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return ["<non-json body>"]
+    walk(payload, 0)
+    return sorted(set(names))
 
 
 async def resolve_model(

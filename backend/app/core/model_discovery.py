@@ -1,4 +1,4 @@
-"""Model discovery + candidate walking (the "model explorer" engine).
+"""Model explorer + candidate walking — a THIN layer over the model registry.
 
 Why this module exists
 ======================
@@ -9,8 +9,10 @@ can SEE ``models/gemini-2.5-flash`` in its list and still get a 404
 one model and failing, everything here treats the discovered list as an
 ordered set of candidates:
 
-1. Rank candidates by the owner-editable preference tables in
-   :mod:`app.config` (numeric version parse: 3.8 > 2.5 > 2.0, 10.0 > 9.0).
+1. Rank candidates via :func:`app.providers.model_registry.rank_candidate_ids`
+   (owner-editable preference tables + numeric version parse: 3.8 > 2.5 >
+   2.0, 10.0 > 9.0). ONE ranking implementation — ``choose_model`` delegates
+   to the same function, so the Test button and routing cannot disagree.
 2. Try up to ``MAX_CANDIDATE_ATTEMPTS`` per request. When a call fails with
    ``model_not_found`` ONLY (never auth/rate-limit), the model is remembered
    as "denied" for this key (~1h TTL) and the next candidate is tried.
@@ -20,7 +22,7 @@ ordered set of candidates:
    an error message is ever trusted or executed.
 
 What each provider's list endpoint really exposes (documented, no invented
-fields):
+fields — each row is "documented" unless marked otherwise):
 
 ========== =========================== ==================================
 Provider   Fields available            Missing
@@ -45,33 +47,70 @@ DeepSeek   id, object, created (unix), pricing, context window;
 
 Tier ("free"/"paid") comes from the static ESTIMATE table in
 :mod:`app.config` and is always labeled ``tier_source="estimated"``.
+
+There is exactly ONE discovery engine: the fetch, the in-memory cache and
+the DB row live in :mod:`app.providers.model_registry`
+(``ModelCatalog`` / ``DiscoveredModelCacheDB``). This module adds ranking,
+per-model test statuses (denied/rate_limited), pins, replacement-ID
+extraction and the candidate walk on top of it — no second cache, no second
+table for the same data.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.config import (
-    MODEL_EXCLUDE_PATTERNS,
-    MODEL_PREFERENCE_GROUPS,
-    MODEL_TIER_TABLE,
-    settings,
-)
+from app.config import settings
 from app.models.provider_model_status import (
     ProviderModelPinDB,
     ProviderModelStatusDB,
 )
 from app.providers.base import ModelProvider, ProviderResponse
+from app.providers.model_registry import (
+    estimated_tier,
+    key_fingerprint,
+    model_catalog,
+    parse_version_tuple,
+    preference_group,
+    rank_candidate_ids,
+    spec_for,
+)
 from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
+
+__all__ = [
+    "DiscoveredModel",
+    "DiscoveryError",
+    "WalkResult",
+    "WalkStep",
+    "clear_caches",
+    "denied_models",
+    "discover_models",
+    "extract_replacement_model",
+    "generate_with_walking",
+    "get_cached_status",
+    "get_provider_model_pin",
+    "is_valid_model_id",
+    "key_fingerprint",
+    "load_db_statuses",
+    "load_provider_pins",
+    "mark_status",
+    "operator_env_key",
+    "operator_env_model",
+    "parse_version_tuple",
+    "preference_group",
+    "rank_candidates",
+    "sanitize_error_message",
+    "sort_models_for_provider",
+    "upsert_db_status",
+    "walk_candidates",
+]
 
 logger = get_logger(__name__)
 
@@ -80,44 +119,7 @@ logger = get_logger(__name__)
 # this pattern PLUS existence in the discovered list.
 MODEL_ID_RE = re.compile(r"^[a-zA-Z0-9._:/-]{1,120}$")
 
-_MAX_CANDIDATE_ATTEMPTS = 3
-
-# How a selected model is passed to each provider's generate() kwargs.
-MODEL_KWARG = {"gemini": "model", "groq": "model", "deepseek": "model_variant"}
-
-# Env-var fallback keys for operator (non-BYOK) routing.
-PROVIDER_ENV_KEY = {
-    "groq": "GROQ_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-}
-
-
-def operator_env_key(provider_name: str) -> Optional[str]:
-    """Operator (non-BYOK) credential from settings."""
-    env_name = PROVIDER_ENV_KEY.get(provider_name)
-    return getattr(settings, env_name, None) if env_name else None
-
-
-def operator_env_model(provider_name: str) -> Optional[str]:
-    """Optional .env model override (precedence: pin, then this, then Auto)."""
-    return getattr(settings, f"{provider_name.upper()}_MODEL", None) or None
-
-_DISCOVERY_SPECS = {
-    "gemini": {
-        "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-        "auth": "header",
-        "header": "x-goog-api-key",
-    },
-    "groq": {
-        "url": "https://api.groq.com/openai/v1/models",
-        "auth": "bearer",
-    },
-    "deepseek": {
-        "url": "https://api.deepseek.com/models",
-        "auth": "bearer",
-    },
-}
+MAX_CANDIDATE_ATTEMPTS = 3
 
 
 class DiscoveryError(Exception):
@@ -190,48 +192,6 @@ def is_valid_model_id(model_id: str) -> bool:
     return True
 
 
-def parse_version_tuple(model_id: str) -> Optional[tuple[int, ...]]:
-    """Parse the FIRST numeric version group in an id as numbers.
-
-    gemini-3.8-flash -> (3, 8); gemini-2.0-flash -> (2, 0);
-    gemini-10.0-flash -> (10, 0) so 10.0 > 9.0 numerically.
-    Returns None when the id carries no version.
-    """
-    match = re.search(r"(?<![\w.])(\d+(?:\.\d+)*)", model_id.lower())
-    if not match:
-        return None
-    return tuple(int(part) for part in match.group(1).split("."))
-
-
-def name_matches_exclude_patterns(model_id: str) -> bool:
-    lowered = model_id.lower()
-    return any(pattern in lowered for pattern in MODEL_EXCLUDE_PATTERNS)
-
-
-def preference_group(provider: str, model_id: str) -> tuple[int, str]:
-    """(group_index, note) of the first matching preference group."""
-    lowered = model_id.lower()
-    groups = MODEL_PREFERENCE_GROUPS.get(provider, [{"match": "", "exclude": []}])
-    for index, group in enumerate(groups):
-        match = group.get("match", "")
-        if match and match not in lowered:
-            continue
-        if any(excl in lowered for excl in group.get("exclude", [])):
-            continue
-        return index, group.get("note", "")
-    return len(groups), "no preference group matched"
-
-
-def estimated_tier(provider: str, model_id: str) -> str:
-    """Static tier ESTIMATE from config. "unknown" when nothing matches."""
-    lowered = model_id.lower()
-    for entry in MODEL_TIER_TABLE.get(provider, []):
-        match = entry.get("match", "")
-        if not match or match in lowered:
-            return entry.get("tier", "unknown")
-    return "unknown"
-
-
 def extract_replacement_model(
     message: str,
     discovered_ids: set[str],
@@ -278,43 +238,26 @@ def extract_replacement_model(
     return None
 
 
-def classify_provider_error(status_code: int, body_text: str) -> Optional[str]:
-    """Honest error taxonomy from an upstream generate() response.
-
-    Returns "model_not_found" ONLY for 404 (or 4xx bodies that explicitly
-    talk about the model, e.g. DeepSeek's 400 "Model Not Exist"). Auth and
-    rate-limit errors are NEVER reclassified as model_not_found.
-    """
-    lowered = (body_text or "")[:400].lower()
-    if status_code == 404:
-        return "model_not_found"
-    if status_code in (400, 404) and "model" in lowered and (
-        "not exist" in lowered
-        or "not found" in lowered
-        or "no longer available" in lowered
-        or "does not exist" in lowered
-        or "model_not_found" in lowered
-    ):
-        return "model_not_found"
-    return None
-
-
 # --------------------------------------------------------------------------
-# In-memory caches (per provider-key fingerprint; ~1h TTL)
+# Operator (non-BYOK) settings access
 # --------------------------------------------------------------------------
 
 
-def key_fingerprint(api_key: str) -> str:
-    """Stable, non-reversible cache key for one upstream provider key.
-
-    Only the first 16 hex chars of a SHA-256 are used — enough to scope the
-    cache per key, useless for reconstructing the secret.
-    """
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+def operator_env_key(provider_name: str) -> Optional[str]:
+    """Operator (non-BYOK) credential from settings."""
+    env_name = f"{provider_name.upper()}_API_KEY"
+    return getattr(settings, env_name, None) or None
 
 
-_discovery_cache: dict[tuple[str, str], tuple[float, list[DiscoveredModel]]] = {}
-_discovery_failure_cache: dict[tuple[str, str], tuple[float, str]] = {}
+def operator_env_model(provider_name: str) -> Optional[str]:
+    """Optional .env model override (precedence: pin, then this, then Auto)."""
+    return getattr(settings, f"{provider_name.upper()}_MODEL", None) or None
+
+
+# --------------------------------------------------------------------------
+# Per-(key, provider, model) statuses: denied / rate_limited / works (~1h TTL)
+# --------------------------------------------------------------------------
+
 _status_cache: dict[tuple[str, str], dict[str, tuple[str, float]]] = {}
 
 
@@ -358,66 +301,10 @@ def mark_status(
 
 
 def clear_caches() -> None:
-    """Test hook: wipe all in-memory discovery/status caches."""
-    _discovery_cache.clear()
-    _discovery_failure_cache.clear()
+    """Test hook: wipe the in-memory status cache (discovery lives in the
+    model registry's catalog, which has its own clear())."""
     _status_cache.clear()
-
-
-# --------------------------------------------------------------------------
-# Discovery
-# --------------------------------------------------------------------------
-
-
-def _gemini_chat_capable(raw: dict) -> bool:
-    methods = raw.get("supportedGenerationMethods") or []
-    return "generateContent" in methods
-
-
-def _parse_model(provider: str, raw: dict) -> Optional[DiscoveredModel]:
-    """Normalize one list-models entry. None = drop (non-chat / malformed)."""
-    if provider == "gemini":
-        name = str(raw.get("name") or "")
-        model_id = name.removeprefix("models/").strip()
-        if not model_id:
-            return None
-        chat = _gemini_chat_capable(raw)
-        context = raw.get("inputTokenLimit")
-        max_out = raw.get("outputTokenLimit")
-        capabilities = [str(m) for m in (raw.get("supportedGenerationMethods") or [])]
-        display = str(raw.get("displayName") or model_id)
-        created = None
-    else:
-        model_id = str(raw.get("id") or "").strip()
-        if not model_id:
-            return None
-        # Groq/DeepSeek expose no capability field: chat filtering is
-        # name-pattern based (whisper/tts/guard etc. appear in Groq's list).
-        chat = not name_matches_exclude_patterns(model_id)
-        context = raw.get("context_window")
-        max_out = raw.get("max_completion_tokens")
-        created = raw.get("created")
-        try:
-            created = int(created) if created is not None else None
-        except (TypeError, ValueError):
-            created = None
-        capabilities = ["chat"] if chat else []
-        display = model_id
-
-    if not chat:
-        return None
-    if not is_valid_model_id(model_id):
-        return None
-    return DiscoveredModel(
-        id=model_id,
-        display_name=display,
-        version=parse_version_tuple(model_id),
-        created=created,
-        context_window=int(context) if isinstance(context, int) else None,
-        max_output=int(max_out) if isinstance(max_out, int) else None,
-        chat_capable=True,
-        capabilities=capabilities,
-    )
+    model_catalog.clear()
 
 
 def sanitize_error_message(message: str, api_key: Optional[str] = None) -> str:
@@ -428,6 +315,55 @@ def sanitize_error_message(message: str, api_key: Optional[str] = None) -> str:
     return text.strip()[:200]
 
 
+# --------------------------------------------------------------------------
+# Discovery — a thin adapter over ModelCatalog (the ONE discovery engine)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _FailureEntry:
+    reason: str
+    expires_at: float
+
+
+# Negative cache: a failed list-models call is not retried for 60s so UI
+# polling cannot hammer the provider. Not a duplicate of the model cache —
+# it stores failure reasons only.
+_discovery_failures: dict[tuple[str, str], _FailureEntry] = {}
+
+
+def _record_failure(cache_key: tuple[str, str], reason: str, ttl: float = 60.0) -> None:
+    _discovery_failures[cache_key] = _FailureEntry(reason, _now() + ttl)
+
+
+def _record_to_model(provider: str, record: dict) -> Optional[DiscoveredModel]:
+    """Normalize one discovery record. None = drop (non-chat / malformed)."""
+    model_id = str(record.get("id") or "").strip()
+    if not model_id or not is_valid_model_id(model_id):
+        return None
+    created = record.get("created")
+    if not isinstance(created, int) or isinstance(created, bool):
+        created = None
+    context = record.get("context_window")
+    max_out = record.get("max_output")
+    capabilities = record.get("capabilities") or []
+    if not isinstance(capabilities, list):
+        capabilities = []
+    display = str(record.get("display_name") or model_id)
+    # Chat capability was decided by the registry's non-chat-marker filter at
+    # discovery time; every record handed here is chat-capable.
+    return DiscoveredModel(
+        id=model_id,
+        display_name=display[:120],
+        version=parse_version_tuple(model_id),
+        created=created,
+        context_window=context if isinstance(context, int) else None,
+        max_output=max_out if isinstance(max_out, int) else None,
+        chat_capable=True,
+        capabilities=[str(m)[:40] for m in capabilities if m],
+    )
+
+
 async def discover_models(
     provider: str, api_key: str, force: bool = False
 ) -> tuple[list[DiscoveredModel], Optional[str]]:
@@ -436,96 +372,59 @@ async def discover_models(
     Returns (models, None) on success or ([], reason) on failure (the
     failure is negatively cached for 60s so UI polling cannot hammer the
     provider). Never raises; never includes the key in the reason.
+
+    Delegates the actual fetch + caching to ``model_catalog.list_records``
+    so there is exactly one list-models call, one cache and one DB row.
     """
-    if provider not in _DISCOVERY_SPECS:
+    spec = spec_for(provider)
+    if spec is None:
         return [], f"unknown provider {provider!r}"
 
     cache_key = (key_fingerprint(api_key), provider)
     if not force:
-        cached = _discovery_cache.get(cache_key)
-        if cached and cached[0] > _now():
-            return cached[1], None
-        failed = _discovery_failure_cache.get(cache_key)
-        if failed and failed[0] > _now():
-            return [], failed[1]
-
-    spec = _DISCOVERY_SPECS[provider]
-    headers = {"Content-Type": "application/json"}
-    if spec["auth"] == "bearer":
-        headers["Authorization"] = f"Bearer {api_key}"
-    else:
-        headers[spec["header"]] = api_key
+        failed = _discovery_failures.get(cache_key)
+        if failed and failed.expires_at > _now():
+            return [], failed.reason
 
     try:
-        async with httpx.AsyncClient(timeout=settings.MODEL_DISCOVERY_TIMEOUT_S) as client:
-            response = await client.get(spec["url"], headers=headers)
-    except httpx.TimeoutException:
-        reason = "discovery_timeout: provider list-models did not answer in time"
-        _discovery_failure_cache[cache_key] = (_now() + 60.0, reason)
-        return [], reason
-    except Exception as e:  # network failure — sanitized
+        records, _source = await model_catalog.list_records(spec, api_key, force_refresh=force)
+    except Exception as e:  # noqa: BLE001 - discovery is fail-soft
         reason = f"discovery_failed: {type(e).__name__}"
-        _discovery_failure_cache[cache_key] = (_now() + 60.0, reason)
+        _record_failure(cache_key, reason)
         return [], reason
 
-    if response.status_code in (401, 403):
+    if not records:
+        # ModelCatalog could not fetch (network/auth/429). Reason is generic;
+        # the registry never surfaces the body.
         reason = (
-            "auth_failed: the provider rejected this key "
-            f"(HTTP {response.status_code})"
+            "discovery_failed: the provider's list-models endpoint did not "
+            "return usable models (bad key, throttling, or network trouble)"
         )
-        _discovery_failure_cache[cache_key] = (_now() + 60.0, reason)
+        _record_failure(cache_key, reason)
         return [], reason
-    if response.status_code == 429:
-        reason = "rate_limited: provider throttled the list-models call"
-        _discovery_failure_cache[cache_key] = (_now() + 30.0, reason)
-        return [], reason
-    if response.status_code != 200:
-        reason = f"discovery_failed: HTTP {response.status_code}"
-        _discovery_failure_cache[cache_key] = (_now() + 60.0, reason)
-        return [], reason
-
-    try:
-        data = response.json()
-    except ValueError:
-        reason = "discovery_failed: provider returned non-JSON"
-        _discovery_failure_cache[cache_key] = (_now() + 60.0, reason)
-        return [], reason
-
-    entries = data.get("models") if provider == "gemini" else data.get("data")
-    if not isinstance(entries, list):
-        entries = []
 
     models: list[DiscoveredModel] = []
-    for raw in entries:
-        if not isinstance(raw, dict):
-            continue
-        parsed = _parse_model(provider, raw)
+    for record in records:
+        parsed = _record_to_model(provider, record) if isinstance(record, dict) else None
         if parsed is not None:
             models.append(parsed)
 
-    _discovery_cache[cache_key] = (_now() + settings.MODEL_STATUS_TTL_S, models)
-    _discovery_failure_cache.pop(cache_key, None)
+    _discovery_failures.pop(cache_key, None)
     return models, None
 
 
 def rank_candidates(
     provider: str, models: list[DiscoveredModel], denied: set[str]
 ) -> list[DiscoveredModel]:
-    """Order candidates: preference group asc, numeric version desc,
-    created desc (where the API gives one), id asc for determinism."""
-    def sort_key(model: DiscoveredModel):
-        group, _ = preference_group(provider, model.id)
-        return (
-            group,
-            tuple(-part for part in (model.version or ())),
-            -(model.created or 0),
-            model.id,
-        )
-
-    return sorted(
-        [m for m in models if m.chat_capable and m.id not in denied],
-        key=sort_key,
-    )
+    """Order candidates for the walk: the shared registry ranking, minus
+    anything this key was already denied."""
+    spec = spec_for(provider)
+    if spec is None:
+        return []
+    created = {m.id: (m.created or 0) for m in models}
+    ordered_ids = rank_candidate_ids(spec, [m.id for m in models], created=created)
+    by_id = {m.id: m for m in models}
+    return [by_id[m] for m in ordered_ids if m not in denied and m in by_id]
 
 
 def sort_models_for_provider(
@@ -661,6 +560,30 @@ async def load_provider_pins(
 
 
 # --------------------------------------------------------------------------
+# Error classification bridge
+# --------------------------------------------------------------------------
+
+
+def _is_model_not_found(response: ProviderResponse) -> bool:
+    """The machine-readable outcome decides; prose is only a fallback.
+
+    PR #15's providers classify HTTP responses into ``response.outcome``;
+    the walk treats ONLY model-targeting failures as walkable. DeepSeek's
+    400 "Model Not Exist" is also a targeting failure and outcomes.py maps
+    it there (see ``app.providers.outcomes``).
+    """
+    if response.outcome == "model_not_found":
+        return True
+    return bool((response.error or "").startswith("model_not_found"))
+
+
+def _is_rate_limited(response: ProviderResponse) -> bool:
+    if response.outcome == "rate_limit_exceeded":
+        return True
+    return bool((response.error or "") == "rate_limit_exceeded")
+
+
+# --------------------------------------------------------------------------
 # The shared candidate walk (routing + Test button use THIS code path)
 # --------------------------------------------------------------------------
 
@@ -671,7 +594,7 @@ async def walk_candidates(
     kwargs: dict,
     api_key: str,
     first_model: Optional[str] = None,
-    max_attempts: int = _MAX_CANDIDATE_ATTEMPTS,
+    max_attempts: int = MAX_CANDIDATE_ATTEMPTS,
     db_session: Optional[AsyncSession] = None,
     api_key_id: Optional[int] = None,
     provider: Optional[ModelProvider] = None,
@@ -713,7 +636,7 @@ async def walk_candidates(
     # legacy behavior instead of skipping the provider.
     if not ordered:
         fallback = (
-            kwargs.get(kwarg_name)
+            kwargs.get("model")
             or getattr(provider_obj, "DEFAULT_MODEL", None)
             or ""
         )
@@ -722,7 +645,6 @@ async def walk_candidates(
     steps: list[WalkStep] = []
     replacement_hint: Optional[str] = None
     tried: set[str] = set()
-    kwarg_name = MODEL_KWARG.get(provider_name, "model")
 
     while ordered and len(tried) < max_attempts:
         model_id = ordered.pop(0)
@@ -741,7 +663,7 @@ async def walk_candidates(
             continue
 
         call_kwargs = dict(kwargs)
-        call_kwargs[kwarg_name] = model_id
+        call_kwargs["model"] = model_id
         response = await provider_obj.generate(prompt, **call_kwargs)
 
         error = response.error or ""
@@ -767,7 +689,7 @@ async def walk_candidates(
                 replacement_hint_used=replacement_hint,
             )
 
-        if error.startswith("model_not_found"):
+        if _is_model_not_found(response):
             # Honest classification: only model_not_found marks denied.
             mark_status(api_key, provider_name, model_id, "denied")
             if db_session is not None and api_key_id is not None:
@@ -801,7 +723,7 @@ async def walk_candidates(
 
         # Any other failure: mark rate_limited when applicable, stop the
         # walk (the executor's provider fallback takes over).
-        if error == "rate_limit_exceeded":
+        if _is_rate_limited(response):
             mark_status(api_key, provider_name, model_id, "rate_limited")
             if db_session is not None and api_key_id is not None:
                 await upsert_db_status(
@@ -848,7 +770,7 @@ async def generate_with_walking(
     kwargs: dict,
     api_key: str,
     pinned_model: Optional[str] = None,
-    max_attempts: int = _MAX_CANDIDATE_ATTEMPTS,
+    max_attempts: int = MAX_CANDIDATE_ATTEMPTS,
     provider: Optional[ModelProvider] = None,
 ) -> tuple[ProviderResponse, list[WalkStep], Optional[str]]:
     """Routing-time execution: lazy candidate walking.
@@ -869,7 +791,6 @@ async def generate_with_walking(
     if provider_obj is None:
         raise ValueError(f"unknown provider {provider_name!r}")
 
-    kwarg_name = MODEL_KWARG.get(provider_name, "model")
     initial_model: Optional[str] = pinned_model
     if initial_model is None:
         initial_model = operator_env_model(provider_name)
@@ -889,19 +810,28 @@ async def generate_with_walking(
         return walk.response, walk.steps, walk.model_used
 
     if initial_model is None:
-        cached = _discovery_cache.get((key_fingerprint(api_key), provider_name))
-        if cached and cached[0] > _now() and cached[1]:
-            top = rank_candidates(
-                provider_name,
-                cached[1],
-                denied_models(api_key, provider_name),
+        # Warm-cache top only: no live discovery call on the hot path.
+        spec = spec_for(provider_name)
+        if spec is not None:
+            cached_ids = model_catalog.peek(provider_name, api_key) or []
+            ranked = rank_candidate_ids(
+                spec,
+                cached_ids,
+                created={
+                    m.get("id"): (m.get("created") or 0)
+                    for m in model_catalog.peek_meta(provider_name, api_key).values()
+                    if isinstance(m, dict)
+                },
             )
-            if top:
-                initial_model = top[0].id
+            denied_now = denied_models(api_key, provider_name)
+            for model_id in ranked:
+                if model_id and is_valid_model_id(model_id) and model_id not in denied_now:
+                    initial_model = model_id
+                    break
 
     call_kwargs = dict(kwargs)
     if initial_model:
-        call_kwargs[kwarg_name] = initial_model
+        call_kwargs["model"] = initial_model
     else:
         initial_model = getattr(provider_obj, "DEFAULT_MODEL", None)
 
@@ -919,11 +849,10 @@ async def generate_with_walking(
         return walk.response, walk.steps, walk.model_used
 
     response = await provider_obj.generate(prompt, **call_kwargs)
-    error = response.error or ""
-    if response.success or not error.startswith("model_not_found"):
+    if response.success or not _is_model_not_found(response):
         if response.success and initial_model:
             mark_status(api_key, provider_name, initial_model, "works")
-        elif error == "rate_limit_exceeded" and initial_model:
+        elif _is_rate_limited(response) and initial_model:
             mark_status(api_key, provider_name, initial_model, "rate_limited")
         return response, [], initial_model
 
@@ -952,7 +881,7 @@ async def generate_with_walking(
             skipped=False,
             reason="model_not_found",
             success=False,
-            error=error,
+            error=response.error,
             latency_ms=response.latency_ms,
         )
     ]
@@ -978,9 +907,8 @@ async def generate_with_walking(
 
         attempts_after_first += 1
         call_kwargs = dict(kwargs)
-        call_kwargs[kwarg_name] = model_id
+        call_kwargs["model"] = model_id
         response = await provider_obj.generate(prompt, **call_kwargs)
-        error = response.error or ""
 
         if response.success:
             mark_status(api_key, provider_name, model_id, "works")
@@ -995,7 +923,7 @@ async def generate_with_walking(
             )
             return response, steps, initial_model
 
-        if error.startswith("model_not_found"):
+        if _is_model_not_found(response):
             mark_status(api_key, provider_name, model_id, "denied")
             steps.append(
                 WalkStep(
@@ -1003,12 +931,14 @@ async def generate_with_walking(
                     skipped=False,
                     reason="model_not_found",
                     success=False,
-                    error=error,
+                    error=response.error,
                     latency_ms=response.latency_ms,
                 )
             )
             hint = extract_replacement_model(
-                error.split(":", 1)[1] if ":" in error else error,
+                (response.error or "").split(":", 1)[1]
+                if ":" in (response.error or "")
+                else (response.error or ""),
                 discovered_ids,
                 failed_model=model_id,
             )
@@ -1017,15 +947,15 @@ async def generate_with_walking(
                 ordered.insert(0, hint)
             continue
 
-        if error == "rate_limit_exceeded":
+        if _is_rate_limited(response):
             mark_status(api_key, provider_name, model_id, "rate_limited")
         steps.append(
             WalkStep(
                 model=model_id,
                 skipped=False,
-                reason=error or "unknown_error",
+                reason=response.error or "unknown_error",
                 success=False,
-                error=error,
+                error=response.error,
                 latency_ms=response.latency_ms,
             )
         )

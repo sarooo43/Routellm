@@ -188,11 +188,24 @@ def error_for_status(
     A 404 is only treated as ``model_not_found`` when the request actually named
     a model and carried a credential; otherwise it is a wrong URL. Guessing here
     is what produced the original misdiagnosis.
+
+    DeepSeek bridge: DeepSeek answers **400** (not 404) with "Model Not Exist"
+    for a retired model string. That is still a targeting problem, not a
+    malformed request, so when the body says the MODEL does not exist we
+    classify it as ``model_not_found`` — the candidate walk needs that signal.
     """
     status_code = response.status_code
     outcome = classify_status(status_code)
     if outcome == "not_found":
         outcome = "model_not_found" if (model_call and model and has_auth_header) else "endpoint_not_found"
+    elif (
+        outcome == "bad_request"
+        and model_call
+        and model
+        and has_auth_header
+        and _body_says_model_missing(response)
+    ):
+        outcome = "model_not_found"
 
     body = snippet(response)
     return make_error(
@@ -210,6 +223,23 @@ def error_for_status(
         #: Machine-readable outcome for breaker/telemetry decisions.
         outcome=outcome,
     )
+
+
+_MODEL_MISSING_RE = re.compile(
+    r"model.{0,40}(not\s*exist|does\s*not\s*exist|not\s*found|not\s*available)"
+    r"|invalid\s+model"
+    r"|model_not_found",
+    re.IGNORECASE,
+)
+
+
+def _body_says_model_missing(response) -> bool:
+    """True when a 400 body blames the MODEL string (DeepSeek's wording)."""
+    try:
+        raw = response.text or ""
+    except Exception:  # pragma: no cover - exotic transport
+        return False
+    return bool(_MODEL_MISSING_RE.search(" ".join(raw.split())[:400]))
 
 
 def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, latency_ms: float):

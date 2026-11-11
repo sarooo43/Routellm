@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     # an operator can report real wire shapes without sharing keys. Never
     # enable this on a shared deployment: the samples are still provider
     # response text.
-    CAPTURE_PROVIDER_SHAPES: bool = False
+    ROUTELLM_CAPTURE_PROVIDER_SHAPES: bool = False
 
 
 settings = Settings()
