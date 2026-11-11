@@ -185,6 +185,7 @@ default (the launcher creates it for you on first run).
 | `GROQ_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY` | unset | Provider keys from the environment (the Providers page wins) |
 | `ENABLE_ML_ROUTING` | `false` | Experimental ML-assisted ranking (needs `requirements-ml.txt`) |
 | `CORS_ORIGINS` | unset | Comma-separated origins, only for cross-origin clients |
+| `ALLOWED_HOSTS` | unset | Host-header allow-list: localhost/127.0.0.1/::1 and `HOST` are always accepted; add your public hostname (Space/tunnel/domain) or requests to it get 400. Set `*` to disable |
 
 `python run.py --help` lists the launcher flags: `--port`, `--host` (prints a
 warning off loopback), `--dev`, `--no-browser`, `--reinstall`, `--rebuild`,
@@ -312,6 +313,7 @@ Being explicit about what this is and is not:
 | `auth_failed: … rejected the credential (HTTP 401)` | The only error that means "check your key". Re-copy it from the provider console; nothing else in this list blames the key |
 | `network_error: could not open a connection` | This machine cannot reach the provider (proxy, firewall, DNS). Not a key problem |
 | Want to check every provider from a terminal | `python backend/scripts/check_providers.py` — reads keys from the environment or `.env` (never from flags), prints the key masked to its last 4 characters, the first chat models each key can use, the model the app would choose, and the result of a real 1-token request. Exit code 0 means every configured provider works |
+| Every request to a public URL answers 400 `Invalid Host header` | The Host allow-list (DNS-rebinding defence) only knows your loopback + `HOST`. Add the public hostname: `ALLOWED_HOSTS=my-space.hf.space` in `.env`, or `ALLOWED_HOSTS=*` when a trusted proxy rewrites Host |
 | `.\start.ps1` is blocked by PowerShell | `powershell -ExecutionPolicy Bypass -File .\start.ps1` |
 
 Logs are JSON on stdout; set `LOG_LEVEL=DEBUG` for more. Secrets are redacted
