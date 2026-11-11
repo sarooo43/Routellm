@@ -17,7 +17,9 @@ Design rules:
 
 * **Keys come from the environment or ``.env`` only.** Never a CLI flag: flags
   land in shell history and ``ps`` output. Output is masked to the last 4.
-* **Read-only.** No database, no files written, no keys stored.
+* **Read-only about credentials.** No files written except the app's own
+  discovery cache row (fingerprints + model ids — never a key); ``--test``
+  reuses the app's walk so the report cannot drift from production.
 * **Honest exit code.** 0 = every configured provider works, 1 = at least one
   failed, 2 = nothing to check.
 
@@ -26,9 +28,13 @@ Usage::
     python scripts/check_providers.py                  # all providers
     python scripts/check_providers.py groq gemini      # only these
     python scripts/check_providers.py --json           # machine-readable
+    python scripts/check_providers.py --test           # + the candidate walk
 
 Requires ``httpx`` (already a backend dependency). Run from ``backend/`` or
-point ``PYTHONPATH`` at it.
+point ``PYTHONPATH`` at it. If launched with a bare system Python that lacks
+the app dependencies, the script re-execs itself inside the project venv
+(``backend/.venv``) or prints the friendly command to run instead — never a
+raw traceback.
 """
 
 from __future__ import annotations
@@ -41,19 +47,82 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-BACKEND_ROOT = REPO_ROOT / "backend"
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
 
 # Make `app` importable when run as `python backend/scripts/check_providers.py`.
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+#: The friendly message mandated for a bare system-Python run without a venv.
+VENV_MESSAGE = (
+    "Run with the project venv: .venv/bin/python backend/scripts/check_providers.py, "
+    "or run python run.py once to create it."
+)
+
+
+def find_project_venv() -> Optional[Path]:
+    """Locate the project's virtualenv python, Linux/macOS or Windows."""
+    candidates = [
+        BACKEND_ROOT / ".venv" / "bin" / "python",
+        BACKEND_ROOT / ".venv" / "Scripts" / "python.exe",
+        BACKEND_ROOT / ".venv" / "Scripts" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def ensure_app_importable(_try_import=None) -> None:
+    """Bootstrap: re-exec inside the project venv when system Python lacks
+    the app dependencies (pydantic_settings etc.). Never a raw traceback.
+
+    ``_try_import`` is injectable for tests; production uses the default
+    import of the app's dependency set.
+    """
+    def _default() -> None:
+        import pydantic_settings  # noqa: F401
+        import app.config  # noqa: F401,E402
+
+    try:
+        (_try_import or _default)()
+    except ImportError:
+        venv_python = find_project_venv()
+        if venv_python is None:
+            print(VENV_MESSAGE)
+            if os.name == "nt":
+                print(
+                    "Windows: backend\\.venv\\Scripts\\python.exe "
+                    "backend\\scripts\\check_providers.py"
+                )
+            sys.exit(1)
+        if Path(sys.executable).resolve() == venv_python.resolve():
+            # Already the venv python and still failing: no re-exec loop.
+            print(
+                "The project venv cannot import the app dependencies. "
+                "Recreate it: delete backend/.venv, then run "
+                "python -m venv backend/.venv and pip install -r backend/requirements-dev.txt"
+            )
+            sys.exit(1)
+        # Re-exec THIS script with the venv interpreter (argv preserved).
+        os.execv(
+            str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]]
+        )
+
+
+ensure_app_importable()
 
 import httpx  # noqa: E402
 
 from app.providers.model_registry import (  # noqa: E402
     PROVIDER_SPECS,
     choose_model,
+    estimated_tier,
     is_chat_capable,
+    parse_version_tuple,
+    rank_candidate_ids,
+    spec_for,
 )
 from app.providers.outcomes import (  # noqa: E402
     classify_status,
@@ -125,6 +194,11 @@ class Result:
         self.status: Optional[int] = None
         self.key_accepted: Optional[bool] = None
         self.models: list[str] = []
+        #: Same sorted list, enriched with tier/version (explorer columns).
+        self.models_detailed: list[dict] = []
+        #: --test only: the candidate walk report (skipped models + reasons).
+        self.walk: list[dict] = []
+        self.working_model: Optional[str] = None
         self.chosen: Optional[str] = None
         self.model_source: Optional[str] = None
         self.probe_ok: Optional[bool] = None
@@ -132,7 +206,7 @@ class Result:
         self.verdict = "not_configured"
 
     def as_dict(self) -> dict:
-        return {
+        payload = {
             "provider": self.provider,
             "key": self.key_masked,
             "key_accepted": self.key_accepted,
@@ -144,6 +218,11 @@ class Result:
             "verdict": self.verdict,
             "detail": self.probe_detail,
         }
+        if self.models_detailed:
+            payload["chat_models_detailed"] = self.models_detailed
+        if self.walk:
+            payload["walk"] = self.walk
+        return payload
 
 
 def _headers(provider: str, key: str) -> dict[str, str]:
@@ -254,6 +333,19 @@ async def check_provider(
     result.key_masked = mask(key)
     models = await list_models(client, provider, key, result)
     result.models = models
+    # The explorer's columns: the ONE shared ranking, plus the static tier
+    # estimate (never presented as provider data) and the parsed version.
+    spec = PROVIDER_SPECS[provider]
+    for model_id in rank_candidate_ids(spec, models):
+        version = parse_version_tuple(model_id)
+        result.models_detailed.append(
+            {
+                "id": model_id,
+                "tier": estimated_tier(provider, model_id),
+                "version": ".".join(str(p) for p in version) if version else None,
+                "status": "untested",
+            }
+        )
 
     if result.key_accepted is False:
         result.verdict = classify_status(result.status or 0)
@@ -278,6 +370,37 @@ async def check_provider(
     return result
 
 
+async def run_walk(client: httpx.AsyncClient, provider: str, key: str, result: Result) -> None:
+    """--test: the same candidate walk real routing uses, reported step by step.
+
+    Uses ``app.core.model_discovery.walk_candidates`` (the ONE walk routing
+    uses) so the script cannot disagree with production. Skipped models are
+    printed with their reasons; the working model (if any) is named.
+    """
+    from app.core.model_discovery import walk_candidates  # noqa: E402
+
+    walk = await walk_candidates(
+        provider,
+        "ping",
+        {"provider_api_key": key, "max_tokens": PROBE_MAX_TOKENS},
+        key,
+        first_model=None,
+        max_attempts=3,
+    )
+    working = None
+    for step in walk.steps:
+        entry = {"model": step.model, "skipped": step.skipped, "reason": step.reason}
+        if step.skipped:
+            entry["outcome"] = "skipped"
+        elif step.success:
+            entry["outcome"] = "ok"
+            working = step.model
+        else:
+            entry["outcome"] = "failed"
+        result.walk.append(entry)
+    result.working_model = working
+
+
 # --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
@@ -296,9 +419,13 @@ def print_result(result: Result) -> None:
     print(f"  models URL     {spec.models_url()}")
 
     if result.models:
-        print(f"  chat models    {len(result.models)} available (first {min(len(result.models), CHAT_MODELS_SHOWN)}):")
-        for model_id in result.models[:CHAT_MODELS_SHOWN]:
-            print(f"                 - {model_id}")
+        print(f"  chat models    {len(result.models)} available, explorer order (first {min(len(result.models), CHAT_MODELS_SHOWN)}):")
+        for entry in result.models_detailed[:CHAT_MODELS_SHOWN]:
+            version = entry.get("version") or "-"
+            tier = entry.get("tier") or "unknown"
+            print(
+                f"                 - {entry['id']:<42} tier={tier:<8} version={version:<10} status={entry['status']}"
+            )
     elif result.key_accepted:
         print("  chat models    none listed for this key")
     else:
@@ -336,6 +463,11 @@ async def main_async(argv: list[str]) -> int:
     parser.add_argument("providers", nargs="*", help=f"subset of: {', '.join(PROVIDER_SPECS)}")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a report")
     parser.add_argument(
+        "--test",
+        action="store_true",
+        help="also run the candidate walk real routing uses (prints skipped models and reasons)",
+    )
+    parser.add_argument(
         "--env-file",
         default=str(REPO_ROOT / ".env"),
         help="fallback .env path (default: repository root)",
@@ -358,11 +490,14 @@ async def main_async(argv: list[str]) -> int:
     results: list[Result] = []
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
         for provider in providers:
-            results.append(
-                await check_provider(
-                    client, provider, configured[provider], model_override_for(provider, file_values)
-                )
+            result = await check_provider(
+                client, provider, configured[provider], model_override_for(provider, file_values)
             )
+            if args.test and configured[provider]:
+                await run_walk(client, provider, configured[provider], result)
+                if not args.json:
+                    _print_walk(result)
+            results.append(result)
 
     if args.json:
         print(json.dumps([r.as_dict() for r in results], indent=2))
@@ -377,6 +512,16 @@ async def main_async(argv: list[str]) -> int:
             print(f"failing: {', '.join(broken)}")
 
     return 0 if all(r.verdict in {"valid", "not_configured"} for r in results) else 1
+
+
+def _print_walk(result: "Result") -> None:
+    """The walk report in text mode: OK / FAIL / SKIP per candidate."""
+    print(f"  candidate walk ({result.provider}):")
+    for step in result.walk:
+        marker = {"ok": "OK  ", "failed": "FAIL", "skipped": "SKIP"}[step["outcome"]]
+        print(f"    {marker} {step['model']}: {step['reason'] or 'worked'}")
+    if result.working_model:
+        print(f"    working model: {result.working_model}")
 
 
 def main() -> int:

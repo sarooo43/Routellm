@@ -32,6 +32,75 @@ def script():
 
 
 # --------------------------------------------------------------------------
+# venv bootstrap (friendly failure instead of a traceback)
+# --------------------------------------------------------------------------
+
+
+def test_bare_system_python_prints_the_friendly_message(monkeypatch):
+    """No venv + ImportError = the mandated message, exit 1, no traceback."""
+    script = _load()
+
+    def _boom():
+        raise ImportError("pydantic_settings")
+
+    monkeypatch.setattr(script, "find_project_venv", lambda: None)
+    with pytest.raises(SystemExit) as exc_info:
+        script.ensure_app_importable(_boom)
+    assert exc_info.value.code == 1
+
+
+def test_no_reexec_loop_when_already_the_venv_python(monkeypatch, tmp_path, capsys):
+    """The venv python failing to import says 'recreate it' — it never re-execs."""
+    script = _load()
+    fake_venv = tmp_path / "venv-python"
+    fake_venv.write_text("")
+
+    def _boom():
+        raise ImportError("pydantic_settings")
+
+    monkeypatch.setattr(script, "find_project_venv", lambda: fake_venv)
+    # Pretend we ARE the venv python (the loop-guard branch).
+    monkeypatch.setattr(script.sys, "executable", str(fake_venv))
+    with pytest.raises(SystemExit) as exc_info:
+        script.ensure_app_importable(_boom)
+    assert exc_info.value.code == 1
+    assert "Recreate it" in capsys.readouterr().out
+
+
+def test_walk_reports_skipped_models_and_reasons(script, respx_mock):
+    """--test output: the walk's SKIP lines name the denied model + reason."""
+    from app.core import model_discovery as md
+
+    md.clear_caches()
+    respx_mock.get("https://api.groq.com/openai/v1/models").mock(
+        return_value=httpx.Response(
+            200,
+            json={"data": [{"id": "llama-3.1-8b-instant"}, {"id": "llama-3.3-70b-versatile"}]},
+        )
+    )
+    respx_mock.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        return_value=httpx.Response(404, json={"error": {"message": "model_not_found"}})
+    )
+    secret = "gsk_TESTKEY1234567890"
+
+    async def _run():
+        async with httpx.AsyncClient() as client:
+            result = script.Result("groq")
+            result.key_masked = script.mask(secret)
+            await script.run_walk(client, "groq", secret, result)
+            return result
+
+    import asyncio
+
+    result = asyncio.run(_run())
+    md.clear_caches()
+    assert result.working_model is None
+    outcomes = [step["outcome"] for step in result.walk]
+    assert "failed" in outcomes  # the walk tried and hit model_not_found
+    assert all("gsk_TESTKEY" not in str(step) for step in result.walk)
+
+
+# --------------------------------------------------------------------------
 # Masking
 # --------------------------------------------------------------------------
 
