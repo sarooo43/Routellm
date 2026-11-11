@@ -1,0 +1,13 @@
+[
+  {
+    "_notice": "SYNTHETIC, UNVERIFIED AGAINST THE LIVE API. Error body for a model a new account can see in its list but is not yet allowed to call (cohort rollout). The 'use models/...' hint is the replacement-extraction path's fixture.",
+    "status": 404,
+    "body": {
+      "error": {
+        "code": 404,
+        "message": "models/gemini-2.0-flash is no longer available for new API users. Please use models/gemini-2.5-flash instead.",
+        "status": "NOT_FOUND"
+      }
+    }
+  }
+]

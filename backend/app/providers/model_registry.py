@@ -706,6 +706,10 @@ def _extract_model_ids(spec: ProviderSpec, data: dict) -> tuple[list[str], dict[
         if isinstance(methods, list) and methods and "generateContent" not in methods:
             continue
         name = str(item.get("id") or item.get("name") or "")
+        if not isinstance(item.get("id"), str) and not isinstance(item.get("name"), str):
+            # A numeric/object id is an unexpected type: drop the entry rather
+            # than stringify garbage into the cache.
+            continue
         if name.startswith("models/"):
             name = name[len("models/"):]
         name = name.strip()
