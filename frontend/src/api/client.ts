@@ -17,6 +17,8 @@ import type {
   LogsQuery,
   LogsResponse,
   ModelsResponse,
+  ProviderModelTestResponse,
+  ProviderModelsResponse,
   ProviderKeyStatus,
   ProviderTestResult,
   RevokeKeyResponse,
@@ -133,6 +135,8 @@ export async function deleteProviderKey(
  *
  * Same server code path as real routing (same URL builder, same model
  * resolution, a 1-token prompt), so a green result predicts a working route.
+ * In Auto mode the server walks ranked candidates, skipping models the key
+ * was already denied; `attempted`/`skipped` report that walk.
  */
 export async function testProvider(
   apiKey: string,
@@ -146,15 +150,45 @@ export async function testProvider(
   return data
 }
 
-/** Chat models the caller's key can actually use, for the model dropdown. */
+/** Model explorer: the caller's discovered models for one provider. */
 export async function getProviderModels(
   apiKey: string,
   providerName: string,
-  refresh = false,
-): Promise<string[]> {
-  const { data } = await api.get<string[]>(
-    `/api/v1/provider-test/${encodeURIComponent(providerName)}/models`,
-    { headers: { 'X-API-Key': apiKey }, params: refresh ? { refresh: true } : undefined },
+  params: { sort?: string; tier?: string; search?: string; refresh?: boolean } = {},
+): Promise<ProviderModelsResponse> {
+  const { data } = await withWakeRetry(() =>
+    api.get<ProviderModelsResponse>(
+      `/api/v1/provider-keys/${encodeURIComponent(providerName)}/models`,
+      { headers: { 'X-API-Key': apiKey }, params },
+    ),
+  )
+  return data
+}
+
+/** Model explorer: one 1-token test through the same path as routing. */
+export async function testProviderModel(
+  apiKey: string,
+  providerName: string,
+  modelId: string,
+): Promise<ProviderModelTestResponse> {
+  const { data } = await api.post<ProviderModelTestResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/models/${encodeURIComponent(modelId)}/test`,
+    {},
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Model explorer: pin a model (null = Auto). */
+export async function setPinnedModel(
+  apiKey: string,
+  providerName: string,
+  modelId: string | null,
+): Promise<ProviderModelsResponse> {
+  const { data } = await api.put<ProviderModelsResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/model`,
+    { model_id: modelId },
+    { headers: { 'X-API-Key': apiKey } },
   )
   return data
 }

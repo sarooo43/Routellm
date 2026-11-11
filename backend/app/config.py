@@ -89,9 +89,115 @@ class Settings(BaseSettings):
     # Per-component budget for /health probes. Kept short so a sleeping
     # Space's health check cannot hang a load balancer.
     HEALTH_PROBE_TIMEOUT_S: float = 2.0
+    # Optional per-provider .env model override for routing. Precedence for
+    # routing: caller's pinned model, then this override, then Auto
+    # (candidate walking over discovered models). Empty string = unset
+    # (declared once above with the other provider settings).
+    # Timeout for a provider's list-models call (discovery).
+    MODEL_DISCOVERY_TIMEOUT_S: float = 8.0
+    # How long discovered lists / per-model statuses (denied, rate_limited)
+    # are trusted, in seconds. ~1 hour so a key whose cohort gains access to
+    # a model is retested soon after the TTL expires.
+    MODEL_STATUS_TTL_S: int = 3600
+    # DEBUG CAPTURE (OFF by default): when true, sanitized field NAMES and a
+    # truncated, key-redacted sample of every provider list-models response
+    # and error body are appended to data/provider_shapes/<provider>.json so
+    # an operator can report real wire shapes without sharing keys. Never
+    # enable this on a shared deployment: the samples are still provider
+    # response text.
+    CAPTURE_PROVIDER_SHAPES: bool = False
 
 
 settings = Settings()
+
+
+# ==========================================================================
+# Model discovery policy tables (STATIC, owner-editable).
+#
+# Provider list-models responses carry NO pricing/tier information (see
+# docs in app/core/model_discovery.py), so "free/paid" is an ESTIMATE from
+# these tables. Every tier the API reports is labeled tier_source="estimated"
+# and unmatched models get "unknown" — never a guess dressed up as data.
+#
+# Versions are parsed as NUMBERS (3.8 > 2.5 > 2.0, and 10.0 > 9.0), never
+# compared as strings.
+# ==========================================================================
+
+# Preference groups per provider, checked IN ORDER (first match wins).
+# ``match`` is a case-insensitive substring; ``exclude`` lists substrings
+# that push a model out of this (higher) group into the next one. The final
+# ``""`` group is the catch-all.
+MODEL_PREFERENCE_GROUPS: dict[str, list[dict]] = {
+    "gemini": [
+        # Newest plain "flash" first: gemini-3.8-flash beats 2.5-flash, but
+        # flash-lite / preview / exp / thinking / image variants rank lower.
+        {
+            "match": "flash",
+            "exclude": ["lite", "preview", "exp", "thinking", "image", "tts", "embedding"],
+            "note": "plain flash models (no lite/preview/experimental suffix)",
+        },
+        {"match": "flash-lite", "exclude": ["preview", "exp"], "note": "flash-lite fallback"},
+        {"match": "pro", "exclude": ["preview", "exp", "image", "tts"], "note": "pro fallback"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+    "groq": [
+        {"match": "versatile", "exclude": ["preview", "exp"], "note": "versatile chat models"},
+        {"match": "chat", "exclude": ["preview", "exp"], "note": "chat models"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+    "deepseek": [
+        {"match": "chat", "exclude": [], "note": "chat models"},
+        {"match": "reasoner", "exclude": [], "note": "reasoner fallback"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+}
+
+# Non-chat / non-text model families. They are never routing candidates and
+# are hidden from the model explorer (a hidden count is shown instead).
+MODEL_EXCLUDE_PATTERNS: list[str] = [
+    "embedding",
+    "embed",
+    "tts",
+    "whisper",
+    "guard",
+    "moderation",
+    "image",
+    "imagen",
+    "veo",
+    "video",
+    "audio",
+    "aqa",
+    "rank",
+]
+
+# Static tier estimates, first matching pattern wins, per provider.
+# THESE ARE ESTIMATES — the provider APIs do not expose pricing in the
+# list-models response. Edit freely to match your accounts' reality.
+MODEL_TIER_TABLE: dict[str, list[dict]] = {
+    "gemini": [
+        {"match": "flash", "tier": "free"},
+        {"match": "pro", "tier": "paid"},
+    ],
+    # Groq serves open-weight models with a generous free tier.
+    "groq": [{"match": "", "tier": "free"}],
+    # DeepSeek's API has no free tier.
+    "deepseek": [{"match": "", "tier": "paid"}],
+}
+
+
+def chaos_mode_enabled() -> bool:
+    """Resolve the effective Chaos Mode switch.
+
+    An explicit CHAOS_MODE_ENABLED in the environment always wins. When unset
+    (None), the local-first default is ON (fault injection is the point of
+    the demo and is harmless on one machine); on Hugging Face the default is
+    OFF, exactly matching the pre-local-first behavior.
+    """
+    if settings.CHAOS_MODE_ENABLED is not None:
+        return settings.CHAOS_MODE_ENABLED
+    from app.runtime import running_on_huggingface
+
+    return not running_on_huggingface()
 
 
 class _CorsOrigins:

@@ -24,7 +24,11 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_api_key, require_provider_api_keys
+from app.api.dependencies import (
+    require_api_key,
+    require_provider_api_keys,
+    require_provider_model_pins,
+)
 from app.config import settings
 from app.core.api_key_manager import record_api_key_usage
 from app.core.circuit_breaker import CircuitBreaker
@@ -151,6 +155,8 @@ class AttemptResponse(BaseModel):
     error: Optional[str] = None
     latency_ms: float
     chaos_injected: bool = False
+    # Concrete upstream model id when candidate walking selected one.
+    model: Optional[str] = None
 
 
 class RouteResponse(BaseModel):
@@ -272,6 +278,7 @@ async def route_prompt(
     db_session: AsyncSession = Depends(get_session),
     api_key: ApiKeyDB = Depends(require_api_key),
     provider_api_keys: dict[str, str] = Depends(require_provider_api_keys),
+    provider_models: dict[str, str] = Depends(require_provider_model_pins),
 ):
     try:
         start = time.perf_counter()
@@ -291,6 +298,7 @@ async def route_prompt(
             max_fallbacks=body.max_fallbacks,
             force_provider=body.force_provider,
             provider_api_keys=provider_api_keys,
+            provider_models=provider_models,
         )
         if result.success:
             await record_api_key_usage(db_session, api_key, result.tokens_used)

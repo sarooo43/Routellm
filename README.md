@@ -331,6 +331,46 @@ choose one in the Providers page. Endpoints are fixed and tested verbatim:
 Groq `https://api.groq.com/openai/v1`, Gemini `v1beta …/models/<model>:generateContent`,
 DeepSeek `https://api.deepseek.com/v1`.
 
+### `ModuleNotFoundError: pydantic_settings` when running backend scripts
+
+Backend scripts (e.g. `backend/scripts/check_providers.py`) import the app,
+which needs the project virtualenv. Running them with a bare system Python
+fails with `ModuleNotFoundError`. The script detects this and re-execs itself
+with the project venv; if no venv exists it prints:
+
+```text
+Run with the project venv: .venv/bin/python backend/scripts/check_providers.py, or run python run.py once to create it.
+```
+
+Commands per platform:
+
+```bash
+# Linux / macOS (repo root)
+python -m venv backend/.venv                # once, if the venv does not exist yet
+backend/.venv/bin/python backend/scripts/check_providers.py
+```
+
+```powershell
+# Windows (repo root, PowerShell)
+py -m venv backend\.venv                    # once, if the venv does not exist yet
+backend\.venv\Scripts\python.exe backend\scripts\check_providers.py
+```
+
+### `model_not_found: models/... is no longer available` (e.g. new Gemini key)
+
+A provider's list-models response is a *candidate list*, not a guarantee:
+new keys can see models they are not yet allowed to call (Google rolls
+models out per account cohort). Routing and the Test connection button
+therefore walk an ordered candidate list: a model that answers
+`model_not_found` is remembered as "denied" for that key for ~1 hour and the
+next-ranked candidate is tried (up to 3 attempts). If the provider's error
+message names a replacement (`...use models/gemini-3.8-flash`), that id is
+strict-regex-extracted, verified against the discovered list, and tried
+first. Nothing else from an error message is ever used. If every candidate
+fails, check the Providers page → the model list shows each model's status
+(`denied` / `rate_limited` / `works`), and a 401 is always reported as an
+auth problem, never as `model_not_found`.
+
 ---
 
 ## Roadmap

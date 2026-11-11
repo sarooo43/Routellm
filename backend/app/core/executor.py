@@ -22,6 +22,10 @@ from app.core.circuit_breaker import CircuitBreaker
 from app.core.chaos import ChaosController
 from app.core.classifier import classify_task
 from app.core.ml_classifier import get_router_classifier
+from app.core.model_discovery import (
+    generate_with_walking,
+    operator_env_key,
+)
 from app.core.quota_tracker import QuotaTracker
 from app.core.scorer import ModelStats, rank_models
 from app.models import Feedback, ModelStatsDB, TaskLog, UsageTracking
@@ -45,6 +49,9 @@ class AttemptLog(BaseModel):
     success: bool
     error: Optional[str] = None
     latency_ms: float = 0.0
+    # The concrete upstream model id this attempt (or skip) refers to, when
+    # candidate walking selected one. None = legacy provider default.
+    model: Optional[str] = None
     # True for synthesized chaos failures (DEV/DEMO ONLY) — lets the
     # dashboard paint them purple instead of "real failure" red.
     chaos_injected: bool = False
@@ -544,6 +551,54 @@ async def _execute_forced_single_provider(
 # --------------------------------------------------------------------------
 
 
+def _operator_env_key(provider_name: str) -> Optional[str]:
+    """Operator (non-BYOK) credential from settings, for candidate walking."""
+    return operator_env_key(provider_name)
+
+
+async def _execute_provider_attempt(
+    provider_name: str,
+    prompt: str,
+    kwargs: dict,
+    provider_api_key: Optional[str],
+    pinned_model: Optional[str],
+) -> tuple[ProviderResponse, list[AttemptLog], Optional[str]]:
+    """One real provider attempt through the shared lazy candidate walk.
+
+    With a credential available (BYOK caller key or operator .env key) the
+    attempt goes through generate_with_walking(): the first attempt keeps
+    legacy behavior (pinned/env/warm-cache/default model), and only a
+    model_not_found triggers discovery + ranked candidate walking (max 3
+    attempts). Without any credential the legacy single default-model call
+    is kept so key-less demo behavior is unchanged.
+
+    Returns (response, extra_attempt_logs, initial_model). extra_attempt_logs
+    EXCLUDE the initial attempt (the caller logs that one itself).
+    """
+    if not provider_api_key:
+        response = await PROVIDER_REGISTRY[provider_name].generate(prompt, **kwargs)
+        return response, [], None
+    response, extra_steps, initial_model = await generate_with_walking(
+        provider_name,
+        prompt,
+        kwargs,
+        provider_api_key,
+        pinned_model=pinned_model,
+        provider=PROVIDER_REGISTRY[provider_name],
+    )
+    logs = [
+        AttemptLog(
+            provider_name=provider_name,
+            success=step.success,
+            error=step.reason or step.error,
+            latency_ms=step.latency_ms,
+            model=step.model,
+        )
+        for step in extra_steps
+    ]
+    return response, logs, initial_model
+
+
 async def execute_with_fallback(
     prompt: str,
     db_session: AsyncSession,
@@ -557,6 +612,7 @@ async def execute_with_fallback(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     provider_api_keys: Optional[dict[str, str]] = None,
+    provider_models: Optional[dict[str, Optional[str]]] = None,
 ) -> ExecutionResult:
     """Execute a prompt across ranked providers with automatic fallback.
 
@@ -576,6 +632,10 @@ async def execute_with_fallback(
     When non-empty, routing is restricted to those providers and each attempt
     receives its own ``provider_api_key`` kwarg. When empty/None, legacy
     operator/demo behavior is preserved (providers read settings.*_API_KEY).
+
+    provider_models is the calling RouteLLM key's pinned model per provider
+    (None = Auto). Routing precedence: pinned model, then the provider's
+    .env model override, then Auto (candidate walking by rank).
     """
     request_id = str(uuid.uuid4())
     start = time.perf_counter()
@@ -684,6 +744,8 @@ async def execute_with_fallback(
         # telemetry path as a real failed call, so the breaker can trip from
         # repeated injections and the dashboard shows the purple chain step.
         chaos_injected = False
+        extra_walk_logs: list[AttemptLog] = []
+        initial_model: Optional[str] = None
         if settings.CHAOS_MODE_ENABLED and await _chaos_active(chaos, provider_name):
             logger.warning(
                 "chaos_failure_injected",
@@ -702,16 +764,32 @@ async def execute_with_fallback(
             )
             chaos_injected = True
         else:
-            # ---- Real attempt ----
-            provider = PROVIDER_REGISTRY[provider_name]
+            # ---- Real attempt (shared lazy candidate-walking path) ----
             kwargs = _generation_kwargs(
                 provider_name, resolved_task_type, temperature, max_tokens
             )
-            if provider_api_keys and provider_name in provider_api_keys:
-                kwargs["provider_api_key"] = provider_api_keys[provider_name]
+            byok_key = (
+                provider_api_keys.get(provider_name) if provider_api_keys else None
+            )
+            caller_key = byok_key or _operator_env_key(provider_name)
+            if byok_key:
+                kwargs["provider_api_key"] = byok_key
+            pinned_model = (
+                (provider_models or {}).get(provider_name)
+                if provider_models
+                else None
+            )
 
             try:
-                response = await provider.generate(prompt, **kwargs)
+                response, extra_walk_logs, initial_model = (
+                    await _execute_provider_attempt(
+                        provider_name,
+                        prompt,
+                        kwargs,
+                        caller_key,
+                        pinned_model,
+                    )
+                )
             except Exception as e:
                 # Providers promise never to raise; this is the last-resort net.
                 logger.error(
@@ -737,8 +815,12 @@ async def execute_with_fallback(
                 error=response.error,
                 latency_ms=response.latency_ms,
                 chaos_injected=chaos_injected,
+                model=initial_model,
             )
         )
+        # Per-candidate walk steps join the fallback chain so the
+        # dashboard/Test view shows WHICH model failed and why.
+        attempts.extend(extra_walk_logs)
         # Chaos attempts consume the fallback budget but never touch the
         # provider's permanent history — no API call happened, so ModelStats,
         # UsageTracking and quota stay honest.
