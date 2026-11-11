@@ -24,10 +24,12 @@ from app.api.openai_compat_routes import router as openai_compat_router
 from app.api.provider_keys_routes import router as provider_keys_router
 from app.api.routes import health_payload, limiter, router
 from app.config import (
+    chaos_mode_enabled,
     cors_origin_list,
     redis_uses_tls,
     settings,
 )
+from app.core.provider_key_crypto import encryption_available
 from app.db.session import DatabaseUnavailableError, ensure_schema
 from app.db.url import mask_database_url, normalize_database_url
 from app.utils.logger import get_logger
@@ -59,7 +61,7 @@ def _provider_keys_configured() -> list[str]:
 def _database_driver() -> str | None:
     """Normalized driver name for the startup log (never the DSN)."""
     if not settings.DATABASE_URL:
-        return None
+        return "aiosqlite"  # local-first SQLite default
     try:
         return normalize_database_url(settings.DATABASE_URL).driver
     except Exception:
@@ -87,10 +89,10 @@ def log_startup_diagnostics(mode: str | None = None) -> None:
         on_huggingface=running_on_huggingface(),
         cors_origins=_cors_origins_for_log(),
         database={
-            "configured": bool(settings.DATABASE_URL),
+            "configured": True,  # env Postgres, or the local SQLite default
             "dsn": mask_database_url(settings.DATABASE_URL)
             if settings.DATABASE_URL
-            else None,
+            else "sqlite+aiosqlite:///<data dir>/routellm.db",
             "driver": _database_driver(),
         },
         redis={
@@ -99,8 +101,8 @@ def log_startup_diagnostics(mode: str | None = None) -> None:
             "fallback": None if settings.REDIS_URL else "in-memory fakeredis",
         },
         server_provider_keys=_provider_keys_configured(),
-        byok_encryption_configured=bool(settings.PROVIDER_KEY_ENCRYPTION_KEY),
-        chaos_mode=settings.CHAOS_MODE_ENABLED,
+        byok_encryption_configured=encryption_available(),
+        chaos_mode=chaos_mode_enabled(),
         ml_routing=settings.ENABLE_ML_ROUTING,
     )
 
@@ -119,17 +121,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # the session dependency retries on the next request.
         await ensure_schema()
     else:
-        logger.warning(
-            "database_not_configured",
-            detail="DATABASE_URL unset — DB-backed endpoints will answer 503.",
-        )
+        # Local-first: DATABASE_URL unset means SQLite in the data dir.
+        await ensure_schema()
 
-    # Stop a misconfigured deployment from silently becoming a paid one.
+    # Stop a suppressed-content deployment from silently becoming a shared
+    # one. Redis is optional; the in-memory fallback resets on restart.
     if not os.environ.get("REDIS_URL", "").strip():
-        logger.warning(
-            "redis_not_configured",
-            detail="Using in-memory fakeredis: no cross-process state, resets "
-            "on every restart. Set REDIS_URL=rediss://... on Hugging Face.",
+        logger.info(
+            "redis_in_memory_fallback",
+            detail="REDIS_URL not set — using an in-memory store. State "
+            "(circuits, quota, chaos) resets on every restart. This is the "
+            "normal local-first mode; set REDIS_URL for shared state.",
         )
 
     if settings.ENABLE_ML_ROUTING:
@@ -179,7 +181,10 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
 
     Mapping SQLAlchemy errors here means a handler that forgot its own
     try/except still answers with the documented 503 envelope instead of a
-    bare 500 traceback.
+    bare 500 traceback. ConnectionRefusedError is included deliberately:
+    asyncpg's TCP connect failure can surface raw (unwrapped by SQLAlchemy)
+    on the first pool connection, and it is unambiguously "database
+    unreachable" — the same 503 envelope, never a raw 500.
     """
     logger.error(
         "database_error_503",
@@ -191,6 +196,13 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
         status_code=503,
         content={"detail": "Database temporarily unavailable"},
     )
+
+
+# asyncpg's raw TCP connect failure can surface UNWRAPPED by SQLAlchemy on
+# the first pool connection; it is unambiguously "database unreachable", so
+# it shares the same clean 503 envelope (starlette needs one class per
+# registration).
+app.add_exception_handler(ConnectionRefusedError, _sqlalchemy_error_handler)
 
 
 app.add_middleware(

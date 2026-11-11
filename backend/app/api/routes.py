@@ -24,8 +24,12 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_api_key, require_provider_api_keys
-from app.config import settings
+from app.api.dependencies import (
+    require_api_key,
+    require_provider_api_keys,
+    require_provider_model_pins,
+)
+from app.config import chaos_mode_enabled, settings
 from app.core.api_key_manager import record_api_key_usage
 from app.core.circuit_breaker import CircuitBreaker
 from app.core.executor import (
@@ -46,11 +50,11 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-# DEV/DEMO ONLY: chaos routes exist only when the flag is explicitly true.
-# When off they are never registered — /api/v1/admin/chaos/* answers the
-# native 404 exactly like any unknown path (and stays out of /docs).
-if settings.CHAOS_MODE_ENABLED:
-    router.include_router(chaos_router)
+# DEV/DEMO ONLY: chaos routes are ALWAYS mounted; each handler answers a
+# native 404 when the flag resolves off (see app/api/chaos_routes.py). This
+# keeps the "admin surface unreachable when off" contract true at request
+# time, no matter how the default was resolved at import.
+router.include_router(chaos_router)
 
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
@@ -150,6 +154,8 @@ class AttemptResponse(BaseModel):
     error: Optional[str] = None
     latency_ms: float
     chaos_injected: bool = False
+    # Concrete upstream model id when candidate walking selected one.
+    model: Optional[str] = None
 
 
 class RouteResponse(BaseModel):
@@ -264,6 +270,7 @@ async def route_prompt(
     db_session: AsyncSession = Depends(get_session),
     api_key: ApiKeyDB = Depends(require_api_key),
     provider_api_keys: dict[str, str] = Depends(require_provider_api_keys),
+    provider_models: dict[str, str] = Depends(require_provider_model_pins),
 ):
     try:
         start = time.perf_counter()
@@ -283,6 +290,7 @@ async def route_prompt(
             max_fallbacks=body.max_fallbacks,
             force_provider=body.force_provider,
             provider_api_keys=provider_api_keys,
+            provider_models=provider_models,
         )
         if result.success:
             await record_api_key_usage(db_session, api_key, result.tokens_used)
@@ -331,7 +339,7 @@ async def get_models(
 
         # DEV/DEMO ONLY: which providers currently have a forced failure.
         active_chaos: set[str] = set()
-        if settings.CHAOS_MODE_ENABLED:
+        if chaos_mode_enabled():
             try:
                 active_chaos = set(await _get_chaos().get_all_active_chaos())
             except Exception as e:
@@ -414,7 +422,7 @@ async def get_models(
                 )
             )
         return ModelsResponse(
-            chaos_mode_enabled=settings.CHAOS_MODE_ENABLED,
+            chaos_mode_enabled=chaos_mode_enabled(),
             live_stats_available=live_stats_available,
             providers=items,
         )

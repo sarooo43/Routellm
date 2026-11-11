@@ -8,14 +8,16 @@ Scenarios:
   failures like rate_limit_exceeded) and chaos_injected=True;
 - chaos failures feed the REAL circuit breaker (repeated injections trip it);
 - chaos attempts do NOT poison permanent history (ModelStats/UsageTracking);
-- /api/v1/admin/chaos/* returns 404 when CHAOS_MODE_ENABLED=False (default),
-  and works end-to-end when explicitly enabled.
+- /api/v1/admin/chaos/* answers native 404 when Chaos Mode resolves OFF, and
+  works end-to-end when explicitly enabled;
+- chaos_mode_enabled() default resolution: explicit value wins; local-first
+  default ON; OFF on Hugging Face.
 """
 
 import httpx
 import pytest
 
-from app.config import settings
+from app.config import chaos_mode_enabled, settings
 from tests.integration.conftest import (
     CAPABILITY_ONLY_WEIGHTS,
     StubProvider,
@@ -280,32 +282,44 @@ async def test_chaos_injected_forced_provider_fails_without_fallback(
 # --------------------------------------------------------------------------
 
 
-async def test_chaos_admin_routes_404_when_disabled(client_default_app):
-    # Default (production-safe) app: chaos router was never mounted, so the
-    # endpoints answer FastAPI's native 404 — exactly like unknown paths.
-    for method, path in (
-        ("post", "/api/v1/admin/chaos/inject"),
-        ("post", "/api/v1/admin/chaos/clear"),
-        ("get", "/api/v1/admin/chaos/status"),
-    ):
-        resp = await client_default_app.request(method, path)
-        assert resp.status_code == 404
-    injected = await client_default_app.post(
-        "/api/v1/admin/chaos/inject",
-        json={"provider_name": "groq"},
-    )
-    assert injected.status_code == 404
-
-
-@pytest.fixture
-async def client_default_app(db_session):
-    """httpx client against the default app with chaos flag OFF."""
+async def test_chaos_admin_routes_404_when_disabled(
+    monkeypatch,
+):
+    # Chaos Mode explicitly OFF: the router is mounted but every handler
+    # gates at request time, so the endpoints answer FastAPI's native 404 —
+    # exactly like unknown paths (probes cannot tell the feature exists).
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", False)
     from app.main import app
 
-    assert settings.CHAOS_MODE_ENABLED is False  # production-safe default
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        yield ac
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        for method, path in (
+            ("post", "/api/v1/admin/chaos/inject"),
+            ("post", "/api/v1/admin/chaos/clear"),
+            ("get", "/api/v1/admin/chaos/status"),
+        ):
+            resp = await client.request(method, path)
+            assert resp.status_code == 404
+        injected = await client.post(
+            "/api/v1/admin/chaos/inject",
+            json={"provider_name": "groq"},
+        )
+        assert injected.status_code == 404
+
+
+async def test_chaos_mode_resolver_defaults(monkeypatch):
+    # Explicit env value always wins in both directions.
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", True)
+    assert chaos_mode_enabled() is True
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", False)
+    assert chaos_mode_enabled() is False
+    # Unset: local-first default is ON (demo feature, harmless locally)...
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", None)
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    assert chaos_mode_enabled() is True
+    # ...but OFF on Hugging Face, exactly like the pre-local-first default.
+    monkeypatch.setenv("SPACE_ID", "owner/space")
+    assert chaos_mode_enabled() is False
 
 
 async def test_chaos_admin_routes_work_when_explicitly_enabled(

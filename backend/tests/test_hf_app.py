@@ -6,6 +6,7 @@ never mutates the shared ``app.main.app`` used by the other test modules.
 
 import os
 import socket
+import sys
 import time
 from pathlib import Path
 
@@ -46,6 +47,8 @@ def test_read_only_flag_forces_hf_rules_without_space_id(monkeypatch):
 
 def test_writable_dir_uses_tmp_on_huggingface(monkeypatch, tmp_path):
     """On a Space the app dir is read-only; writes must land in /tmp."""
+    if sys.platform != "linux":
+        pytest.skip("asserts POSIX-style /tmp semantics (Linux/CI only)")
     monkeypatch.setenv(HF_SPACE_ID_ENV, "saboornotgonna/routellm")
     monkeypatch.delenv(RUNTIME_DIR_ENV, raising=False)
     target = writable_dir("logs")
@@ -219,6 +222,8 @@ def test_probe_port_reports_a_free_port():
 
 def test_probe_port_detects_a_real_listener():
     """A genuine second listener must be reported as EADDRINUSE."""
+    if sys.platform != "linux":
+        pytest.skip("Windows bind semantics differ (SO_REUSEADDR reassigned binds)")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("0.0.0.0", 0))
@@ -280,6 +285,8 @@ def test_bind_listening_socket_binds_and_listens_after_handoff():
 
 def test_bind_listening_socket_blocks_a_second_binder_immediately():
     """Owning the socket is what removes the window a later bind could use."""
+    if sys.platform != "linux":
+        pytest.skip("Windows allows re-binding until listen() — Linux-only invariant")
     port = _free_port()
     first, _ = hf_app.bind_listening_socket("0.0.0.0", port, timeout_s=0.0)
     assert first is not None

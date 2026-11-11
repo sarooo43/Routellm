@@ -15,6 +15,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.api.routes import limiter
+from app.config import settings
 from app.core import quota_tracker as quota_module
 from app.main import app
 from app.models import TaskLog
@@ -116,6 +117,7 @@ async def test_post_route_success_exact_shape(client, install_stubs):
         "error",
         "latency_ms",
         "chaos_injected",
+        "model",
     }
     assert attempt["provider_name"] == "groq"
     assert attempt["success"] is True
@@ -168,6 +170,8 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
     await tracker.record_usage("deepseek", 100)
     await tracker.record_usage("deepseek", 50)
 
+    # Explicit OFF: the response mirrors the resolved flag exactly.
+    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", False)
     resp = await client.get("/api/v1/models")
     assert resp.status_code == 200
 
@@ -178,7 +182,7 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
         "providers",
     }
     assert body["live_stats_available"] is True
-    assert body["chaos_mode_enabled"] is False  # flag off in the test env
+    assert body["chaos_mode_enabled"] is False
 
     items = {item["name"]: item for item in body["providers"]}
     assert set(items.keys()) == {"groq", "gemini", "deepseek"}

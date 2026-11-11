@@ -113,6 +113,7 @@ async def test_auto_completion_runs_pipeline_and_matches_openai_schema(
             "error": None,
             "latency_ms": 50.0,
             "chaos_injected": False,
+            "model": None,
         }
     ]
     # Parsing with the REAL SDK's response type catches missing required fields.

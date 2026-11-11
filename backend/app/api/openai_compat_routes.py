@@ -16,7 +16,11 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import require_api_key, require_provider_api_keys
+from app.api.dependencies import (
+    require_api_key,
+    require_provider_api_keys,
+    require_provider_model_pins,
+)
 from app.core.api_key_manager import record_api_key_usage
 from app.core.executor import AttemptLog, ExecutionResult, execute_with_fallback
 from app.db.session import get_session
@@ -246,6 +250,7 @@ async def chat_completions(
     db_session: AsyncSession = Depends(get_session),
     api_key: ApiKeyDB = Depends(require_api_key),
     provider_api_keys: dict[str, str] = Depends(require_provider_api_keys),
+    provider_models: dict[str, str] = Depends(require_provider_model_pins),
 ):
     """Run text chat through RouteLLM's existing routing/forced-provider paths."""
     if body.stream:
@@ -273,6 +278,7 @@ async def chat_completions(
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         provider_api_keys=provider_api_keys,
+        provider_models=provider_models,
     )
     logger.info(
         "openai_compat_request_handled",

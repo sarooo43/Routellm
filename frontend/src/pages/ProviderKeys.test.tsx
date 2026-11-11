@@ -10,12 +10,17 @@ vi.mock('../api/client', () => ({
   getProviderKeys: vi.fn(),
   setProviderKey: vi.fn(),
   deleteProviderKey: vi.fn(),
+  getProviderModels: vi.fn(),
+  testProviderModel: vi.fn(),
+  testProviderConnection: vi.fn(),
+  setPinnedModel: vi.fn(),
 }))
 
 import {
   deleteProviderKey,
   generateApiKey,
   getProviderKeys,
+  getProviderModels,
   setProviderKey,
 } from '../api/client'
 
@@ -54,6 +59,15 @@ beforeEach(() => {
     updated_at: new Date().toISOString(),
   })
   vi.mocked(deleteProviderKey).mockResolvedValue({ status: 'deleted', provider_name: 'groq' })
+  // The auto-opened model-explorer panel fetches after a successful save;
+  // an empty list keeps the badge in the "Key saved, not tested" state.
+  vi.mocked(getProviderModels).mockResolvedValue({
+    provider_name: 'groq',
+    models: [],
+    hidden_non_chat_count: 0,
+    pinned_model: null,
+    reason: null,
+  })
 })
 
 afterEach(() => {
@@ -88,7 +102,26 @@ describe('ProviderKeys', () => {
     expect(await screen.findByText('****cdef')).toBeInTheDocument()
     expect(input).toHaveValue('')
     expect(screen.queryByText(secret)).not.toBeInTheDocument()
-    expect(screen.getByText('Configured')).toBeInTheDocument()
+    // Honest badge: a stored key is not "Configured" until a model test passes.
+    expect(screen.getByText('Key saved, not tested')).toBeInTheDocument()
+    expect(screen.queryByText('Configured')).not.toBeInTheDocument()
+  })
+
+  it('auto-opens the model explorer panel after a successful save', async () => {
+    saveGeneratedKey(generated)
+    renderPage()
+    const input = await screen.findByLabelText('Groq API key')
+    fireEvent.change(input, { target: { value: 'gsk_test_provider_secret_abcdef' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Groq key' }))
+
+    expect(await screen.findByRole('region', { name: 'Groq model explorer' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(getProviderModels).toHaveBeenCalledWith(
+        generated.api_key,
+        'groq',
+        expect.objectContaining({ sort: 'tier', tier: 'all' }),
+      ),
+    )
   })
 
   it('removes a configured provider key for the selected RouteLLM key', async () => {

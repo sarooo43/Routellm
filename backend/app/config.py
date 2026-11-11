@@ -11,6 +11,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: Optional[str] = None
     REDIS_URL: Optional[str] = None
+    # Local-first auth toggle (see app.api.dependencies). False: /api/v1/route
+    # and /v1/chat/completions work with no X-API-Key under a default local
+    # identity; the API Keys pages still work for people who want per-app
+    # keys. True: every guarded endpoint behaves as before (401 without key).
+    REQUIRE_API_KEY: bool = False
     GROQ_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     DEEPSEEK_API_KEY: Optional[str] = None
@@ -28,9 +33,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"
     # DEV/DEMO ONLY: fault-injection endpoints + executor fake failures.
-    # Never enabled by default; must be explicitly set via .env (docker/env).
-    # See core/chaos.py — a Chaos Monkey-style demo control for the dashboard.
-    CHAOS_MODE_ENABLED: bool = False
+    # Local-first default is TRUE (a demo feature, harmless on one machine);
+    # inside a Hugging Face Space the safe default is FALSE unless explicitly
+    # enabled. See chaos_mode_enabled() below for the exact resolution.
+    CHAOS_MODE_ENABLED: Optional[bool] = None
     # EXPERIMENTAL: ML-assisted routing (learned capability scores blended
     # with the rule-based table, 60/40). Off until the router model is
     # trained (scripts/train_router_model.py) AND validated. Requires the
@@ -47,9 +53,110 @@ class Settings(BaseSettings):
     # Per-component budget for /health probes. Kept short so a sleeping
     # Space's health check cannot hang a load balancer.
     HEALTH_PROBE_TIMEOUT_S: float = 2.0
+    # Optional per-provider .env model override for routing. Precedence for
+    # routing: caller's pinned model, then this override, then Auto
+    # (candidate walking over discovered models).
+    GROQ_MODEL: Optional[str] = None
+    GEMINI_MODEL: Optional[str] = None
+    DEEPSEEK_MODEL: Optional[str] = None
+    # Timeout for a provider's list-models call (discovery).
+    MODEL_DISCOVERY_TIMEOUT_S: float = 8.0
+    # How long discovered lists / per-model statuses (denied, rate_limited)
+    # are trusted, in seconds. ~1 hour so a key whose cohort gains access to
+    # a model is retested soon after the TTL expires.
+    MODEL_STATUS_TTL_S: int = 3600
 
 
 settings = Settings()
+
+
+# ==========================================================================
+# Model discovery policy tables (STATIC, owner-editable).
+#
+# Provider list-models responses carry NO pricing/tier information (see
+# docs in app/core/model_discovery.py), so "free/paid" is an ESTIMATE from
+# these tables. Every tier the API reports is labeled tier_source="estimated"
+# and unmatched models get "unknown" — never a guess dressed up as data.
+#
+# Versions are parsed as NUMBERS (3.8 > 2.5 > 2.0, and 10.0 > 9.0), never
+# compared as strings.
+# ==========================================================================
+
+# Preference groups per provider, checked IN ORDER (first match wins).
+# ``match`` is a case-insensitive substring; ``exclude`` lists substrings
+# that push a model out of this (higher) group into the next one. The final
+# ``""`` group is the catch-all.
+MODEL_PREFERENCE_GROUPS: dict[str, list[dict]] = {
+    "gemini": [
+        # Newest plain "flash" first: gemini-3.8-flash beats 2.5-flash, but
+        # flash-lite / preview / exp / thinking / image variants rank lower.
+        {
+            "match": "flash",
+            "exclude": ["lite", "preview", "exp", "thinking", "image", "tts", "embedding"],
+            "note": "plain flash models (no lite/preview/experimental suffix)",
+        },
+        {"match": "flash-lite", "exclude": ["preview", "exp"], "note": "flash-lite fallback"},
+        {"match": "pro", "exclude": ["preview", "exp", "image", "tts"], "note": "pro fallback"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+    "groq": [
+        {"match": "versatile", "exclude": ["preview", "exp"], "note": "versatile chat models"},
+        {"match": "chat", "exclude": ["preview", "exp"], "note": "chat models"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+    "deepseek": [
+        {"match": "chat", "exclude": [], "note": "chat models"},
+        {"match": "reasoner", "exclude": [], "note": "reasoner fallback"},
+        {"match": "", "exclude": [], "note": "anything else"},
+    ],
+}
+
+# Non-chat / non-text model families. They are never routing candidates and
+# are hidden from the model explorer (a hidden count is shown instead).
+MODEL_EXCLUDE_PATTERNS: list[str] = [
+    "embedding",
+    "embed",
+    "tts",
+    "whisper",
+    "guard",
+    "moderation",
+    "image",
+    "imagen",
+    "veo",
+    "video",
+    "audio",
+    "aqa",
+    "rank",
+]
+
+# Static tier estimates, first matching pattern wins, per provider.
+# THESE ARE ESTIMATES — the provider APIs do not expose pricing in the
+# list-models response. Edit freely to match your accounts' reality.
+MODEL_TIER_TABLE: dict[str, list[dict]] = {
+    "gemini": [
+        {"match": "flash", "tier": "free"},
+        {"match": "pro", "tier": "paid"},
+    ],
+    # Groq serves open-weight models with a generous free tier.
+    "groq": [{"match": "", "tier": "free"}],
+    # DeepSeek's API has no free tier.
+    "deepseek": [{"match": "", "tier": "paid"}],
+}
+
+
+def chaos_mode_enabled() -> bool:
+    """Resolve the effective Chaos Mode switch.
+
+    An explicit CHAOS_MODE_ENABLED in the environment always wins. When unset
+    (None), the local-first default is ON (fault injection is the point of
+    the demo and is harmless on one machine); on Hugging Face the default is
+    OFF, exactly matching the pre-local-first behavior.
+    """
+    if settings.CHAOS_MODE_ENABLED is not None:
+        return settings.CHAOS_MODE_ENABLED
+    from app.runtime import running_on_huggingface
+
+    return not running_on_huggingface()
 
 
 class _CorsOrigins:

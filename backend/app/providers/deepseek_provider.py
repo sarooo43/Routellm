@@ -52,6 +52,28 @@ class DeepSeekProvider(ModelProvider):
                     self.provider_name, model, "provider_server_error", latency_ms
                 )
             if response.status_code != 200:
+                # Honest taxonomy: a 404 (or a body that explicitly says the
+                # model does not exist — DeepSeek uses 400 "Model Not
+                # Exist") is a MODEL problem, never an auth problem.
+                detail = ""
+                try:
+                    data = response.json()
+                    detail = str((data.get("error") or {}).get("message") or "")
+                except ValueError:
+                    detail = ""
+                detail = detail.strip()[:200]
+                lowered = detail.lower()
+                if response.status_code == 404 or (
+                    "model" in lowered
+                    and ("not exist" in lowered or "does not exist" in lowered
+                         or "not found" in lowered)
+                ):
+                    return make_error(
+                        self.provider_name,
+                        model,
+                        f"model_not_found: {detail}".rstrip(": "),
+                        latency_ms,
+                    )
                 return make_error(
                     self.provider_name,
                     model,

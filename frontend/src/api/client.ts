@@ -16,6 +16,9 @@ import type {
   LogsQuery,
   LogsResponse,
   ModelsResponse,
+  ProviderConnectionTestResponse,
+  ProviderModelTestResponse,
+  ProviderModelsResponse,
   ProviderKeyStatus,
   RevokeKeyResponse,
   RouteRequest,
@@ -105,6 +108,62 @@ export async function deleteProviderKey(
 ): Promise<DeleteProviderKeyResponse> {
   const { data } = await api.delete<DeleteProviderKeyResponse>(
     `/api/v1/provider-keys/${encodeURIComponent(providerName)}`,
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Model explorer: the caller's discovered models for one provider. */
+export async function getProviderModels(
+  apiKey: string,
+  providerName: string,
+  params: { sort?: string; tier?: string; search?: string; refresh?: boolean } = {},
+): Promise<ProviderModelsResponse> {
+  const { data } = await withWakeRetry(() =>
+    api.get<ProviderModelsResponse>(
+      `/api/v1/provider-keys/${encodeURIComponent(providerName)}/models`,
+      { headers: { 'X-API-Key': apiKey }, params },
+    ),
+  )
+  return data
+}
+
+/** Model explorer: one 1-token test through the same path as routing. */
+export async function testProviderModel(
+  apiKey: string,
+  providerName: string,
+  modelId: string,
+): Promise<ProviderModelTestResponse> {
+  const { data } = await api.post<ProviderModelTestResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/models/${encodeURIComponent(modelId)}/test`,
+    {},
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Model explorer: Auto-mode connection test (candidate walk). */
+export async function testProviderConnection(
+  apiKey: string,
+  providerName: string,
+): Promise<ProviderConnectionTestResponse> {
+  const { data } = await api.post<ProviderConnectionTestResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/test-connection`,
+    {},
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/** Model explorer: pin a model (null = Auto). */
+export async function setPinnedModel(
+  apiKey: string,
+  providerName: string,
+  modelId: string | null,
+): Promise<ProviderModelsResponse> {
+  const { data } = await api.put<ProviderModelsResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/model`,
+    { model_id: modelId },
     { headers: { 'X-API-Key': apiKey } },
   )
   return data

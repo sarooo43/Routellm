@@ -6,6 +6,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.core import executor as executor_module
 from app.core.chaos import ChaosController
 from app.main import app
@@ -51,7 +52,11 @@ async def test_generate_returns_raw_key_once_and_db_stores_only_hash(client, db_
     assert body["label"] == "Portfolio demo"
     assert body["warning"] == "Save this key now — it will not be shown again."
 
-    row = (await db_session.execute(select(ApiKeyDB))).scalars().one()
+    row = (
+        await db_session.execute(
+            select(ApiKeyDB).where(ApiKeyDB.label == "Portfolio demo")
+        )
+    ).scalars().one()
     assert row.key_hash == hashlib.sha256(raw.encode()).hexdigest()
     assert row.key_hash != raw
     assert row.key_prefix == raw[:8]
@@ -60,7 +65,10 @@ async def test_generate_returns_raw_key_once_and_db_stores_only_hash(client, db_
     assert all(raw not in str(value) for value in row.__dict__.values())
 
 
-async def test_core_route_requires_key(client):
+async def test_core_route_requires_key(client, monkeypatch):
+    # Auth "required" contract test: the optional-auth default would admit
+    # keyless requests under the local identity (pinned in test_auth_matrix).
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", True)
     missing = await client.post("/api/v1/route", json={"prompt": "hi"})
     assert missing.status_code == 401
     assert missing.json()["detail"] == "Invalid or missing API key"
@@ -78,16 +86,21 @@ async def test_valid_key_routes_and_increments_usage(client, db_session):
     assert response.status_code == 200
     assert response.json()["success"] is True
 
-    row = (await db_session.execute(select(ApiKeyDB))).scalars().one()
-    assert row.total_requests == 1
-    assert row.total_tokens_used == 21
-    assert row.last_used_at is not None
-
     me = await client.get("/api/v1/keys/me", headers=headers)
     assert me.status_code == 200
     assert me.json()["total_requests"] == 1
     assert me.json()["total_tokens_used"] == 21
     assert me.json()["key_prefix"] == key["key_prefix"]
+    row = (
+        await db_session.execute(
+            select(ApiKeyDB).where(
+                ApiKeyDB.key_hash == hashlib.sha256(key["api_key"].encode()).hexdigest()
+            )
+        )
+    ).scalars().one()
+    assert row.total_requests == 1
+    assert row.total_tokens_used == 21
+    assert row.last_used_at is not None
 
 
 async def test_revoked_key_is_rejected(client, db_session):
@@ -97,7 +110,13 @@ async def test_revoked_key_is_rejected(client, db_session):
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "revoked"
 
-    row = (await db_session.execute(select(ApiKeyDB))).scalars().one()
+    row = (
+        await db_session.execute(
+            select(ApiKeyDB).where(
+                ApiKeyDB.key_hash == hashlib.sha256(key["api_key"].encode()).hexdigest()
+            )
+        )
+    ).scalars().one()
     assert row.is_active is False
     response = await client.post("/api/v1/route", json={"prompt": "hi"}, headers=headers)
     assert response.status_code == 401
@@ -115,7 +134,11 @@ async def test_keys_only_see_their_own_usage(client):
     assert me.json()["total_requests"] == 0
 
 
-async def test_openai_compat_requires_key_and_tracks_usage(client, db_session):
+async def test_openai_compat_requires_key_and_tracks_usage(
+    client, db_session, monkeypatch
+):
+    # Required-mode contract (optional-auth local identity covered elsewhere).
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", True)
     missing = await client.post(
         "/v1/chat/completions",
         json={"model": "routellm-auto", "messages": [{"role": "user", "content": "hi"}]},
@@ -130,7 +153,13 @@ async def test_openai_compat_requires_key_and_tracks_usage(client, db_session):
         headers={"X-API-Key": key["api_key"]},
     )
     assert response.status_code == 200
-    row = (await db_session.execute(select(ApiKeyDB))).scalars().one()
+    row = (
+        await db_session.execute(
+            select(ApiKeyDB).where(
+                ApiKeyDB.key_hash == hashlib.sha256(key["api_key"].encode()).hexdigest()
+            )
+        )
+    ).scalars().one()
     assert row.total_requests == 1
     assert row.total_tokens_used == 21
 
@@ -149,7 +178,13 @@ async def test_failed_generation_does_not_increment_success_counters(
     )
     assert response.status_code == 200
     assert response.json()["success"] is False
-    row = (await db_session.execute(select(ApiKeyDB))).scalars().one()
+    row = (
+        await db_session.execute(
+            select(ApiKeyDB).where(
+                ApiKeyDB.key_hash == hashlib.sha256(key["api_key"].encode()).hexdigest()
+            )
+        )
+    ).scalars().one()
     assert row.total_requests == 0
     assert row.total_tokens_used == 0
 

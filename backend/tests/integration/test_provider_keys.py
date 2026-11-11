@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.api.routes import limiter
 from app.config import settings
+from app.core import provider_key_crypto
 from app.core import executor as executor_module
 from app.core.chaos import ChaosController
 from app.core.provider_key_crypto import decrypt_provider_key
@@ -61,7 +62,10 @@ async def generate_key(client, label="BYOK test"):
     return body["api_key"], {"X-API-Key": body["api_key"]}
 
 
-async def test_provider_key_endpoints_require_routellm_key(client):
+async def test_provider_key_endpoints_require_routellm_key(client, monkeypatch):
+    # Required-mode contract: with the optional-auth default the local
+    # identity is admitted (pinned in test_auth_matrix).
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", True)
     assert (await client.get("/api/v1/provider-keys")).status_code == 401
     assert (
         await client.put("/api/v1/provider-keys/groq", json={"api_key": "gsk_test_123456"})
@@ -233,12 +237,22 @@ async def test_legacy_caller_without_byok_keeps_operator_kwargs(client, install_
     assert "provider_api_key" not in stubs["groq"].kwargs_seen[-1]
 
 
-async def test_missing_encryption_key_fails_closed_for_writes_and_byok_routing(
-    client, monkeypatch, db_session
+async def test_no_encryption_key_source_fails_closed_for_writes_and_byok_routing(
+    client, monkeypatch, db_session, tmp_path
 ):
+    """When no key source exists (env unset AND data-dir key unavailable),
+    BYOK writes and routing fail closed with 503 — never a raw 500."""
+    real_loader = provider_key_crypto._load_or_generate_data_dir_key
     _, headers = await generate_key(client)
     await client.put("/api/v1/provider-keys/groq", json={"api_key": "gsk_test_failclosed_123"}, headers=headers)
     monkeypatch.setattr(settings, "PROVIDER_KEY_ENCRYPTION_KEY", None)
+    monkeypatch.setenv("ROUTELLM_DATA_DIR", str(tmp_path / "unwritable"))
+    monkeypatch.setattr(
+        provider_key_crypto, "_generated_key_cache", None
+    )
+    monkeypatch.setattr(
+        provider_key_crypto, "_load_or_generate_data_dir_key", lambda: b""
+    )
 
     write = await client.put(
         "/api/v1/provider-keys/gemini", json={"api_key": "AIzaSyDUMMY_failclosed"}, headers=headers
@@ -255,6 +269,19 @@ async def test_missing_encryption_key_fails_closed_for_writes_and_byok_routing(
     assert chat.json()["error"]["type"] == "server_error"
     row = (await db_session.execute(select(ProviderKeyDB))).scalars().one()
     assert row.encrypted_key != "gsk_test_failclosed_123"
+
+    # With the auto-generated data-dir key available, the same flow succeeds.
+    monkeypatch.setattr(provider_key_crypto, "_generated_key_cache", None)
+    monkeypatch.setattr(
+        provider_key_crypto,
+        "_load_or_generate_data_dir_key",
+        real_loader,
+    )
+    monkeypatch.setenv("ROUTELLM_DATA_DIR", str(tmp_path / "localdata"))
+    fine = await client.put(
+        "/api/v1/provider-keys/gemini", json={"api_key": "AIzaSyDUMMY_localkey"}, headers=headers
+    )
+    assert fine.status_code == 200
 
 
 async def test_unknown_provider_and_short_key_rejected(client):

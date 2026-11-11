@@ -234,3 +234,57 @@ export interface DeleteProviderKeyResponse {
   status: string
   provider_name: string
 }
+
+// --------------------------------------------------------------------------
+// Model explorer (per-caller, BYOK)
+// --------------------------------------------------------------------------
+
+export type ModelTier = 'free' | 'paid' | 'unknown'
+export type ModelStatus = 'untested' | 'works' | 'denied' | 'rate_limited'
+export type ModelSort = 'tier' | 'newest' | 'oldest' | 'name'
+
+export interface ProviderModelInfo {
+  id: string
+  display_name: string
+  released_or_version: string | null
+  sort_key: string
+  tier: ModelTier
+  tier_source: string
+  context_window: number | null
+  max_output: number | null
+  capabilities: string[]
+  status: ModelStatus
+  last_checked_at: string | null
+  last_error: string | null
+}
+
+export interface ProviderModelsResponse {
+  provider_name: string
+  models: ProviderModelInfo[]
+  hidden_non_chat_count: number
+  pinned_model: string | null
+  reason: string | null
+}
+
+export interface ProviderModelTestResponse {
+  provider_name: string
+  model_id: string
+  status: ModelStatus | 'auth_failed' | 'error'
+  latency_ms: number
+  error: string | null
+}
+
+export interface ProviderConnectionTestStep {
+  model: string
+  skipped: boolean
+  reason: string
+  success: boolean
+}
+
+export interface ProviderConnectionTestResponse {
+  provider_name: string
+  success: boolean
+  working_model: string | null
+  attempted: ProviderConnectionTestStep[]
+  skipped: ProviderConnectionTestStep[]
+}
