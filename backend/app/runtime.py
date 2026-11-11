@@ -26,50 +26,10 @@ from typing import Optional
 HF_SPACE_ID_ENV = "SPACE_ID"
 #: Explicit override used by tests and unusual hosts.
 RUNTIME_DIR_ENV = "ROUTELLM_RUNTIME_DIR"
-#: Explicit override for where local-first state (SQLite DB, generated Fernet
-#: key) is stored. See :func:`data_dir`.
-DATA_DIR_ENV = "ROUTELLM_DATA_DIR"
 #: Force the read-only-filesystem behavior even when not on Hugging Face.
 READ_ONLY_FLAG_ENV = "ROUTELLM_READ_ONLY_APP_DIR"
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
-# NOTE: by module-history convention `_BACKEND_ROOT` actually points at the
-# repository root (verified empirically), so the data dir lives at <repo>/data.
-
-
-
-def data_dir() -> Path:
-    """Return the per-user data directory for local-first persistence.
-
-    Local-first storage rules:
-
-    1. ``ROUTELLM_DATA_DIR`` — explicit override (run.py, Docker, tests).
-    2. ``<repo>/data`` — the ordinary local default (gitignored; DB file and
-       generated secrets live here).
-    3. On a read-only app dir (Hugging Face, or the read-only test flag) the
-       data falls back under the system temp dir, like :func:`writable_dir`.
-
-    The directory is created if missing and contains state that must survive
-    restarts: ``routellm.db`` (SQLite) and ``provider_key_encryption.key``.
-    """
-    override = os.environ.get(DATA_DIR_ENV, "").strip()
-    if override:
-        base = Path(override).expanduser()
-        try:
-            base.mkdir(parents=True, exist_ok=True)
-            return base
-        except OSError:
-            pass  # unwritable override: fall through to the safe fallbacks
-    if app_dir_is_expected_read_only():
-        base = Path(tempfile.gettempdir()) / "routellm-data"
-    else:
-        base = _BACKEND_ROOT / "data"
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        base = Path(tempfile.gettempdir()) / "routellm-data"
-        base.mkdir(parents=True, exist_ok=True)
-    return base
 
 
 def running_on_huggingface() -> bool:

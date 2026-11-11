@@ -117,7 +117,6 @@ async def test_post_route_success_exact_shape(client, install_stubs):
         "error",
         "latency_ms",
         "chaos_injected",
-        "model",
     }
     assert attempt["provider_name"] == "groq"
     assert attempt["success"] is True
@@ -144,9 +143,14 @@ async def test_post_route_all_providers_fail_still_200(client, install_stubs):
     assert resp.status_code == 200  # business failure, not an HTTP error
     data = resp.json()
     assert data["success"] is False
-    assert data["error"] == "all_providers_failed"
+    # The summary now explains the FIRST failure rather than repeating a bare
+    # code that tells the reader nothing.
+    assert data["error"].startswith("rate_limited:")
+    assert "groq" in data["error"]
     assert data["model_used"] is None
     assert len(data["fallback_chain_attempted"]) == 3
+    # Every attempt is explained in the chain the Explorer renders.
+    assert all(a["error"] for a in data["fallback_chain_attempted"])
 
 
 # --------------------------------------------------------------------------
@@ -170,8 +174,6 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
     await tracker.record_usage("deepseek", 100)
     await tracker.record_usage("deepseek", 50)
 
-    # Explicit OFF: the response mirrors the resolved flag exactly.
-    monkeypatch.setattr(settings, "CHAOS_MODE_ENABLED", False)
     resp = await client.get("/api/v1/models")
     assert resp.status_code == 200
 
@@ -182,7 +184,9 @@ async def test_get_models_mixed_statuses(client, breaker, tracker, monkeypatch):
         "providers",
     }
     assert body["live_stats_available"] is True
-    assert body["chaos_mode_enabled"] is False
+    # LOCAL-FIRST: chaos is enabled by default; the route reports the setting
+    # truthfully either way.
+    assert body["chaos_mode_enabled"] is settings.CHAOS_MODE_ENABLED
 
     items = {item["name"]: item for item in body["providers"]}
     assert set(items.keys()) == {"groq", "gemini", "deepseek"}

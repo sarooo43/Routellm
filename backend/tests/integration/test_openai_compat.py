@@ -22,12 +22,11 @@ from app.models import TaskLog
 from tests.integration.conftest import StubProvider, expected_ranking, fail, ok
 
 CHAT_URL = "/v1/chat/completions"
-UPSTREAM_ERROR = {
-    "error": {
-        "message": "All providers failed to generate a response",
-        "type": "upstream_error",
-        "code": "all_providers_failed",
-    }
+#: The envelope shape is fixed; the message is a diagnosis, so only its
+#: structure and code are asserted (see test_failure_messaging for the wording).
+UPSTREAM_ERROR_SHAPE = {
+    "type": "upstream_error",
+    "code": "all_providers_failed",
 }
 
 
@@ -113,7 +112,6 @@ async def test_auto_completion_runs_pipeline_and_matches_openai_schema(
             "error": None,
             "latency_ms": 50.0,
             "chaos_injected": False,
-            "model": None,
         }
     ]
     # Parsing with the REAL SDK's response type catches missing required fields.
@@ -177,7 +175,11 @@ async def test_named_provider_failure_never_falls_back(client, stubs):
     stubs["deepseek"].responses = [fail("deepseek", error="timeout")]
     response = await client.post(CHAT_URL, json=chat_body(model="deepseek"))
     assert response.status_code == 502
-    assert response.json() == UPSTREAM_ERROR
+    error = response.json()["error"]
+    assert error["type"] == UPSTREAM_ERROR_SHAPE["type"]
+    assert error["code"] == UPSTREAM_ERROR_SHAPE["code"]
+    assert error["message"].startswith("network_unreachable:")
+    assert "deepseek" in error["message"]
     assert stubs["deepseek"].calls == 1
     assert stubs["groq"].calls == stubs["gemini"].calls == 0
 
@@ -277,7 +279,7 @@ async def test_task_type_override_reaches_classifier_and_persistence(
     )
     assert response.status_code == 200
     assert stubs["deepseek"].kwargs_seen == [
-        {"model_variant": "deepseek-coder", "temperature": 0.7}
+        {"prefer_code_model": True, "temperature": 0.7}
     ]
     log = (await db_session.execute(select(TaskLog))).scalars().one()
     assert log.task_type == "code"
@@ -294,7 +296,7 @@ async def test_generation_options_reach_the_executor_on_both_paths(
     assert response.status_code == 200
     expected = {"temperature": 0.2, "max_tokens": 64}
     if model == "deepseek":
-        expected["model_variant"] = "deepseek-chat"
+        expected["prefer_code_model"] = False
     assert stubs["groq" if model == "routellm-auto" else model].kwargs_seen == [expected]
 
 
@@ -331,7 +333,10 @@ async def test_total_provider_failure_returns_502_and_records_every_attempt(
         stub.responses = [fail(name, error="provider_server_error")]
     response = await client.post(CHAT_URL, json=chat_body(task_type="qa"))
     assert response.status_code == 502
-    assert response.json() == UPSTREAM_ERROR
+    error = response.json()["error"]
+    assert error["type"] == UPSTREAM_ERROR_SHAPE["type"]
+    assert error["code"] == UPSTREAM_ERROR_SHAPE["code"]
+    assert error["message"].startswith("provider_unavailable:")
     assert all(stub.calls == 1 for stub in stubs.values())
     assert breaker.failure_calls == expected_ranking("qa")
     assert breaker.success_calls == []

@@ -4,18 +4,15 @@ Design constraints this module has to satisfy at once:
 
 * **Import-safe.** Nothing connects (or even validates a DSN) at import time,
   so ``import app.main`` works with no environment configured.
-* **Boot-safe.** :func:`ensure_schema` never raises: an unreachable database
-  must still let the app serve ``/health`` and the static catalog. The
+* **Boot-safe.** :func:`init_db` never raises: a Space that starts before Neon
+  is reachable must still serve ``/health`` and the static catalog. The
   failure is logged (masked) and retried on the next request.
 * **Self-healing.** Table creation is retried until it succeeds, then marked
   done. A later DB outage does not tear the schema down.
-* **Local-first.** With ``DATABASE_URL`` unset, state lives in SQLite at
-  ``<data dir>/routellm.db`` (aiosqlite) — zero DB setup on a clone. Postgres
-  (asyncpg) remains the fully supported option when ``DATABASE_URL`` is set.
+* **Read-only friendly.** No files are written; asyncpg needs no local state.
 
-NOTE: ``ensure_schema()`` creates tables straight from ``SQLModel.metadata``.
-That is fine for this project's scope; real production use wants Alembic
-migrations.
+NOTE: ``init_db()`` creates tables straight from ``SQLModel.metadata``. That is
+fine for this project's scope; real production use wants Alembic migrations.
 """
 
 import asyncio
@@ -33,6 +30,7 @@ from sqlmodel import SQLModel
 
 import app.models  # noqa: F401  (registers all model tables on SQLModel.metadata)
 from app.config import settings
+from app.local import resolve_database_url
 from app.db.url import (
     InvalidDatabaseUrl,
     describe_redis_url,  # noqa: F401  (re-exported for convenience)
@@ -55,9 +53,6 @@ _engine_lock = asyncio.Lock()
 #: are swallowed on purpose).
 _POST_V1_COLUMNS = ("ALTER TABLE task_logs ADD COLUMN routing_method VARCHAR",)
 
-#: SQLite file name used when ``DATABASE_URL`` is unset (local-first default).
-DATABASE_FILENAME = "routellm.db"
-
 
 class DatabaseUnavailableError(RuntimeError):
     """Raised when the configured database cannot be reached (or is not
@@ -66,35 +61,56 @@ class DatabaseUnavailableError(RuntimeError):
     """
 
 
+def effective_database_url() -> Optional[str]:
+    """The DSN actually in use: explicit ``DATABASE_URL`` or the SQLite default.
+
+    Local-first: with nothing configured this resolves to
+    ``sqlite+aiosqlite:///<data dir>/routellm.db``, so a fresh clone has a
+    working database with no setup. Returns ``None`` only if the local
+    directory could not be created.
+    """
+    try:
+        return resolve_database_url(settings.DATABASE_URL)
+    except OSError as exc:  # data dir unusable (read-only host, etc.)
+        logger.warning("local_database_unavailable", error=str(exc)[:200])
+        return None
+
+
 def database_url_normalized() -> str:
-    """Return the normalized asyncpg DSN, raising DatabaseUnavailableError.
+    """Return the normalized async DSN, raising DatabaseUnavailableError.
 
     The error message contains **only** the masked DSN, so a misconfigured
     Space logs ``postgresql+asyncpg://user:****@host/db`` and never the
     password.
-
-    Local-first default: with ``DATABASE_URL`` unset the app stores state in
-    SQLite at ``<data dir>/routellm.db`` (aiosqlite), so a laptop clone needs
-    zero DB setup. Postgres is opt-in via ``DATABASE_URL`` and behaves exactly
-    as in the cloud-deployment era.
     """
-    if not settings.DATABASE_URL:
-        from app.runtime import data_dir
-
-        path = data_dir() / DATABASE_FILENAME
-        logger.info(
-            "database_local_sqlite_default",
-            path=str(path),
-            detail="DATABASE_URL unset — using SQLite at <data dir>/" + DATABASE_FILENAME,
+    raw = effective_database_url()
+    if not raw:
+        raise DatabaseUnavailableError(
+            "No database is configured and the local data directory is not "
+            "writable. Set ROUTELLM_DATA_DIR to a writable path, or set "
+            "DATABASE_URL, e.g. postgresql+asyncpg://user:password@localhost:5432/routellm"
         )
-        return f"sqlite+aiosqlite:///{path.as_posix()}"
     try:
-        return normalize_database_url(settings.DATABASE_URL).url
+        return normalize_database_url(raw).url
     except InvalidDatabaseUrl as exc:
         raise DatabaseUnavailableError(
-            f"DATABASE_URL is invalid: {exc} "
-            f"(value: {mask_database_url(settings.DATABASE_URL)})"
+            f"DATABASE_URL is invalid: {exc} (value: {mask_database_url(raw)})"
         ) from exc
+
+
+def _is_sqlite(url: str) -> bool:
+    """True for an aiosqlite DSN (no pool sizing, no pre-ping)."""
+    return url.lower().startswith("sqlite")
+
+
+def sqlite_connect_args() -> dict[str, float]:
+    """``connect_args`` for a file-backed SQLite database.
+
+    ``timeout`` is SQLite's `busy_timeout`: a concurrent write waits instead of
+    raising ``database is locked`` immediately. The dashboard polling while a
+    routing log commits is exactly that case.
+    """
+    return {"timeout": 30.0}
 
 
 def get_engine() -> AsyncEngine:
@@ -110,16 +126,24 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         url = database_url_normalized()
         try:
-            _engine = create_async_engine(
-                url,
-                echo=False,
-                pool_pre_ping=True,
-                pool_recycle=1800,
-            )
+            if _is_sqlite(url):
+                # SQLite has no server: pre-ping/pool-recycle are meaningless,
+                # and a file-backed DB keeps a single writer. Pooling settings
+                # are left at SQLAlchemy's async defaults for aiosqlite.
+                _engine = create_async_engine(
+                    url, echo=False, connect_args=sqlite_connect_args()
+                )
+            else:
+                _engine = create_async_engine(
+                    url,
+                    echo=False,
+                    pool_pre_ping=True,
+                    pool_recycle=1800,
+                )
         except Exception as e:  # malformed URL that passed normalization
             raise DatabaseUnavailableError(
                 f"database engine unavailable: {e} "
-                f"(value: {mask_database_url(settings.DATABASE_URL)})"
+                f"(value: {mask_database_url(effective_database_url() or '')})"
             ) from e
     return _engine
 
@@ -160,6 +184,8 @@ async def ensure_schema() -> bool:
     global _schema_ready
     if _schema_ready:
         return True
+    if not effective_database_url():
+        return False
     async with _engine_lock:
         if _schema_ready:  # another coroutine won the race
             return True
@@ -175,9 +201,7 @@ async def ensure_schema() -> bool:
             _schema_ready = True
             logger.info(
                 "database_schema_ready",
-                database=mask_database_url(settings.DATABASE_URL)
-                if settings.DATABASE_URL
-                else "sqlite (default data dir)",
+                database=mask_database_url(effective_database_url() or ""),
             )
             return True
         except DatabaseUnavailableError as e:
@@ -185,9 +209,7 @@ async def ensure_schema() -> bool:
         except (SQLAlchemyError, OSError) as e:
             logger.warning(
                 "database_schema_failed_will_retry",
-                database=mask_database_url(settings.DATABASE_URL)
-                if settings.DATABASE_URL
-                else "sqlite (default data dir)",
+                database=mask_database_url(effective_database_url() or ""),
                 error=str(e).strip()[:400],
             )
         except Exception as e:  # defensive: never break startup
@@ -229,9 +251,7 @@ async def get_optional_session() -> AsyncGenerator[Optional[AsyncSession], None]
     except Exception as e:
         logger.warning(
             "optional_session_unavailable",
-            database=mask_database_url(settings.DATABASE_URL)
-            if settings.DATABASE_URL
-            else None,
+            database=mask_database_url(effective_database_url() or "") or None,
             error=str(e).strip()[:300],
         )
         yield None
@@ -248,22 +268,9 @@ async def init_db() -> None:
 
 
 async def ping_database(timeout: float = 2.0) -> str:
-    """Return ``"ok"``/``"down"`` for the health probe.
-
-    Local-first: the SQLite default is a real database, so there is no honest
-    ``"not_configured"`` state anymore — an unset ``DATABASE_URL`` is probed
-    like any other database.
-    """
-    if not settings.DATABASE_URL:
-        try:
-            get_engine()  # forces create of the sqlite engine/file path
-        except Exception as e:
-            logger.warning(
-                "health_database_unavailable",
-                database="sqlite (default data dir)",
-                error=str(e).strip()[:300],
-            )
-            return "down"
+    """Return ``"ok"``/``"down"``/``"not_configured"`` for the health probe."""
+    if not effective_database_url():
+        return "not_configured"
     try:
         async def _probe() -> None:
             async with get_session_maker()() as session:
@@ -277,7 +284,7 @@ async def ping_database(timeout: float = 2.0) -> str:
     except Exception as e:
         logger.warning(
             "health_database_unreachable",
-            database=mask_database_url(settings.DATABASE_URL),
+            database=mask_database_url(effective_database_url() or ""),
             error=str(e).strip()[:300],
         )
         return "down"

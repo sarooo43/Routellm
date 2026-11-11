@@ -1,9 +1,14 @@
 """FastAPI application factory and process lifecycle hooks.
 
-Startup is intentionally **non-fatal**: a Space that wakes before Neon/Upstash
-are reachable must still serve ``/health``, ``/docs`` and the static catalog.
-Any unreachable dependency is logged (masked) and reported by ``/health``
-instead of aborting the process, which is what produced crash loops before.
+Startup is intentionally **non-fatal**: a host that boots before Postgres or
+Redis is reachable (or a laptop whose SQLite file is briefly locked) must still
+serve ``/health``, ``/docs`` and the static catalog. Any unreachable dependency
+is logged (masked) and reported by ``/health`` instead of aborting the process.
+
+LOCAL-FIRST DEFAULT: with no configuration at all the app uses SQLite at
+``<data dir>/routellm.db`` and an in-process store in place of Redis, so
+``python run.py`` is the whole setup. Postgres/Redis are opt-in via
+``DATABASE_URL``/``REDIS_URL``.
 """
 
 import os
@@ -13,7 +18,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,22 +27,33 @@ from app.api.catalog_routes import router as catalog_router
 from app.api.keys_routes import router as keys_router
 from app.api.openai_compat_routes import router as openai_compat_router
 from app.api.provider_keys_routes import router as provider_keys_router
+from app.api.provider_test_routes import router as provider_test_router
+from app.api.setup_routes import router as setup_router
 from app.api.routes import health_payload, limiter, router
 from app.config import (
-    chaos_mode_enabled,
     cors_origin_list,
     redis_uses_tls,
     settings,
 )
-from app.core.provider_key_crypto import encryption_available
-from app.db.session import DatabaseUnavailableError, ensure_schema
+from app.db.session import (
+    DatabaseUnavailableError,
+    effective_database_url,
+    ensure_schema,
+)
 from app.db.url import mask_database_url, normalize_database_url
+from app.identity import APP_NAME, APP_VERSION as IDENTITY_VERSION, PROJECT_URL, UPSTREAM_DISCLAIMER
+from app.frontend import (
+    frontend_status,
+    install_root_status_page,
+    mount_frontend,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: Version reported by /health and the OpenAPI document.
-APP_VERSION = "0.1.0"
+#: Version reported by /health and the OpenAPI document. Sourced from
+#: app.identity so the API, the dashboard and the docs cannot disagree.
+APP_VERSION = IDENTITY_VERSION
 
 #: Set once the process is up; /health reports the delta as uptime_s.
 _STARTED_AT = time.monotonic()
@@ -59,11 +75,16 @@ def _provider_keys_configured() -> list[str]:
 
 
 def _database_driver() -> str | None:
-    """Normalized driver name for the startup log (never the DSN)."""
-    if not settings.DATABASE_URL:
-        return "aiosqlite"  # local-first SQLite default
+    """Normalized driver name for the startup log (never the DSN).
+
+    Reports the driver of the *effective* URL, so a local run says ``sqlite``
+    rather than nothing at all.
+    """
+    url = effective_database_url()
+    if not url:
+        return None
     try:
-        return normalize_database_url(settings.DATABASE_URL).driver
+        return normalize_database_url(url).driver
     except Exception:
         return "invalid"
 
@@ -89,22 +110,33 @@ def log_startup_diagnostics(mode: str | None = None) -> None:
         on_huggingface=running_on_huggingface(),
         cors_origins=_cors_origins_for_log(),
         database={
-            "configured": True,  # env Postgres, or the local SQLite default
-            "dsn": mask_database_url(settings.DATABASE_URL)
-            if settings.DATABASE_URL
-            else "sqlite+aiosqlite:///<data dir>/routellm.db",
+            "configured": bool(settings.DATABASE_URL),
+            "local_default": not bool(settings.DATABASE_URL),
+            "dsn": mask_database_url(effective_database_url() or ""),
             "driver": _database_driver(),
         },
+        require_api_key=settings.REQUIRE_API_KEY,
         redis={
             "configured": bool(settings.REDIS_URL),
             "tls": redis_uses_tls(settings.REDIS_URL),
             "fallback": None if settings.REDIS_URL else "in-memory fakeredis",
         },
         server_provider_keys=_provider_keys_configured(),
-        byok_encryption_configured=encryption_available(),
-        chaos_mode=chaos_mode_enabled(),
+        byok_encryption_configured=bool(settings.PROVIDER_KEY_ENCRYPTION_KEY),
+        chaos_mode=settings.CHAOS_MODE_ENABLED,
         ml_routing=settings.ENABLE_ML_ROUTING,
+        data_dir=str(_data_dir_for_log()),
     )
+
+
+def _data_dir_for_log() -> str:
+    """Where local state lives (a path, never a secret)."""
+    from app.local import data_dir
+
+    try:
+        return str(data_dir(create=False))
+    except OSError:  # pragma: no cover - unreadable host
+        return "<unavailable>"
 
 
 @asynccontextmanager
@@ -115,23 +147,48 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     (Gradio's ``mount_gradio_app`` does exactly that) can re-apply it without
     duplicating the logic.
     """
-    if settings.DATABASE_URL:
-        # Non-fatal: a brand-new/empty or sleeping database is a normal
-        # condition on a free Space. ensure_schema() logs and returns False;
-        # the session dependency retries on the next request.
-        await ensure_schema()
-    else:
-        # Local-first: DATABASE_URL unset means SQLite in the data dir.
-        await ensure_schema()
-
-    # Stop a suppressed-content deployment from silently becoming a shared
-    # one. Redis is optional; the in-memory fallback resets on restart.
-    if not os.environ.get("REDIS_URL", "").strip():
+    # Non-fatal either way: a brand-new or sleeping database is a normal
+    # condition. ensure_schema() logs and returns False; the session
+    # dependency retries on the next request. With no DATABASE_URL this runs
+    # against the SQLite file in the data dir, which is what makes a fresh
+    # clone work with zero manual steps.
+    if not settings.DATABASE_URL:
+        # The one place this is announced: consumers resolve the URL lazily and
+        # would otherwise repeat it once each.
         logger.info(
-            "redis_in_memory_fallback",
-            detail="REDIS_URL not set — using an in-memory store. State "
-            "(circuits, quota, chaos) resets on every restart. This is the "
-            "normal local-first mode; set REDIS_URL for shared state.",
+            "database_defaulted_to_sqlite",
+            detail="DATABASE_URL unset — using the local SQLite file under the data directory.",
+            data_dir=_data_dir_for_log(),
+        )
+    await ensure_schema()
+
+    if not os.environ.get("REDIS_URL", "").strip():
+        # Local-first: this is the expected state, not a misconfiguration.
+        logger.info(
+            "redis_in_process_store",
+            detail="REDIS_URL unset — using the in-process store: no "
+            "cross-process state, state resets when the process exits.",
+        )
+
+    status = frontend_status(app)
+    if status["mounted"]:
+        logger.info(
+            "frontend_served_from_backend",
+            directory=status["directory"],
+            root="/",
+            spa_fallback=True,
+            assets="/assets",
+        )
+    elif status["reason"] == "serving_disabled":
+        logger.info(
+            "frontend_serving_disabled",
+            detail="SERVE_FRONTEND=false — the dashboard is served separately.",
+        )
+    else:
+        logger.info(
+            "frontend_not_built",
+            detail="frontend/dist not found — API only. Build it with "
+            "`cd frontend && npm ci && npm run build`, or run `python run.py --dev`.",
         )
 
     if settings.ENABLE_ML_ROUTING:
@@ -144,12 +201,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             model_usable=classifier.is_loaded,
         )
     yield
-    logger.info("RouteLLM backend shutting down...")
+    logger.info("backend_shutdown", app=APP_NAME)
 
 
 app = FastAPI(
-    title="RouteLLM API",
+    title=f"{APP_NAME} API",
     version=APP_VERSION,
+    description=(
+        "Intelligent LLM routing gateway: classify → rank → execute with "
+        "automatic fallback, health tracking and cost analytics.\n\n"
+        f"{UPSTREAM_DISCLAIMER}\n\n"
+        f"Source: {PROJECT_URL}"
+    ),
     lifespan=lifespan,
     # Root is claimed by a redirect to the status page (see below), so the
     # auto-generated Swagger UI stays available at /docs.
@@ -181,10 +244,7 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
 
     Mapping SQLAlchemy errors here means a handler that forgot its own
     try/except still answers with the documented 503 envelope instead of a
-    bare 500 traceback. ConnectionRefusedError is included deliberately:
-    asyncpg's TCP connect failure can surface raw (unwrapped by SQLAlchemy)
-    on the first pool connection, and it is unambiguously "database
-    unreachable" — the same 503 envelope, never a raw 500.
+    bare 500 traceback.
     """
     logger.error(
         "database_error_503",
@@ -196,13 +256,6 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
         status_code=503,
         content={"detail": "Database temporarily unavailable"},
     )
-
-
-# asyncpg's raw TCP connect failure can surface UNWRAPPED by SQLAlchemy on
-# the first pool connection; it is unambiguously "database unreachable", so
-# it shares the same clean 503 envelope (starlette needs one class per
-# registration).
-app.add_exception_handler(ConnectionRefusedError, _sqlalchemy_error_handler)
 
 
 app.add_middleware(
@@ -222,6 +275,8 @@ app.include_router(router, prefix="/api/v1")
 app.include_router(catalog_router, prefix="/api/v1")
 app.include_router(keys_router, prefix="/api/v1")
 app.include_router(provider_keys_router, prefix="/api/v1")
+app.include_router(setup_router, prefix="/api/v1")
+app.include_router(provider_test_router, prefix="/api/v1")
 app.include_router(openai_compat_router)
 
 
@@ -237,11 +292,13 @@ async def health():
     return JSONResponse(status_code=status_code, content=payload)
 
 
-@app.get("/", include_in_schema=False)
-async def root():
-    """Send the Space's landing page to the status UI (or /docs in plain mode).
-
-    Declared here rather than in ``hf_app.py`` so the redirect exists no matter
-    how the app is started; ``hf_app`` overrides it when Gradio is mounted.
-    """
-    return RedirectResponse(url="/docs", status_code=307)
+# --------------------------------------------------------------------------
+# Dashboard (must come LAST: routes match in registration order)
+#
+# Local-first serves the built SPA from this process so the app is one URL.
+# The catch-all only exists when frontend/dist is actually present; otherwise
+# / renders a small status page explaining how to build it, and the API paths
+# above are untouched either way.
+# --------------------------------------------------------------------------
+if mount_frontend(app) is None:
+    install_root_status_page(app)

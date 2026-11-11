@@ -19,7 +19,6 @@ fully qualified `<sha>:refs/heads/main`.
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -196,10 +195,6 @@ def test_unqualified_refspec_is_rejected(workspace):
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_shell_script_is_syntactically_valid():
-    if sys.platform == "win32":
-        # On Windows `bash` usually resolves to the WSL shim, whose
-        # stdin/exec path fails without a real WLS distro installed.
-        pytest.skip("bash on Windows resolves to the WSL shim (Linux/CI only)")
     result = subprocess.run(
         ["bash", "-n", str(SH)], capture_output=True, text=True, check=False
     )

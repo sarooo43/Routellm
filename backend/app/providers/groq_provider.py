@@ -3,23 +3,45 @@ import time
 import httpx
 
 from app.config import settings
-from app.providers.base import (
-    ModelProvider,
-    ProviderResponse,
-    elapsed_ms,
-    make_error,
-    make_success,
-)
+from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
+from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
+from app.providers.outcomes import error_for_exception, error_for_status
+
+SPEC = PROVIDER_SPECS["groq"]
 
 
 class GroqProvider(ModelProvider):
+    """Groq: OpenAI-compatible chat completions under /openai/v1.
+
+    The model is DISCOVERED, not assumed. A hardcoded model is what turned a
+    retired model name into a 404 that was then reported to the user as a bad
+    API key.
+    """
+
     provider_name = "groq"
-    DEFAULT_MODEL = "llama-3.3-70b-versatile"
-    API_URL = "https://api.groq.com/openai/v1/chat/completions"
     TIMEOUT = 15.0
 
+    #: Kept for callers that read it; the live value comes from discovery.
+    DEFAULT_MODEL = SPEC.default_model
+
+    #: Value (not a property): other code and tests read this as an attribute.
+    #: The live URL is built per request from the discovered model.
+    API_URL = SPEC.chat_url(SPEC.default_model)
+
+    async def resolve_model(self, api_key, override=None, force_refresh=False):
+        spec = spec_for(self.provider_name)
+        return await resolve_model(
+            self.provider_name, api_key, override=override, force_refresh=force_refresh
+        )
+
     async def generate(self, prompt: str, **kwargs) -> ProviderResponse:
-        model = kwargs.get("model", self.DEFAULT_MODEL)
+        api_key = kwargs.get("provider_api_key") or settings.GROQ_API_KEY
+        model, _available, _source = await self.resolve_model(
+            api_key,
+            override=kwargs.get("model") or settings.GROQ_MODEL or None,
+            force_refresh=bool(kwargs.get("refresh_model")),
+        )
+
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -27,74 +49,39 @@ class GroqProvider(ModelProvider):
         }
         if kwargs.get("max_tokens") is not None:
             payload["max_tokens"] = kwargs["max_tokens"]
-        api_key = kwargs.get("provider_api_key") or settings.GROQ_API_KEY
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
+        url = SPEC.chat_url(model)
         start = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-                response = await client.post(
-                    self.API_URL, json=payload, headers=headers
-                )
+                response = await client.post(url, json=payload, headers=headers)
             latency_ms = elapsed_ms(start)
 
-            if response.status_code == 429:
-                return make_error(
-                    self.provider_name, model, "rate_limit_exceeded", latency_ms
-                )
-            if response.status_code in (401, 403):
-                return make_error(self.provider_name, model, "auth_failed", latency_ms)
-            if response.status_code >= 500:
-                return make_error(
-                    self.provider_name, model, "provider_server_error", latency_ms
-                )
             if response.status_code != 200:
-                # Honest taxonomy: a 404 (or a body that explicitly says the
-                # model does not exist) is a MODEL problem, never an auth
-                # problem. The provider message is preserved (sanitized,
-                # ~200 chars) for candidate walking.
-                detail = ""
-                try:
-                    data = response.json()
-                    detail = str((data.get("error") or {}).get("message") or "")
-                except ValueError:
-                    detail = ""
-                detail = detail.strip()[:200]
-                lowered = detail.lower()
-                if response.status_code == 404 or (
-                    "model" in lowered
-                    and ("not exist" in lowered or "does not exist" in lowered
-                         or "not found" in lowered)
-                ):
-                    return make_error(
-                        self.provider_name,
-                        model,
-                        f"model_not_found: {detail}".rstrip(": "),
-                        latency_ms,
-                    )
-                return make_error(
-                    self.provider_name,
-                    model,
-                    f"unexpected_error: HTTP {response.status_code}",
-                    latency_ms,
+                return error_for_status(
+                    response,
+                    provider=self.provider_name,
+                    model=model,
+                    url=url,
+                    latency_ms=latency_ms,
                 )
 
             data = response.json()
             text = data["choices"][0]["message"]["content"]
             usage = data.get("usage") or {}
-            tokens_used = usage.get("total_tokens", 0)
             return make_success(
-                self.provider_name, model, text, tokens_used, latency_ms
+                self.provider_name, model, text, usage.get("total_tokens", 0), latency_ms
             )
-        except httpx.TimeoutException:
-            return make_error(self.provider_name, model, "timeout", elapsed_ms(start))
-        except Exception as e:
-            return make_error(
-                self.provider_name,
-                model,
-                f"unexpected_error: {type(e).__name__}",
-                elapsed_ms(start),
+        except Exception as exc:
+            return error_for_exception(
+                exc,
+                provider=self.provider_name,
+                model=model,
+                url=url,
+                latency_ms=elapsed_ms(start),
             )
