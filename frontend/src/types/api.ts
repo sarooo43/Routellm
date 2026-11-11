@@ -10,6 +10,8 @@ export interface AttemptLog {
   success: boolean
   error: string | null
   latency_ms: number
+  /** Upstream model id this attempt (or walk skip) refers to; null = default. */
+  model?: string | null
   /** DEV/DEMO ONLY — chaos-injected fallback step (renders purple on graph). */
   chaos_injected?: boolean
 }
