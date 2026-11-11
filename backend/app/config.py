@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # (the Cloudflare Worker proxies same-origin server-to-server, so this only
     # matters for clients that set VITE_API_BASE_URL directly at the backend).
     CORS_ORIGINS: str = ""
+    # Host-header allow-list for direct HTTP access (DNS-rebinding defence).
+    # The middleware ALWAYS accepts the loopback names (localhost, 127.0.0.1,
+    # ::1/[::1]) plus the HOST this process binds. A deployed public hostname
+    # (e.g. your Space's *.hf.space, or a tunnel URL) must be listed here,
+    # comma-separated. Set "*" to disable the check entirely — only when the
+    # service sits behind a proxy you fully control.
+    ALLOWED_HOSTS: str = ""
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     ROUTE_RATE_LIMIT: str = "30/minute"
@@ -250,3 +257,13 @@ def cors_origin_list(settings_obj: Optional[Settings] = None) -> list[str]:
         "http://127.0.0.1:5173",
         "http://localhost:4173",
     ]
+
+
+def allowed_host_list(settings_obj: Optional[Settings] = None) -> list[str]:
+    """Extra Host headers accepted beyond the loopback set (lowercased).
+
+    ``["*"]`` means enforcement is disabled entirely. Empty by default: the
+    middleware's built-in loopback set + ``HOST`` already covers local-first.
+    """
+    s = settings_obj or settings
+    return [h.strip().lower() for h in (s.ALLOWED_HOSTS or "").split(",") if h.strip()]

@@ -31,6 +31,7 @@ from app.api.provider_test_routes import router as provider_test_router
 from app.api.setup_routes import router as setup_router
 from app.api.routes import health_payload, limiter, router
 from app.config import (
+    allowed_host_list,
     cors_origin_list,
     redis_uses_tls,
     settings,
@@ -270,6 +271,69 @@ app.add_middleware(
     allow_credentials=False,
     expose_headers=["X-RateLimit-Remaining", "Retry-After"],
 )
+
+
+class AllowedHostsMiddleware:
+    """Reject requests whose Host header is not on the allow-list (400).
+
+    Why: a browser follows whatever URL a page tells it to, so an attacker
+    page can POST to ``http://attacker.example`` while DNS rebinding points
+    that name at ``127.0.0.1:8000`` — every loopback-bound service without a
+    Host check is exposed that way (no CORS header can save a simple POST).
+    Checking Host closes it: the browser's Host header is the attacker cannot
+    forge from another origin.
+
+    Always allowed: localhost, 127.0.0.1, ::1/[::1], and the ``HOST`` this
+    process binds. Extra names come from ``ALLOWED_HOSTS`` (see config.py);
+    ``ALLOWED_HOSTS=*`` disables the check for proxies that rewrite Host.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {k.lower(): v for k, v in scope.get("headers") or []}
+        host = headers.get(b"host", b"").decode("latin-1").strip().lower()
+        if _host_allowed(host):
+            await self.app(scope, receive, send)
+        else:
+            response = JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid Host header"},
+            )
+            await response(scope, receive, send)
+
+
+def _host_allowed(host: str) -> bool:
+    """The allow-list decision, importable so tests can call it directly."""
+    if not host:
+        return False  # HTTP/1.1 requires Host; absence is not an alias for yes
+    configured = allowed_host_list()
+    if "*" in configured:
+        return True
+    # Strip the port: "[::1]:8000" (bracketed IPv6) or "localhost:8000".
+    # A bare IPv6 address ("::1") keeps its colons — splitting would corrupt it.
+    if host.startswith("["):
+        bare = host[: host.index("]") + 1] if "]" in host else ""
+    elif host.count(":") == 1:
+        bare = host.rsplit(":", 1)[0]
+    else:
+        bare = host
+    allowed = set(_LOOPBACK_HOSTS)
+    allowed.add((settings.HOST or "").strip().lower())
+    allowed.update(configured)
+    return bare in allowed
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+# Added AFTER CORS on purpose: the last-registered middleware runs first, so a
+# disallowed host is rejected before any CORS handling happens.
+app.add_middleware(AllowedHostsMiddleware)
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(catalog_router, prefix="/api/v1")
