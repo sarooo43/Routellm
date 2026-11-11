@@ -259,6 +259,29 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(ConnectionRefusedError)
+async def _connection_refused_handler(request: Request, exc: Exception):
+    """A refused TCP connect to the database, caught raw.
+
+    Verified against SQLAlchemy 2.1 + asyncpg: a connect to a closed port
+    raises the builtin ``ConnectionRefusedError`` — NOT a SQLAlchemyError —
+    so without this handler the very first request after Postgres dies
+    answered with a raw 500 instead of the documented 503. (httpx/redis
+    translate their own refused connections into library exceptions, so a
+    leaked ConnectionRefusedError here is the database in practice.)
+    """
+    logger.error(
+        "database_connect_refused_503",
+        path=request.url.path,
+        database=mask_database_url(settings.DATABASE_URL) if settings.DATABASE_URL else None,
+        error=str(exc).strip()[:400],
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database temporarily unavailable"},
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     # Explicit browser-origin allowlist (comma-separated CORS_ORIGINS env, see

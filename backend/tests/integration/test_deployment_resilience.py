@@ -163,6 +163,38 @@ async def test_protected_routes_still_answer_clean_503_without_a_database(
     assert resp.json() == {"detail": "Database temporarily unavailable"}
 
 
+async def test_real_refused_tcp_connect_answers_503_not_500(client, monkeypatch):
+    """The Postgres-down case, for real: a DSN pointing at a CLOSED port.
+
+    SQLAlchemy 2.1 + asyncpg leaks the builtin ConnectionRefusedError here —
+    it is an OSError, NOT a SQLAlchemyError — so only the dedicated handler
+    keeps this a clean 503. Verified end-to-end against the real engine
+    (no mocks): the dependency chain must let the raw error reach the app.
+    """
+    import socket
+
+    import app.db.session as session_module
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    closed_port = probe.getsockname()[1]
+    probe.close()  # nothing listens here anymore: connects are refused
+
+    await session_module.reset_engine()
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        f"postgresql+asyncpg://routellm:pw@127.0.0.1:{closed_port}/routellm",
+    )
+    try:
+        resp = await client.post("/api/v1/route", json={"prompt": "hi"})
+        assert resp.status_code == 503, resp.text
+        assert resp.json() == {"detail": "Database temporarily unavailable"}
+    finally:
+        # Hand the SQLite engine back to every other test in the suite.
+        await session_module.reset_engine()
+
+
 # --------------------------------------------------------------------------
 # Schema creation
 # --------------------------------------------------------------------------
