@@ -246,6 +246,125 @@ def estimated_tier(provider: str, model_id: str) -> str:
     return "unknown"
 
 
+# --------------------------------------------------------------------------
+# Gemini Auto ALLOW-LIST (T2)
+#
+# Why an allow-list: the deny-list (non_chat_markers) only removes obvious
+# non-chat endpoints. Everything else — codenames (gemini-4-argon), previews
+# (gemini-3-flash-preview), omni/lyria/robotics/deep-research/nano-banana
+# families — stayed eligible for Auto and could be picked the moment every
+# stable model was denied. OBSERVED LIVE (owner's Codespace, 49 names): the
+# list is full of such ids. Auto may only use STABLE chat families.
+#
+# Class order defines Auto precedence:
+#   "alias"   -latest aliases (gemini-flash-latest ...) — FIRST, per owner
+#             instruction. UNVERIFIED LIVE: "latest" is assumed to point at
+#             the newest flash family; a live route must confirm before this
+#             is trusted as more than an ordering hint.
+#   "stable"  numbered chat families gemini-<ver>-flash / -flash-lite /
+#             -pro, and gemma-*-it.
+#   "preview" -preview ids — only when AUTO_ALLOW_PREVIEW_MODELS is true,
+#             and always AFTER every stable candidate (so a preview is
+#             reached only once stable ones are exhausted).
+#   "excluded" never a candidate: codenames, previews (when the setting is
+#             off), and every specialized family.
+# --------------------------------------------------------------------------
+
+#: Stable, numbered chat families. Anchored: "-flash-preview" does NOT match
+#: "-flash" because the regex ends at the suffix.
+GEMINI_AUTO_STABLE_RES: tuple[re.Pattern, ...] = (
+    re.compile(r"^gemini-\d+(?:\.\d+)*-flash$"),
+    re.compile(r"^gemini-\d+(?:\.\d+)*-flash-lite$"),
+    re.compile(r"^gemini-\d+(?:\.\d+)*-pro$"),
+    re.compile(r"^gemma-\d[\w.-]*-it$"),  # gemma-4-26b-a4b-it, gemma-4-31b-it
+)
+
+#: The -latest aliases. Ordered before stable families in Auto.
+GEMINI_AUTO_ALIAS_RES: tuple[re.Pattern, ...] = (
+    re.compile(r"^gemini-flash-latest$"),
+    re.compile(r"^gemini-flash-lite-latest$"),
+    re.compile(r"^gemini-pro-latest$"),
+)
+
+#: Preview ids: same stable shapes but with a -preview suffix. Only eligible
+#: behind AUTO_ALLOW_PREVIEW_MODELS (off by default), and only after stable.
+GEMINI_AUTO_PREVIEW_RES: tuple[re.Pattern, ...] = (
+    re.compile(r"^gemini-\d+(?:\.\d+)*-flash-preview$"),
+    re.compile(r"^gemini-\d+(?:\.\d+)*-flash-lite-preview$"),
+    re.compile(r"^gemini-\d+(?:\.\d+)*-pro-preview$"),
+)
+
+#: Defense in depth: even if a future alias accidentally contains one of
+#: these, it is never a candidate. Codenames first (argon/carbon/hydrogen),
+#: then the specialized families from the OBSERVED LIVE list.
+GEMINI_AUTO_FORBIDDEN: tuple[str, ...] = (
+    "preview",  # when not matched above as a preview shape, e.g. customtools
+    "customtools",
+    "tts",
+    "image",
+    "imagen",
+    "embedding",
+    "embed",
+    "transcribe",
+    "lyria",
+    "robotics",
+    "computer-use",
+    "deep-research",
+    "antigravity",
+    "nano-banana",
+    "omni",
+    "thinking",
+)
+
+#: Codenames are matched by shape, not one-off names: gemini-<name> without a
+#: numeric version and without a stable suffix. Keeps future gemini-4-* and
+#: gemini-5-* codenames out without editing this file each release.
+_GEMINI_VERSION_RE = re.compile(r"^gemini-\d")
+
+
+def gemini_auto_class(model_id: str) -> str:
+    """Where one Gemini model id belongs in Auto (see the block comment above).
+
+    Pure function; used by rank_candidate_ids so choose_model, the warm-cache
+    pick and the candidate walk can never disagree about eligibility.
+    """
+    lowered = (model_id or "").lower()
+    if any(marker in lowered for marker in GEMINI_AUTO_FORBIDDEN):
+        # A preview SHAPE is still a preview (handled below) unless another
+        # forbidden marker rides along (e.g. -preview-customtools).
+        if not any(pattern.match(lowered) for pattern in GEMINI_AUTO_PREVIEW_RES):
+            return "excluded"
+    if any(pattern.match(lowered) for pattern in GEMINI_AUTO_ALIAS_RES):
+        return "alias"
+    if any(pattern.match(lowered) for pattern in GEMINI_AUTO_STABLE_RES):
+        return "stable"
+    if any(pattern.match(lowered) for pattern in GEMINI_AUTO_PREVIEW_RES):
+        return "preview"
+    if not _GEMINI_VERSION_RE.match(lowered):
+        # Codename (gemini-4-argon) or another family: never Auto.
+        return "excluded"
+    return "excluded"
+
+
+_AUTO_CLASS_ORDER = {"alias": 0, "stable": 1, "preview": 2}
+
+
+def _auto_class_rank(spec: ProviderSpec, model_id: str) -> tuple[int, str] | None:
+    """(order, class) for Auto, or None when the id is not a candidate.
+
+    Gemini is allow-listed; every other provider keeps its existing
+    deny-list-only behavior (returns ("", "") equivalent ordering neutral).
+    """
+    if spec.name != "gemini":
+        return ("", "")
+    klass = gemini_auto_class(model_id)
+    if klass == "excluded":
+        return None
+    if klass == "preview" and not getattr(settings, "AUTO_ALLOW_PREVIEW_MODELS", False):
+        return None
+    return (_AUTO_CLASS_ORDER[klass], klass)
+
+
 def rank_candidate_ids(
     spec: ProviderSpec,
     ids: Iterable[str],
@@ -260,15 +379,25 @@ def rank_candidate_ids(
     provider's ``created`` timestamp DESC where the API gives one, then the
     id for determinism. Non-chat ids are dropped; duplicates collapse
     case-insensitively.
+
+    T2: for Gemini this is an ALLOW-LIST, not a deny-list. ``-latest``
+    aliases rank before everything, stable numbered families next, previews
+    only when AUTO_ALLOW_PREVIEW_MODELS is on (and always after stable);
+    codenames and specialized families are never candidates. The same
+    ordering feeds choose_model, the warm-cache pick and the walk, so Auto
+    cannot pick gemini-4-argon or a TTS model no matter what the list
+    contains. A caller's PIN bypasses this entirely (hand-pin is explicit).
     """
     created = created or {}
     preferred_index = {m.lower(): i for i, m in enumerate(spec.preferred_models)}
 
     def sort_key(model_id: str):
+        auto = _auto_class_rank(spec, model_id)
         group = preference_group(spec.name, model_id)
         pref = preferred_index.get(model_id.lower(), len(spec.preferred_models))
         version = parse_version_tuple(model_id)
         return (
+            auto if auto is not None else ("", ""),
             group,
             pref,
             tuple(-part for part in (version or ())),
@@ -285,7 +414,11 @@ def rank_candidate_ids(
         seen.add(lowered)
         unique.append(model_id)
     return sorted(
-        [m for m in unique if is_chat_capable(spec, m)],
+        [
+            m
+            for m in unique
+            if is_chat_capable(spec, m) and _auto_class_rank(spec, m) is not None
+        ],
         key=sort_key,
     )
 

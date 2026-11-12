@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     DEEPSEEK_MODEL: str = ""
     # How long a discovered model list is cached before it is re-fetched.
     MODEL_CACHE_TTL_SECONDS: int = 3600
+    # T2: allow Gemini -preview models into Auto ONLY after every stable
+    # candidate is denied. Off by default — previews rotate and can vanish
+    # under a key that worked yesterday.
+    AUTO_ALLOW_PREVIEW_MODELS: bool = False
     # Fernet key used to encrypt per-caller provider API keys (BYOK) at rest.
     # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
