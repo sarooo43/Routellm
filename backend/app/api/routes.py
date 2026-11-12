@@ -15,6 +15,7 @@ a stack trace leaking to the caller.
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -283,6 +284,28 @@ async def route_prompt(
     try:
         start = time.perf_counter()
         if body.force_provider is not None and body.force_provider not in PROVIDER_REGISTRY:
+            if body.force_provider == "mock":
+                # Demo mode is off: a deliberate setting, not an unknown name.
+                # Return the envelope (not 400) so the UI can show the fix.
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": False,
+                        "result": "",
+                        "model_used": None,
+                        "confidence_score": 0.0,
+                        "fallback_chain_attempted": [],
+                        "latency_ms": 0.0,
+                        "tokens_used": 0,
+                        "request_id": str(uuid4()),
+                        "error": (
+                            "demo_disabled: Demo mode is off, enable it in Settings "
+                            "(set DEMO_MODE_ENABLED=true, or delete the line in .env, "
+                            "then restart)."
+                        ),
+                        "routing_method": "rule_based",
+                    },
+                )
             logger.warning(
                 "route_rejected_unknown_force_provider",
                 force_provider=body.force_provider,

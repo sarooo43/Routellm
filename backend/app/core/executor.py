@@ -446,11 +446,36 @@ async def _execute_forced_single_provider(
 
     # BYOK callers may only use providers they configured. A forced provider
     # without a caller key fails structurally without any upstream call.
-    missing_byok = bool(provider_api_keys) and provider_name not in provider_api_keys
+    # EXCEPTION — the demo provider: it is synthetic, reads no credential and
+    # makes no network call, so BYOK isolation must not deny it. (OBSERVED
+    # LIVE: a caller with a stored Gemini key got `missing_provider_key` for
+    # force_provider="mock" — a demo request is not a leak risk, so the gate
+    # never applies to it.)
+    missing_byok = (
+        bool(provider_api_keys)
+        and provider_name not in provider_api_keys
+        and provider_name != "mock"
+    )
 
     # ---- Chaos gate (DEV/DEMO ONLY): same simulated outage as the full path.
     chaos_injected = False
-    if missing_byok:
+    if provider_name == "mock" and "mock" not in PROVIDER_REGISTRY:
+        # Demo mode is deliberately off (DEMO_MODE_ENABLED=false): say so,
+        # never "missing_provider_key" — that blames a key that is not involved.
+        response = ProviderResponse(
+            success=False,
+            text="",
+            tokens_used=0,
+            latency_ms=0.0,
+            error=(
+                "demo_disabled: Demo mode is off, enable it in Settings "
+                "(set DEMO_MODE_ENABLED=true, or delete the line in .env, "
+                "then restart)."
+            ),
+            provider_name=provider_name,
+            model_name="n/a",
+        )
+    elif missing_byok:
         response = ProviderResponse(
             success=False,
             text="",
