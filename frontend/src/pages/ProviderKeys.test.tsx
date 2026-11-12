@@ -14,6 +14,7 @@ vi.mock('../api/client', () => ({
   testProviderModel: vi.fn(),
   testProvider: vi.fn(),
   setPinnedModel: vi.fn(),
+  postRoute: vi.fn(),
 }))
 
 import {
@@ -122,6 +123,25 @@ describe('ProviderKeys', () => {
         expect.objectContaining({ sort: 'tier', tier: 'all' }),
       ),
     )
+  })
+
+  it('never sends POST /api/v1/route from the save flow (T6: one test path)', async () => {
+    // OBSERVED LIVE (owner's main run): a /route call appeared ~1 s after a
+    // save. No automatic sender exists in the frontend; this pins it — saving
+    // a key must trigger discovery traffic only, never a routing call.
+    saveGeneratedKey(generated)
+    renderPage()
+    const input = await screen.findByLabelText('Groq API key')
+    fireEvent.change(input, { target: { value: 'gsk_test_provider_secret_abcdef' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Groq key' }))
+
+    await screen.findByRole('region', { name: 'Groq model explorer' })
+    await waitFor(() => expect(getProviderModels).toHaveBeenCalled())
+    // The mock module has no postRoute default call; assert it was never made.
+    const { postRoute } = (await import('../api/client')) as typeof import('../api/client') & {
+      postRoute: ReturnType<typeof vi.fn>
+    }
+    expect(postRoute).not.toHaveBeenCalled()
   })
 
   it('removes a configured provider key for the selected RouteLLM key', async () => {
