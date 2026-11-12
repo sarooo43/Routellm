@@ -77,6 +77,71 @@ def test_star_disables_enforcement(enforce):
     assert _host_allowed("anything-goes.example")
 
 
+# --------------------------------------------------------------------------
+# GitHub Codespaces (T7)
+# --------------------------------------------------------------------------
+
+
+def test_codespaces_forwarded_host_is_allowed(enforce, monkeypatch):
+    from app.main import _host_allowed
+
+    monkeypatch.setenv("CODESPACES", "true")
+    monkeypatch.setenv("CODESPACE_NAME", "fictional-space-abc123")
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    assert _host_allowed("fictional-space-abc123-8000.app.github.dev")
+    assert _host_allowed("fictional-space-abc123-8123.app.github.dev:443")
+    # run.py may auto-advance the port: any port on OUR OWN codespace name is fine.
+    assert _host_allowed("fictional-space-abc123-9999.app.github.dev")
+
+
+def test_codespaces_foreign_space_is_rejected(enforce, monkeypatch):
+    """Another codespace's forwarding host must NOT get in (no *.app.github.dev)."""
+    from app.main import _host_allowed
+
+    monkeypatch.setenv("CODESPACES", "true")
+    monkeypatch.setenv("CODESPACE_NAME", "fictional-space-abc123")
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    assert not _host_allowed("someone-elses-space-8000.app.github.dev")
+    # A lookalike prefix (different codespace, same suffix) is also rejected.
+    assert not _host_allowed("fictional-space-abc123x-8000.app.github.dev")
+    # Non-numeric middle part (not a port) is rejected.
+    assert not _host_allowed("fictional-space-abc123-evil.app.github.dev")
+
+
+def test_non_codespaces_env_unchanged(enforce, monkeypatch):
+    """Without Codespaces env vars the behaviour is exactly the loopback set."""
+    from app.main import _host_allowed
+
+    monkeypatch.delenv("CODESPACES", raising=False)
+    monkeypatch.delenv("CODESPACE_NAME", raising=False)
+    assert _host_allowed("localhost")
+    assert not _host_allowed("fictional-space-abc123-8000.app.github.dev")
+
+
+def test_codespaces_true_without_a_name_fails_closed(enforce, monkeypatch):
+    """CODESPACES=true but no CODESPACE_NAME: cannot build a safe host -> deny."""
+    from app.main import _host_allowed
+
+    monkeypatch.setenv("CODESPACES", "true")
+    monkeypatch.delenv("CODESPACE_NAME", raising=False)
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    assert not _host_allowed("anything.app.github.dev")
+
+
+async def test_codespace_rejection_message_names_the_host_and_the_fix(enforce):
+    """A rejected host's 400 JSON must contain the host and the ALLOWED_HOSTS cure."""
+    from app.main import app
+
+    enforce.delenv("CODESPACE_NAME", raising=False)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/health", headers={"host": "stranger.example"})
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "stranger.example" in detail
+    assert "ALLOWED_HOSTS" in detail
+
+
 def test_ipv6_without_brackets_is_not_corrupted_by_port_splitting(enforce):
     from app.main import _host_allowed
 
@@ -99,7 +164,7 @@ async def test_unknown_host_gets_400_from_the_app(enforce):
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as ac:
         response = await ac.get("/health", headers={"host": "attacker.example"})
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid Host header"}
+    assert response.json()["detail"].startswith("Invalid Host header")
 
 
 async def test_loopback_host_gets_through_to_the_app(enforce):

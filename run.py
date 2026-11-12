@@ -418,6 +418,17 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     print(f"  Health      {url}health")
     print(f"  Data        {data_dir}")
     print(f"  {dim(line)}")
+    codespace = os.environ.get("CODESPACE_NAME", "").strip()
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip()
+    if codespace and domain:
+        # The forwarded URL's Host (e.g. myspace-8123.app.github.dev) is NOT in
+        # the middleware's loopback set, so the first request through the
+        # forwarded port would 400. One line, before it happens. The middleware
+        # already allows <CODESPACE_NAME>-<port>.<domain> automatically.
+        port = url.split(":", 1)[1].split("/", 1)[0] if ":" in url else "8000"
+        forwarded = f"{codespace}-{port}.{domain}"
+        print(f"  {warn('Codespace detected:')} its forwarded Host is allowed automatically.")
+        print(f"  {dim(f'  forwarded URL: https://{forwarded}')}")
     if provider_hint:
         print(f"  {warn('No provider key configured yet.')}")
         print("  Open the Providers page and add a free key:")
