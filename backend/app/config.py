@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # candidate is denied. Off by default — previews rotate and can vanish
     # under a key that worked yesterday.
     AUTO_ALLOW_PREVIEW_MODELS: bool = False
+    # T3 per-key model-status TTLs: a 404/400 model_not_found denies one
+    # candidate for a day; a 429 parks it until Retry-After (this fallback
+    # applies when the provider sends none); "works" keeps the legacy ~1h.
+    MODEL_STATUS_TTL_S: int = 3600
+    MODEL_DENIED_TTL_S: int = 86400
+    MODEL_RATE_LIMITED_TTL_S: int = 60
     # Fernet key used to encrypt per-caller provider API keys (BYOK) at rest.
     # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

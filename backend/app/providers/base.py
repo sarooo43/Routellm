@@ -18,6 +18,9 @@ class ProviderResponse(BaseModel):
     #: breaker from THIS, not by pattern-matching the human sentence — the
     #: sentence is prose and prose changes.
     outcome: Optional[str] = None
+    #: Provider-supplied Retry-After in SECONDS (from the 429 header), when
+    #: present. The model-status cache uses it as the rate_limited TTL.
+    retry_after: Optional[float] = None
 
 
 class ModelProvider(ABC):
@@ -38,6 +41,7 @@ def make_error(
     error: str,
     latency_ms: float,
     outcome: Optional[str] = None,
+    retry_after: Optional[float] = None,
 ) -> ProviderResponse:
     return ProviderResponse(
         success=False,
@@ -48,6 +52,7 @@ def make_error(
         provider_name=provider_name,
         model_name=model_name,
         outcome=outcome,
+        retry_after=retry_after,
     )
 
 

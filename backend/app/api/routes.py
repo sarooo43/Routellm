@@ -322,6 +322,7 @@ async def route_prompt(
             force_provider=body.force_provider,
             provider_api_keys=provider_api_keys,
             provider_models=provider_models,
+            api_key_id=api_key.id,
         )
         if result.success:
             await record_api_key_usage(db_session, api_key, result.tokens_used)

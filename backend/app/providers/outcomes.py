@@ -31,9 +31,12 @@ from urllib.parse import urlsplit
 
 from app.providers.base import make_error, make_success, elapsed_ms
 
-#: How much of the provider body we keep. Long enough to carry a real message
-#: ("The model `x` does not exist"), short enough for a log line and a card.
-BODY_SNIPPET_CHARS = 200
+#: How much of the provider body we keep. Raised from 200 to 1000 (T4): the
+#: retired-model 404 OBSERVED LIVE carries its full guidance ("...Please
+#: update your code to use models/gemini-3.8-flash for the latest features
+#: and improve...") and the 200-char cap cut the tail off in logs and UI.
+#: 1000 chars still fits a log line; redaction still runs over the text.
+BODY_SNIPPET_CHARS = 1000
 
 #: Every outcome this module can produce. Kept in one place so the API's
 #: user-facing verdict table can be asserted to cover all of them instead of
@@ -80,13 +83,17 @@ def redact(text: str) -> str:
 
 
 def snippet(response) -> str:
-    """First ~200 chars of the body, redacted and whitespace-collapsed."""
+    """First ~1000 chars of the body, redacted and whitespace-collapsed.
+
+    Redaction runs BEFORE the slice: a credential echoed near the cut point
+    would otherwise survive half-redacted.
+    """
     try:
         raw = response.text or ""
     except Exception:  # pragma: no cover - exotic transport
         return ""
     collapsed = " ".join(raw.split())
-    return redact(collapsed[:BODY_SNIPPET_CHARS])
+    return redact(collapsed)[:BODY_SNIPPET_CHARS]
 
 
 def host_of(url: str) -> str:
@@ -222,7 +229,24 @@ def error_for_status(
         latency_ms,
         #: Machine-readable outcome for breaker/telemetry decisions.
         outcome=outcome,
+        #: T3: the model-status cache honors the provider's own backoff hint.
+        retry_after=_retry_after_seconds(response),
     )
+
+
+def _retry_after_seconds(response) -> Optional[float]:
+    """Numeric Retry-After header in seconds, or None (HTTP-date ignored)."""
+    try:
+        raw = response.headers.get("retry-after")
+    except Exception:  # pragma: no cover - exotic transport
+        return None
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, value)
 
 
 _MODEL_MISSING_RE = re.compile(

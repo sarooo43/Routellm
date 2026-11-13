@@ -587,6 +587,8 @@ async def _execute_provider_attempt(
     kwargs: dict,
     provider_api_key: Optional[str],
     pinned_model: Optional[str],
+    db_session: Optional[AsyncSession] = None,
+    api_key_id: Optional[int] = None,
 ) -> tuple[ProviderResponse, list[AttemptLog], Optional[str]]:
     """One real provider attempt through the shared lazy candidate walk.
 
@@ -610,6 +612,8 @@ async def _execute_provider_attempt(
         provider_api_key,
         pinned_model=pinned_model,
         provider=PROVIDER_REGISTRY[provider_name],
+        db_session=db_session,
+        api_key_id=api_key_id,
     )
     logs = [
         AttemptLog(
@@ -638,6 +642,7 @@ async def execute_with_fallback(
     max_tokens: Optional[int] = None,
     provider_api_keys: Optional[dict[str, str]] = None,
     provider_models: Optional[dict[str, Optional[str]]] = None,
+    api_key_id: Optional[int] = None,
 ) -> ExecutionResult:
     """Execute a prompt across ranked providers with automatic fallback.
 
@@ -645,6 +650,10 @@ async def execute_with_fallback(
     logging writes). Skipped providers (quota/circuit) are logged in the
     chain but do not consume the max_fallbacks budget — only real provider
     calls count as attempts.
+
+    api_key_id (T3): the calling RouteLLM key's DB id, when known. Walks
+    persist per-(key, provider, model) statuses under it, so a restart keeps
+    the last-known-good model and the 24h denied set instead of re-learning.
 
     force_provider (benchmarks only): skips scoring/ranking and pre-flight
     gating entirely; attempts ONLY that provider with zero fallback — the
@@ -813,6 +822,8 @@ async def execute_with_fallback(
                         kwargs,
                         caller_key,
                         pinned_model,
+                        db_session=db_session,
+                        api_key_id=api_key_id,
                     )
                 )
             except Exception as e:

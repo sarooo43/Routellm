@@ -90,6 +90,8 @@ __all__ = [
     "WalkResult",
     "WalkStep",
     "clear_caches",
+    "db_denied_models",
+    "db_last_known_good",
     "denied_models",
     "discover_models",
     "extract_replacement_model",
@@ -98,6 +100,7 @@ __all__ = [
     "get_provider_model_pin",
     "is_valid_model_id",
     "key_fingerprint",
+    "last_known_good_model",
     "load_db_statuses",
     "load_provider_pins",
     "mark_status",
@@ -288,16 +291,49 @@ def denied_models(api_key: str, provider: str) -> set[str]:
 
 
 def mark_status(
-    api_key: str, provider: str, model_id: str, status: str
+    api_key: str, provider: str, model_id: str, status: str,
+    retry_after: Optional[float] = None,
 ) -> None:
-    """Remember a per-(key, provider, model) status in memory for ~1h."""
+    """Remember a per-(key, provider, model) status with a per-status TTL.
+
+    TTLs (T3): denied (404/400 model-not-found) 24h — a retired model does
+    not come back overnight; rate_limited until the provider's Retry-After
+    (fallback ``MODEL_RATE_LIMITED_TTL_S`` when none was sent); works keeps
+    the legacy ~1h. A key-wide 403 is deliberately NOT cached as a
+    model-denied status — see walk_candidates.
+    """
     if not is_valid_model_id(model_id):
         return
+    if status == "denied":
+        ttl = settings.MODEL_DENIED_TTL_S
+    elif status == "rate_limited":
+        ttl = retry_after if retry_after and retry_after > 0 else settings.MODEL_RATE_LIMITED_TTL_S
+    else:
+        ttl = settings.MODEL_STATUS_TTL_S
     cache_key = (key_fingerprint(api_key), provider)
     _status_cache.setdefault(cache_key, {})[model_id] = (
         status,
-        _now() + settings.MODEL_STATUS_TTL_S,
+        _now() + ttl,
     )
+
+
+def last_known_good_model(api_key: str, provider: str) -> Optional[str]:
+    """The most recent 'works' model for this key+provider, from memory.
+
+    The walk tries it FIRST (T3): a model that answered for this exact key is
+    the best available predictor of a working call. DB persistence (surviving
+    restarts) is layered on top by walk_candidates when a session is
+    available.
+    """
+    entries = _status_cache.get((key_fingerprint(api_key), provider), {})
+    now = _now()
+    best: tuple[float, str] | None = None
+    for model_id, (status, expires_at) in entries.items():
+        if status == "works" and expires_at >= now:
+            # Ties broken by the LATER expiry (marked most recently).
+            if best is None or expires_at > best[0]:
+                best = (expires_at, model_id)
+    return best[1] if best else None
 
 
 def clear_caches() -> None:
@@ -308,11 +344,15 @@ def clear_caches() -> None:
 
 
 def sanitize_error_message(message: str, api_key: Optional[str] = None) -> str:
-    """Truncate a provider message to ~200 chars and scrub the key."""
+    """Truncate a provider message to ~1000 chars and scrub the key.
+
+    200 → 1000 (T4): the OBSERVED LIVE retired-model 404's guidance was cut
+    mid-sentence at ~200 chars. Redaction stays on and runs before the cut.
+    """
     text = message or ""
     if api_key and api_key in text:
         text = text.replace(api_key, "***")
-    return text.strip()[:200]
+    return text.strip()[:1000]
 
 
 # --------------------------------------------------------------------------
@@ -414,17 +454,31 @@ async def discover_models(
 
 
 def rank_candidates(
-    provider: str, models: list[DiscoveredModel], denied: set[str]
+    provider: str,
+    models: list[DiscoveredModel],
+    denied: set[str],
+    first: Optional[str] = None,
 ) -> list[DiscoveredModel]:
     """Order candidates for the walk: the shared registry ranking, minus
-    anything this key was already denied."""
+    anything this key was already denied.
+
+    ``first`` (T3): this key's last-known-working model — it is tried before
+    everything else because a model that answered for THIS key is the best
+    predictor of a working call. Only honored when it is still in the
+    key's discovered list (a stale id is never resurrected from memory).
+    """
     spec = spec_for(provider)
     if spec is None:
         return []
     created = {m.id: (m.created or 0) for m in models}
     ordered_ids = rank_candidate_ids(spec, [m.id for m in models], created=created)
     by_id = {m.id: m for m in models}
-    return [by_id[m] for m in ordered_ids if m not in denied and m in by_id]
+    result = [by_id[m] for m in ordered_ids if m not in denied and m in by_id]
+    if first and first in by_id and first not in denied:
+        if first in result:
+            result.remove(first)
+        result.insert(0, by_id[first])
+    return result
 
 
 def sort_models_for_provider(
@@ -522,6 +576,69 @@ async def upsert_db_status(
         logger.warning("model_status_persist_failed", provider=provider, error=str(e))
 
 
+async def db_denied_models(
+    db_session: AsyncSession, api_key_id: int, provider: str
+) -> set[str]:
+    """TTL-filtered denied/rate_limited model ids persisted for this key.
+
+    Mirrors the in-memory TTLs at READ time (no expiry column — the row's
+    last_checked_at is the write time): denied rows live 24h
+    (``MODEL_DENIED_TTL_S``), rate_limited rows the fallback
+    ``MODEL_RATE_LIMITED_TTL_S`` (the per-row Retry-After is not persisted;
+    the in-memory cache holds the precise value while the process runs).
+    Best-effort: any read failure yields an empty set.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        rows = await load_db_statuses(db_session, api_key_id, provider)
+    except Exception as e:  # noqa: BLE001 - persistence is best-effort
+        logger.warning("model_status_read_failed", provider=provider, error=str(e))
+        return set()
+    now = datetime.now(timezone.utc)
+    denied_ttl = timedelta(seconds=settings.MODEL_DENIED_TTL_S)
+    limited_ttl = timedelta(seconds=settings.MODEL_RATE_LIMITED_TTL_S)
+    out: set[str] = set()
+    for model_id, row in rows.items():
+        checked = row.last_checked_at
+        if checked is None:
+            continue
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+        if row.status == "denied" and now - checked < denied_ttl:
+            out.add(model_id)
+        elif row.status == "rate_limited" and now - checked < limited_ttl:
+            out.add(model_id)
+    return out
+
+
+async def db_last_known_good(
+    db_session: AsyncSession, api_key_id: int, provider: str
+) -> Optional[str]:
+    """The most recent 'works' row for this key+provider (works TTL)."""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        rows = await load_db_statuses(db_session, api_key_id, provider)
+    except Exception as e:  # noqa: BLE001 - persistence is best-effort
+        logger.warning("model_status_read_failed", provider=provider, error=str(e))
+        return None
+    now = datetime.now(timezone.utc)
+    ttl = timedelta(seconds=settings.MODEL_STATUS_TTL_S)
+    best: tuple[datetime, str] | None = None
+    for model_id, row in rows.items():
+        checked = row.last_checked_at
+        if row.status != "works" or checked is None:
+            continue
+        if checked.tzinfo is None:
+            checked = checked.replace(tzinfo=timezone.utc)
+        if now - checked >= ttl:
+            continue
+        if best is None or checked > best[0]:
+            best = (checked, model_id)
+    return best[1] if best else None
+
+
 async def get_provider_model_pin(
     db_session: AsyncSession, api_key_id: int, provider: str
 ) -> Optional[str]:
@@ -583,6 +700,45 @@ def _is_rate_limited(response: ProviderResponse) -> bool:
     return bool((response.error or "") == "rate_limit_exceeded")
 
 
+def _is_auth_failed(response: ProviderResponse) -> bool:
+    """403-shaped: the key AUTHENTICATED but was refused for this call.
+
+    Gemini's PERMISSION_DENIED answers 403 with a key that lists models just
+    fine — the failure is key- or project-wide, not about the model string.
+    """
+    return response.outcome == "auth_failed" or (
+        response.error or "").startswith("auth_failed")
+
+
+def _replacement_allowed(provider_name: str, model_id: str) -> bool:
+    """T3: a provider-suggested replacement must pass this app's allow-list.
+
+    The provider's hint says "use models/X", but X may be a preview or
+    specialized id this app refuses to Auto-route. Verified candidates only.
+    """
+    spec = spec_for(provider_name)
+    if spec is None:
+        return False
+    from app.providers.model_registry import _auto_class_rank
+
+    return _auto_class_rank(spec, model_id) is not None
+
+
+def _model_family(model_id: str) -> str:
+    """The model FAMILY of an id, for the 403 probe rule.
+
+    Family = the vendor line before any version number: gemini-2.5-flash,
+    gemini-3.8-flash and gemini-2.5-pro are all family "gemini" (OBSERVED
+    LIVE: the same key got 403 on all three, so per-version families would
+    defeat the probe); gemma-4-31b-it is "gemma". Ids without a recognizable
+    alpha prefix are their own family (conservative: "different" is easier
+    to prove than "same").
+    """
+    lowered = (model_id or "").lower()
+    match = re.match(r"^([a-z]+)-", lowered)
+    return match.group(1) if match else lowered
+
+
 # --------------------------------------------------------------------------
 # The shared candidate walk (routing + Test button use THIS code path)
 # --------------------------------------------------------------------------
@@ -602,13 +758,25 @@ async def walk_candidates(
     """Execute a prompt against one provider, walking ordered candidates.
 
     Candidate order: explicit ``first_model`` (a caller's pin or an .env
-    override), then rank_candidates() over the key's discovered models.
-    ``model_not_found`` marks the model denied for this key (~1h TTL) and
-    moves to the next candidate; a replacement id named in the provider's
-    error message (strict-regex extracted + verified against the discovered
-    list) is tried first. Any OTHER error (rate limit, auth, timeout,
-    server error) ends the walk so the executor can fall through to the
-    next provider as before.
+    override), then this key's last-known-working model, then
+    rank_candidates() over the key's discovered models. ``model_not_found``
+    (404 or 400 model-missing) marks the model denied for this key (24h TTL)
+    and moves to the next candidate (max 3 attempts per request); a
+    replacement id named in the provider's error message (strict-regex
+    extracted from the FULL body, verified against the discovered list AND
+    the Auto allow-list) is tried first.
+
+    Walk policy (T3):
+    - 404/400 model-not-found -> next candidate.
+    - 403 -> ONE probe of a different family, then stop. KNOWN LIMIT,
+      stated honestly: we cannot verify that a Gemini 403 is always
+      key-wide (cohort 404s exist too), so one cross-family probe is the
+      compromise between "give up instantly" and "hammer a broken key".
+      A 403 is NEVER cached as model-denied: the model string is usually
+      fine, the credential is what was refused.
+    - 429 -> stop immediately, never walk. Rate limits are key-wide; more
+      calls only deepen them. The model is parked for Retry-After seconds.
+    - any other error -> stop; the executor's provider fallback takes over.
     """
     provider_obj = provider or PROVIDER_REGISTRY.get(provider_name)
     if provider_obj is None:
@@ -623,12 +791,19 @@ async def walk_candidates(
         )
     discovered_ids = {m.id for m in models}
     denied = denied_models(api_key, provider_name)
+    last_good = last_known_good_model(api_key, provider_name)
+    if db_session is not None and api_key_id is not None:
+        # Restart persistence: statuses written on a previous run restore
+        # the same walk behavior (TTLs enforced at read time, below).
+        denied |= await db_denied_models(db_session, api_key_id, provider_name)
+        if last_good is None:
+            last_good = await db_last_known_good(db_session, api_key_id, provider_name)
 
     ordered: list[str] = []
     if first_model and is_valid_model_id(first_model):
         ordered.append(first_model)
     ordered.extend(
-        m.id for m in rank_candidates(provider_name, models, denied)
+        m.id for m in rank_candidates(provider_name, models, denied, first=last_good)
         if m.id not in ordered
     )
     # Nothing discovered at all? Still try the caller's/kwargs model or the
@@ -646,6 +821,7 @@ async def walk_candidates(
     replacement_hint: Optional[str] = None
     last_response: Optional[ProviderResponse] = None
     tried: set[str] = set()
+    auth_probe_done = False
 
     while ordered and len(tried) < max_attempts:
         model_id = ordered.pop(0)
@@ -714,19 +890,59 @@ async def walk_candidates(
                 )
             )
             hint = extract_replacement_model(
-                error.split(":", 1)[1] if ":" in error else error,
+                error,
                 discovered_ids,
                 failed_model=model_id,
             )
-            if hint and hint not in tried:
+            # T3: the replacement must ALSO pass the Auto allow-list — a
+            # provider hinting at a preview/codename id does not override
+            # this app's candidate policy.
+            if hint and hint not in tried and _replacement_allowed(provider_name, hint):
                 replacement_hint = hint
                 ordered.insert(0, hint)
+            continue
+
+        if _is_auth_failed(response):
+            # 403: the KEY was refused, not the model string. One cross-family
+            # probe (the "not always key-wide" compromise — see docstring),
+            # then stop. Never cached as model-denied.
+            steps.append(
+                WalkStep(
+                    model=model_id,
+                    skipped=False,
+                    reason="auth_failed",
+                    success=False,
+                    error=error,
+                    latency_ms=response.latency_ms,
+                )
+            )
+            if auth_probe_done:
+                break
+            auth_probe_done = True
+            family = _model_family(model_id)
+            probe = next(
+                (
+                    m
+                    for m in ordered
+                    if m not in tried and _model_family(m) != family
+                ),
+                None,
+            )
+            if probe is None:
+                break  # no different family left: report key-wide failure
+            ordered.remove(probe)
+            ordered.insert(0, probe)
             continue
 
         # Any other failure: mark rate_limited when applicable, stop the
         # walk (the executor's provider fallback takes over).
         if _is_rate_limited(response):
-            mark_status(api_key, provider_name, model_id, "rate_limited")
+            # 429: stop, never walk — more calls only deepen the limit. The
+            # model is parked until the provider's Retry-After expires.
+            mark_status(
+                api_key, provider_name, model_id, "rate_limited",
+                retry_after=response.retry_after,
+            )
             if db_session is not None and api_key_id is not None:
                 await upsert_db_status(
                     db_session,
@@ -779,6 +995,8 @@ async def generate_with_walking(
     pinned_model: Optional[str] = None,
     max_attempts: int = MAX_CANDIDATE_ATTEMPTS,
     provider: Optional[ModelProvider] = None,
+    db_session: Optional[AsyncSession] = None,
+    api_key_id: Optional[int] = None,
 ) -> tuple[ProviderResponse, list[WalkStep], Optional[str]]:
     """Routing-time execution: lazy candidate walking.
 
@@ -803,7 +1021,7 @@ async def generate_with_walking(
         initial_model = operator_env_model(provider_name)
 
     # If the model we were going to try first is already denied for this
-    # key (~1h TTL), don't waste the call: go straight to the ranked walk.
+    # key (24h TTL), don't waste the call: go straight to the ranked walk.
     if initial_model and initial_model in denied_models(api_key, provider_name):
         walk = await walk_candidates(
             provider_name,
@@ -813,6 +1031,8 @@ async def generate_with_walking(
             first_model=None,
             max_attempts=max_attempts,
             provider=provider_obj,
+            db_session=db_session,
+            api_key_id=api_key_id,
         )
         return walk.response, walk.steps, walk.model_used
 
@@ -835,6 +1055,10 @@ async def generate_with_walking(
                 if model_id and is_valid_model_id(model_id) and model_id not in denied_now:
                     initial_model = model_id
                     break
+        # T3: persisted last-known-good (from a previous run) beats even the
+        # warm-cache ranking when memory has nothing.
+        if initial_model is None and db_session is not None and api_key_id is not None:
+            initial_model = await db_last_known_good(db_session, api_key_id, provider_name)
 
     call_kwargs = dict(kwargs)
     if initial_model:
@@ -852,22 +1076,52 @@ async def generate_with_walking(
             first_model=None,
             max_attempts=max_attempts,
             provider=provider_obj,
+            db_session=db_session,
+            api_key_id=api_key_id,
         )
         return walk.response, walk.steps, walk.model_used
 
     response = await provider_obj.generate(prompt, **call_kwargs)
-    if response.success or not _is_model_not_found(response):
+    walkable = _is_model_not_found(response) or _is_auth_failed(response)
+    if response.success or not walkable:
         if response.success and initial_model:
             mark_status(api_key, provider_name, initial_model, "works")
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session, api_key_id, provider_name, initial_model, "works", None
+                )
         elif _is_rate_limited(response) and initial_model:
-            mark_status(api_key, provider_name, initial_model, "rate_limited")
+            mark_status(
+                api_key, provider_name, initial_model, "rate_limited",
+                retry_after=response.retry_after,
+            )
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session,
+                    api_key_id,
+                    provider_name,
+                    initial_model,
+                    "rate_limited",
+                    response.error,
+                )
         return response, [], initial_model
 
-    # ---- model_not_found: discover and walk the remaining candidates ----
+    # ---- walkable failure: a retired model (404/400) or a 403 ----
     denied = denied_models(api_key, provider_name)
-    if initial_model:
-        denied = set(denied) | {initial_model}
-        mark_status(api_key, provider_name, initial_model, "denied")
+    if db_session is not None and api_key_id is not None:
+        denied |= await db_denied_models(db_session, api_key_id, provider_name)
+    initial_reason = "model_not_found" if _is_model_not_found(response) else "auth_failed"
+    if _is_model_not_found(response):
+        if initial_model:
+            denied = set(denied) | {initial_model}
+            mark_status(api_key, provider_name, initial_model, "denied")
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session, api_key_id, provider_name, initial_model, "denied",
+                    response.error,
+                )
+        # A 403 is NEVER cached as model-denied (key-wide refusal — see
+        # walk_candidates): only the deny-bookkeeping above is skipped.
 
     models, discovery_reason = await discover_models(provider_name, api_key)
     if discovery_reason and not models:
@@ -880,13 +1134,32 @@ async def generate_with_walking(
 
     discovered_ids = {m.id for m in models}
     ordered = [
-        m.id for m in rank_candidates(provider_name, models, denied)
+        m.id
+        for m in rank_candidates(
+            provider_name, models, denied,
+            first=last_known_good_model(api_key, provider_name),
+        )
     ]
+    if initial_reason == "auth_failed" and ordered:
+        # The INITIAL attempt was refused with 403: don't burn a walk slot on
+        # a same-family model — the refusal was about the key, not the model
+        # string. Probe ONE different family first; with no different family
+        # in discovery, stop without a probe (the failure is key-wide).
+        family = _model_family(initial_model or "")
+        probe = next(
+            (m for m in ordered if _model_family(m) != family),
+            None,
+        )
+        if probe is not None:
+            ordered.remove(probe)
+            ordered.insert(0, probe)
+        else:
+            ordered = []
     steps: list[WalkStep] = [
         WalkStep(
             model=initial_model or "provider-default",
             skipped=False,
-            reason="model_not_found",
+            reason=initial_reason,
             success=False,
             error=response.error,
             latency_ms=response.latency_ms,
@@ -895,6 +1168,7 @@ async def generate_with_walking(
     replacement_hint: Optional[str] = None
     tried: set[str] = {initial_model or ""}
     attempts_after_first = 1  # the initial failed attempt counts
+    auth_probe_done = False
 
     while ordered and attempts_after_first < max_attempts:
         model_id = ordered.pop(0)
@@ -919,6 +1193,10 @@ async def generate_with_walking(
 
         if response.success:
             mark_status(api_key, provider_name, model_id, "works")
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session, api_key_id, provider_name, model_id, "works", None
+                )
             steps.append(
                 WalkStep(
                     model=model_id,
@@ -932,6 +1210,11 @@ async def generate_with_walking(
 
         if _is_model_not_found(response):
             mark_status(api_key, provider_name, model_id, "denied")
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session, api_key_id, provider_name, model_id, "denied",
+                    response.error,
+                )
             steps.append(
                 WalkStep(
                     model=model_id,
@@ -943,19 +1226,57 @@ async def generate_with_walking(
                 )
             )
             hint = extract_replacement_model(
-                (response.error or "").split(":", 1)[1]
-                if ":" in (response.error or "")
-                else (response.error or ""),
+                response.error or "",
                 discovered_ids,
                 failed_model=model_id,
             )
-            if hint and hint not in tried:
+            if (
+                hint
+                and hint not in tried
+                and _replacement_allowed(provider_name, hint)
+            ):
                 replacement_hint = hint
                 ordered.insert(0, hint)
             continue
 
+        if _is_auth_failed(response):
+            # 403: one cross-family probe, then stop — see walk_candidates
+            # for the stated "not always key-wide" compromise. Never cached
+            # as model-denied.
+            steps.append(
+                WalkStep(
+                    model=model_id,
+                    skipped=False,
+                    reason="auth_failed",
+                    success=False,
+                    error=response.error,
+                    latency_ms=response.latency_ms,
+                )
+            )
+            if auth_probe_done:
+                break
+            auth_probe_done = True
+            family = _model_family(model_id)
+            probe = next(
+                (m for m in ordered if m not in tried and _model_family(m) != family),
+                None,
+            )
+            if probe is None:
+                break
+            ordered.remove(probe)
+            ordered.insert(0, probe)
+            continue
+
         if _is_rate_limited(response):
-            mark_status(api_key, provider_name, model_id, "rate_limited")
+            mark_status(
+                api_key, provider_name, model_id, "rate_limited",
+                retry_after=response.retry_after,
+            )
+            if db_session is not None and api_key_id is not None:
+                await upsert_db_status(
+                    db_session, api_key_id, provider_name, model_id, "rate_limited",
+                    response.error,
+                )
         steps.append(
             WalkStep(
                 model=model_id,
