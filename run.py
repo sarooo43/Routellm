@@ -51,8 +51,19 @@ ENV_EXAMPLE = BACKEND_DIR / ".env.example"
 ENV_FILE = BACKEND_DIR / ".env"
 DATA_DIR = REPO_ROOT / "data"
 
-#: ANSI colours, disabled when stdout is not a TTY (CI logs, Windows cmd).
+#: ANSI colours, disabled when the stream is not a TTY (CI logs, Windows cmd).
 _COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+# Windows consoles default to a legacy codepage (cp1252 on most Western
+# locales) that cannot encode the launcher's checkmark glyphs — the very
+# first status line then died with UnicodeEncodeError before anything ran.
+# Reconfigure to UTF-8 with replacement so the launcher works on ANY console,
+# including piped output. Best-effort: odd embedded interpreters may refuse.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+except (AttributeError, ValueError, OSError):  # pragma: no cover - exotic streams
+    pass
 
 
 def _c(code: str, text: str) -> str:
@@ -407,6 +418,17 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     print(f"  Health      {url}health")
     print(f"  Data        {data_dir}")
     print(f"  {dim(line)}")
+    codespace = os.environ.get("CODESPACE_NAME", "").strip()
+    domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip()
+    if codespace and domain:
+        # The forwarded URL's Host (e.g. myspace-8123.app.github.dev) is NOT in
+        # the middleware's loopback set, so the first request through the
+        # forwarded port would 400. One line, before it happens. The middleware
+        # already allows <CODESPACE_NAME>-<port>.<domain> automatically.
+        port = url.split(":", 1)[1].split("/", 1)[0] if ":" in url else "8000"
+        forwarded = f"{codespace}-{port}.{domain}"
+        print(f"  {warn('Codespace detected:')} its forwarded Host is allowed automatically.")
+        print(f"  {dim(f'  forwarded URL: https://{forwarded}')}")
     if provider_hint:
         print(f"  {warn('No provider key configured yet.')}")
         print("  Open the Providers page and add a free key:")

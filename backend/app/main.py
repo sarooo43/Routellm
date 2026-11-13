@@ -31,6 +31,7 @@ from app.api.provider_test_routes import router as provider_test_router
 from app.api.setup_routes import router as setup_router
 from app.api.routes import health_payload, limiter, router
 from app.config import (
+    allowed_host_list,
     cors_origin_list,
     redis_uses_tls,
     settings,
@@ -258,6 +259,29 @@ async def _sqlalchemy_error_handler(request: Request, exc: Exception):
     )
 
 
+@app.exception_handler(ConnectionRefusedError)
+async def _connection_refused_handler(request: Request, exc: Exception):
+    """A refused TCP connect to the database, caught raw.
+
+    Verified against SQLAlchemy 2.1 + asyncpg: a connect to a closed port
+    raises the builtin ``ConnectionRefusedError`` — NOT a SQLAlchemyError —
+    so without this handler the very first request after Postgres dies
+    answered with a raw 500 instead of the documented 503. (httpx/redis
+    translate their own refused connections into library exceptions, so a
+    leaked ConnectionRefusedError here is the database in practice.)
+    """
+    logger.error(
+        "database_connect_refused_503",
+        path=request.url.path,
+        database=mask_database_url(settings.DATABASE_URL) if settings.DATABASE_URL else None,
+        error=str(exc).strip()[:400],
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database temporarily unavailable"},
+    )
+
+
 app.add_middleware(
     CORSMiddleware,
     # Explicit browser-origin allowlist (comma-separated CORS_ORIGINS env, see
@@ -270,6 +294,118 @@ app.add_middleware(
     allow_credentials=False,
     expose_headers=["X-RateLimit-Remaining", "Retry-After"],
 )
+
+
+class AllowedHostsMiddleware:
+    """Reject requests whose Host header is not on the allow-list (400).
+
+    Why: a browser follows whatever URL a page tells it to, so an attacker
+    page can POST to ``http://attacker.example`` while DNS rebinding points
+    that name at ``127.0.0.1:8000`` — every loopback-bound service without a
+    Host check is exposed that way (no CORS header can save a simple POST).
+    Checking Host closes it: the browser's Host header is the attacker cannot
+    forge from another origin.
+
+    Always allowed: localhost, 127.0.0.1, ::1/[::1], and the ``HOST`` this
+    process binds. Extra names come from ``ALLOWED_HOSTS`` (see config.py);
+    ``ALLOWED_HOSTS=*`` disables the check for proxies that rewrite Host.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {k.lower(): v for k, v in scope.get("headers") or []}
+        host = headers.get(b"host", b"").decode("latin-1").strip().lower()
+        if _host_allowed(host):
+            await self.app(scope, receive, send)
+        else:
+            response = JSONResponse(
+                status_code=400,
+                # Name the offending host and the fix: a developer hitting this
+                # in a Codespace or through a tunnel needs the one-line cure,
+                # not a bare "bad request".
+                content={
+                    "detail": (
+                        f"Invalid Host header '{host or '(missing)'}'. This backend "
+                        "only accepts localhost, 127.0.0.1, ::1 and its configured "
+                        "host. Fix: add ALLOWED_HOSTS=<your-host> in .env and "
+                        "restart (or ALLOWED_HOSTS=* behind a trusted proxy)."
+                    )
+                },
+            )
+            await response(scope, receive, send)
+            logger.warning("host_rejected", host=host or "(missing)")
+
+
+def _host_allowed(host: str) -> bool:
+    """The allow-list decision, importable so tests can call it directly."""
+    if not host:
+        return False  # HTTP/1.1 requires Host; absence is not an alias for yes
+    configured = allowed_host_list()
+    if "*" in configured:
+        return True
+    # Strip the port: "[::1]:8000" (bracketed IPv6) or "localhost:8000".
+    # A bare IPv6 address ("::1") keeps its colons — splitting would corrupt it.
+    if host.startswith("["):
+        bare = host[: host.index("]") + 1] if "]" in host else ""
+    elif host.count(":") == 1:
+        bare = host.rsplit(":", 1)[0]
+    else:
+        bare = host
+    allowed = set(_LOOPBACK_HOSTS)
+    allowed.add((settings.HOST or "").strip().lower())
+    allowed.update(configured)
+    if bare in allowed:
+        return True
+    return _codespace_host_allowed(bare)
+
+
+def _codespace_host_allowed(bare_host: str) -> bool:
+    """GitHub Codespaces: allow this codespace's own forwarding hostname.
+
+    The forwarded URL is ``<CODESPACE_NAME>-<port>.<GITHUB_CODESPACES_PORT_
+    FORWARDING_DOMAIN>``. ONLY that exact name-prefix is allowed — never a
+    wildcard ``*.app.github.dev``, which would let any stranger's Codespace
+    reach this backend. The port part is not restricted to one number because
+    ``run.py`` auto-advances when 8000 is busy; the codespace name prefix is
+    what actually authenticates the host.
+
+    KNOWN UNKNOWN (stated honestly): we cannot verify from here whether the
+    Codespaces proxy preserves or rewrites the Host header. If it rewrites it
+    to something else entirely, requests will 400 with the received host named
+    in the error and the diagnostics report — the operator then adds it to
+    ALLOWED_HOSTS explicitly. Both shapes are handled: the computed name, and
+    whatever the operator lists.
+    """
+    import os
+
+    name = (os.environ.get("CODESPACE_NAME") or "").strip().lower()
+    domain = (
+        os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN") or ""
+    ).strip().lower()
+    if not name or not domain:
+        # CODESPACES=true without a name cannot construct a safe host: fail
+        # closed rather than loosening the check.
+        return False
+    if not bare_host.startswith(f"{name}-"):
+        return False
+    suffix = bare_host[len(name) + 1 :]
+    if not suffix.endswith(f".{domain}"):
+        return False
+    port_part = suffix[: -len(domain) - 1]
+    return port_part.isdigit()
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+
+
+# Added AFTER CORS on purpose: the last-registered middleware runs first, so a
+# disallowed host is rejected before any CORS handling happens.
+app.add_middleware(AllowedHostsMiddleware)
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(catalog_router, prefix="/api/v1")

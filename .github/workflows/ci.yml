@@ -100,6 +100,68 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
         run: pytest --cov=app --cov-report=term-missing
 
+  slow-tests:
+    # The default `pytest` run deselects @pytest.mark.slow (pytest.ini:
+    # addopts = -m "not slow") because the git-history secret scan walks every
+    # blob in the object database and grows with history. This job is the other
+    # half of that bargain: the slow tests still run, on every push and PR,
+    # with FULL history so the scan sees the real object graph rather than a
+    # shallow clone that would pass trivially.
+    needs: secret-scan
+    name: Slow tests (history depth)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run the slow tests
+        run: pytest -m slow -q
+
+  python-newer:
+    # T8f: the owner runs Python 3.14.2 in a Codespace while CI covers 3.11 and
+    # 3.12. 3.13/3.14 are NOT documented as supported — this job only reports.
+    # continue-on-error keeps a transient interpreter/dependency problem from
+    # blocking a PR, and a real incompatibility shows up as a red-but-allowed
+    # job we can read instead of a surprise for the owner.
+    needs: secret-scan
+    name: backend-tests (3.13, informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Verify the app imports
+        run: python -c "import app.main; print('import ok')"
+        env:
+          DATABASE_URL: ""
+          REDIS_URL: ""
+
+      - name: Run backend tests (informational)
+        run: pytest -q
+
   hf-space-boot:
     # Proves the Space's actual start command works: `python hf_app.py` must
     # serve /health, /docs, /ui, /api/v1/models and /api/v1/catalog on 7860

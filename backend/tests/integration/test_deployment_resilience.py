@@ -6,6 +6,7 @@ brand-new empty schema and a container whose app directory is read-only.
 """
 
 import asyncio
+import sys
 
 import httpx
 import pytest
@@ -161,6 +162,38 @@ async def test_protected_routes_still_answer_clean_503_without_a_database(
     resp = await client.post("/api/v1/route", json={"prompt": "hi"})
     assert resp.status_code == 503, resp.text
     assert resp.json() == {"detail": "Database temporarily unavailable"}
+
+
+async def test_real_refused_tcp_connect_answers_503_not_500(client, monkeypatch):
+    """The Postgres-down case, for real: a DSN pointing at a CLOSED port.
+
+    SQLAlchemy 2.1 + asyncpg leaks the builtin ConnectionRefusedError here —
+    it is an OSError, NOT a SQLAlchemyError — so only the dedicated handler
+    keeps this a clean 503. Verified end-to-end against the real engine
+    (no mocks): the dependency chain must let the raw error reach the app.
+    """
+    import socket
+
+    import app.db.session as session_module
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    closed_port = probe.getsockname()[1]
+    probe.close()  # nothing listens here anymore: connects are refused
+
+    await session_module.reset_engine()
+    monkeypatch.setattr(
+        settings,
+        "DATABASE_URL",
+        f"postgresql+asyncpg://routellm:pw@127.0.0.1:{closed_port}/routellm",
+    )
+    try:
+        resp = await client.post("/api/v1/route", json={"prompt": "hi"})
+        assert resp.status_code == 503, resp.text
+        assert resp.json() == {"detail": "Database temporarily unavailable"}
+    finally:
+        # Hand the SQLite engine back to every other test in the suite.
+        await session_module.reset_engine()
 
 
 # --------------------------------------------------------------------------
@@ -322,7 +355,36 @@ def test_redis_client_uses_tls_scheme_for_rediss(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def _windows_socket_provider_broken() -> bool:
+    """Runtime condition, not a platform blanket skip (T8a).
+
+    In this Windows sandbox the subprocess's socket provider fails to
+    initialize (OSError 10106, WSAStartup) — ANY subprocess that imports
+    socket-backed modules dies regardless of what it does. On a normal
+    Windows machine and on Linux CI this returns False and the test runs.
+    """
+    if sys.platform != "win32":
+        return False
+    import subprocess as _subprocess
+
+    probe = _subprocess.run(
+        [sys.executable, "-c", "import socket; socket.socket()"],
+        capture_output=True,
+        text=True,
+    )
+    return probe.returncode != 0 and "10106" in probe.stderr
+
+
+@pytest.mark.skipif(
+    _windows_socket_provider_broken(),
+    reason=(
+        "This sandbox cannot initialize the Windows socket provider in a "
+        "subprocess (WinError 10106, WSAStartup); the test spawns a bare "
+        "interpreter. Runs normally on Linux CI and healthy Windows hosts"
+    ),
+)
 def test_ml_packages_are_not_imported_when_ml_routing_is_off():
+    import os
     import subprocess
     import sys
     from pathlib import Path
@@ -335,16 +397,27 @@ def test_ml_packages_are_not_imported_when_ml_routing_is_off():
         " if m in sys.modules]\n"
         "print(','.join(heavy))\n"
     )
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "ENABLE_ML_ROUTING": "false",
+        "PYTHONPATH": str(backend_root),
+    }
+    if sys.platform == "win32":
+        # Windows child processes need the OS variables or the socket
+        # provider fails to initialize (WinError 10106 in _overlapped) —
+        # that failure said nothing about ML imports. Keep a minimal but
+        # sufficient Windows env; Linux keeps the stripped POSIX one.
+        env["PATH"] = os.environ.get("PATH", "")
+        for var in ("SystemRoot", "SystemDrive", "windir", "COMSPEC", "TEMP", "TMP"):
+            value = os.environ.get(var)
+            if value:
+                env[var] = value
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=backend_root,
         capture_output=True,
         text=True,
-        env={
-            "PATH": "/usr/bin:/bin",
-            "ENABLE_ML_ROUTING": "false",
-            "PYTHONPATH": str(backend_root),
-        },
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "", (

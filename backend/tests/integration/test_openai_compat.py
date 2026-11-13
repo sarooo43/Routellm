@@ -111,6 +111,7 @@ async def test_auto_completion_runs_pipeline_and_matches_openai_schema(
             "success": True,
             "error": None,
             "latency_ms": 50.0,
+            "model": None,
             "chaos_injected": False,
         }
     ]

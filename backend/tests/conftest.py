@@ -17,6 +17,19 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _allow_testserver_host(monkeypatch):
+    """The Host allow-list middleware rejects unknown Host headers with 400,
+    and every httpx test client here sends ``Host: testserver``. The suite
+    opts out once, here; the dedicated tests in
+    ``test_allowed_hosts_middleware.py`` re-enable enforcement locally.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ALLOWED_HOSTS", "*")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _clear_model_discovery_state():
     from app.providers.model_registry import model_catalog
 

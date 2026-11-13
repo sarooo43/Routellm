@@ -224,6 +224,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     503 by the app-level handler). Failures on first actual QUERY surface
     inside handlers as SQLAlchemy connect errors — the global handler also
     maps those, so callers never see a raw 500 for an infrastructure outage.
+    One gap that handler needed help with: asyncpg leaks a RAW builtin
+    ConnectionRefusedError for a refused TCP connect (it is an OSError, not a
+    SQLAlchemyError) — main.py maps it to the same 503.
 
     While the schema has not been created yet (first boot of a brand-new DB),
     this retries ``create_all`` before handing out a session. That is what

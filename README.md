@@ -185,6 +185,7 @@ default (the launcher creates it for you on first run).
 | `GROQ_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY` | unset | Provider keys from the environment (the Providers page wins) |
 | `ENABLE_ML_ROUTING` | `false` | Experimental ML-assisted ranking (needs `requirements-ml.txt`) |
 | `CORS_ORIGINS` | unset | Comma-separated origins, only for cross-origin clients |
+| `ALLOWED_HOSTS` | unset | Host-header allow-list: localhost/127.0.0.1/::1 and `HOST` are always accepted; add your public hostname (Space/tunnel/domain) or requests to it get 400. Set `*` to disable |
 
 `python run.py --help` lists the launcher flags: `--port`, `--host` (prints a
 warning off loopback), `--dev`, `--no-browser`, `--reinstall`, `--rebuild`,
@@ -312,11 +313,22 @@ Being explicit about what this is and is not:
 | `auth_failed: … rejected the credential (HTTP 401)` | The only error that means "check your key". Re-copy it from the provider console; nothing else in this list blames the key |
 | `network_error: could not open a connection` | This machine cannot reach the provider (proxy, firewall, DNS). Not a key problem |
 | Want to check every provider from a terminal | `python backend/scripts/check_providers.py` — reads keys from the environment or `.env` (never from flags), prints the key masked to its last 4 characters, the first chat models each key can use, the model the app would choose, and the result of a real 1-token request. Exit code 0 means every configured provider works |
+| Every request to a public URL answers 400 `Invalid Host header` | The Host allow-list (DNS-rebinding defence) only knows your loopback + `HOST`. Add the public hostname: `ALLOWED_HOSTS=my-space.hf.space` in `.env`, or `ALLOWED_HOSTS=*` when a trusted proxy rewrites Host |
+| In a GitHub Codespace, the forwarded URL answers `Invalid Host header` | Codespaces forwards `https://<codespace>-<port>.app.github.dev`. The app allows exactly that name when `CODESPACES=true` or `CODESPACE_NAME` is set (it never allows all of `*.app.github.dev`). If a proxy rewrites Host anyway, set `ALLOWED_HOSTS=*` — the diagnostics report shows the Host the server actually received |
+| Gemini returns 404 for a model that is *listed* | Two different things: the model exists in `models.list` but the account cannot call it. Gemini said *"This model … is no longer available to new users. Please update your code to use models/X"*. The app now walks to the next candidate and shows which model actually answered. Auto only uses stable chat families, so a retired default cannot be picked again |
+| Gemini returns 403 on every model | `API key not valid` (401/that literal body) means replace the key. Any other 403 — `PERMISSION_DENIED` on a key that *could* list models — is not a bad key: it is key restrictions, project access, region or free-tier eligibility. Check the key's allowed APIs/referrer restrictions in AI Studio |
+| "I don't know which model my key can actually use" | Providers page → your provider → **Run diagnostics**. It makes one list call plus up to five real one-token probes through the same walk the router uses, and shows model, HTTP status, Google's `status`/`reason`, a redacted message (up to 1000 chars) and latency. **Copy report** puts a Markdown table on your clipboard. It contains no keys |
 | `.\start.ps1` is blocked by PowerShell | `powershell -ExecutionPolicy Bypass -File .\start.ps1` |
 
+Two documents carry the detail behind this table:
+[`docs/testing.md`](docs/testing.md) (test layout, slow tests, every skip and its
+reason) and [`docs/field-reality.md`](docs/field-reality.md) (which provider
+facts are OBSERVED LIVE vs DOCUMENTED vs ASSUMED).
+
 Logs are JSON on stdout; set `LOG_LEVEL=DEBUG` for more. Secrets are redacted
-before anything is written, and provider error bodies are kept to ~200 sanitized
-characters so you can see *what the provider actually said* without leaking a key.
+before anything is written, and provider error bodies are kept to 1000 sanitized
+characters so you can see *what the provider actually said* — full sentences like
+Google's "use models/X instead" — without leaking a key.
 
 ### Which providers and models are used
 
@@ -330,6 +342,46 @@ To pin a model instead, set `GROQ_MODEL`, `GEMINI_MODEL` or `DEEPSEEK_MODEL`, or
 choose one in the Providers page. Endpoints are fixed and tested verbatim:
 Groq `https://api.groq.com/openai/v1`, Gemini `v1beta …/models/<model>:generateContent`,
 DeepSeek `https://api.deepseek.com/v1`.
+
+### `ModuleNotFoundError: pydantic_settings` when running backend scripts
+
+Backend scripts (e.g. `backend/scripts/check_providers.py`) import the app,
+which needs the project virtualenv. Running them with a bare system Python
+fails with `ModuleNotFoundError`. The script detects this and re-execs itself
+with the project venv; if no venv exists it prints:
+
+```text
+Run with the project venv: .venv/bin/python backend/scripts/check_providers.py, or run python run.py once to create it.
+```
+
+Commands per platform:
+
+```bash
+# Linux / macOS (repo root)
+python -m venv backend/.venv                # once, if the venv does not exist yet
+backend/.venv/bin/python backend/scripts/check_providers.py
+```
+
+```powershell
+# Windows (repo root, PowerShell)
+py -m venv backend\.venv                    # once, if the venv does not exist yet
+backend\.venv\Scripts\python.exe backend\scripts\check_providers.py
+```
+
+### `model_not_found: models/... is no longer available` (e.g. new Gemini key)
+
+A provider's list-models response is a *candidate list*, not a guarantee:
+new keys can see models they are not yet allowed to call (Google rolls
+models out per account cohort). Routing and the Test connection button
+therefore walk an ordered candidate list: a model that answers
+`model_not_found` is remembered as "denied" for that key for ~1 hour and the
+next-ranked candidate is tried (up to 3 attempts). If the provider's error
+message names a replacement (`...use models/gemini-3.8-flash`), that id is
+strict-regex-extracted, verified against the discovered list, and tried
+first. Nothing else from an error message is ever used. If every candidate
+fails, check the Providers page → the model list shows each model's status
+(`denied` / `rate_limited` / `works`), and a 401 is always reported as an
+auth problem, never as `model_not_found`.
 
 ---
 

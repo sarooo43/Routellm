@@ -6,6 +6,7 @@ never mutates the shared ``app.main.app`` used by the other test modules.
 
 import os
 import socket
+import sys
 import time
 from pathlib import Path
 
@@ -45,11 +46,19 @@ def test_read_only_flag_forces_hf_rules_without_space_id(monkeypatch):
 
 
 def test_writable_dir_uses_tmp_on_huggingface(monkeypatch, tmp_path):
-    """On a Space the app dir is read-only; writes must land in /tmp."""
+    """On a Space the app dir is read-only; writes must land in the OS temp dir.
+
+    Portable wording (T8a): the contract is tempfile.gettempdir() — POSIX
+    renders it as /tmp, Windows as %TEMP%\\routellm\\logs. The original
+    assertion hardcoded the POSIX spelling and failed on Windows even
+    though the behaviour matched the contract.
+    """
+    import tempfile
+
     monkeypatch.setenv(HF_SPACE_ID_ENV, "saboornotgonna/routellm")
     monkeypatch.delenv(RUNTIME_DIR_ENV, raising=False)
     target = writable_dir("logs")
-    assert str(target).startswith("/tmp")
+    assert str(target).startswith(str(tempfile.gettempdir()))
     assert target.is_dir()
     # And it is genuinely writable.
     probe = target / "probe.txt"
@@ -217,6 +226,14 @@ def test_probe_port_reports_a_free_port():
     assert hf_app.probe_port("0.0.0.0", free_port) is None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Windows SO_REUSEADDR permits rebinding a port an active listener "
+        "holds, so probe_port correctly reports the port bindable there; "
+        "the EADDRINUSE contract targets the Linux deploy host"
+    ),
+)
 def test_probe_port_detects_a_real_listener():
     """A genuine second listener must be reported as EADDRINUSE."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -278,6 +295,14 @@ def test_bind_listening_socket_binds_and_listens_after_handoff():
         sock.close()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Windows SO_REUSEADDR permits a second bind of an actively "
+        "listening port, so the two-binder conflict this pins does not "
+        "exist on Windows; the contract targets the Linux deploy host"
+    ),
+)
 def test_bind_listening_socket_blocks_a_second_binder_immediately():
     """Owning the socket is what removes the window a later bind could use."""
     port = _free_port()
