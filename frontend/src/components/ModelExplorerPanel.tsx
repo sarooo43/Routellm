@@ -42,7 +42,31 @@ import type {
 import { ErrorState } from './ErrorState'
 import { Skeleton } from './Skeleton'
 
+/** Batch size for "Test all": 8 per window on the free tier, sequentially. */
 const TEST_BATCH_SIZE = 5
+
+/**
+ * Client-side pacing for "Test all" (T8c).
+ *
+ * The server allows TEST_RATE_LIMIT = 10 test calls per key per rolling 60 s
+ * and 5 in flight (app/core/test_endpoint_guard.py). The old loop fired every
+ * model back to back in batches of 5 with no cap and no pause, so 25 models
+ * meant 25 calls in a few hundred milliseconds — the button reliably produced
+ * its own 429.
+ *
+ * The rule here is "stay under the limit we know about": a token bucket that
+ * holds at most TEST_MAX_CALLS_PER_WINDOW calls per window, refilled by
+ * TEST_CALL_INTERVAL_MS per call. 8 (not 10) leaves headroom for a manual
+ * Test click in the same window.
+ */
+const TEST_MAX_CALLS_PER_WINDOW = 8
+const TEST_WINDOW_MS = 60_000
+const TEST_CALL_INTERVAL_MS = TEST_WINDOW_MS / TEST_MAX_CALLS_PER_WINDOW
+/** Never spend more than this many calls on one "Test all" click. */
+const TEST_ALL_CAP = 8
+
+/** Free-tier models are tested first so the cap is spent where it costs least. */
+const TIER_TEST_ORDER: Record<string, number> = { free: 0, unknown: 1, paid: 2 }
 
 /** Verdict styling for the one Test-connection button (PR #15 taxonomy). */
 const VERDICT_STYLE: Record<ProviderVerdict, { label: string; className: string }> = {
@@ -85,6 +109,13 @@ interface ModelExplorerPanelProps {
   routellmKey: string
   /** Raised to the page so the card badge can say "tested". */
   onTestedChange?: (hasWorkingModel: boolean) => void
+  /**
+   * Pause between "Test all" batches, in ms. Defaults to the real pacing
+   * derived from the server guard (60 s / 8 calls = 7.5 s). Only tests set
+   * it, so the production interval stays the honest one and the suite does
+   * not have to wait 7.5 s per batch.
+   */
+  testPacingMs?: number
 }
 
 /**
@@ -96,6 +127,7 @@ export function ModelExplorerPanel({
   providerDisplay,
   routellmKey,
   onTestedChange,
+  testPacingMs = TEST_CALL_INTERVAL_MS,
 }: ModelExplorerPanelProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sort = (searchParams.get('sort') as ModelSort) ?? 'tier'
@@ -108,7 +140,13 @@ export function ModelExplorerPanel({
   const [errorDetail, setErrorDetail] = useState<string | null>(null)
   const [busyModel, setBusyModel] = useState<string | null>(null)
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
-  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
+  const [batchProgress, setBatchProgressSection] = useState<{
+    tested: number
+    capped: number
+    total: number
+  } | null>(null)
+  /** Seconds left on a 429 cold-down, shown as a live countdown (T8c). */
+  const [cooldownLeft, setCooldownLeft] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   // One Test-connection flow (the single route: POST /provider-test/{provider}).
   const [connResult, setConnResult] = useState<ProviderTestResult | null>(null)
@@ -118,6 +156,14 @@ export function ModelExplorerPanel({
   const [diagBusy, setDiagBusy] = useState(false)
   const [diagCopied, setDiagCopied] = useState(false)
   const mounted = useRef(true)
+
+  // Live 1s countdown for a 429 Retry-After, so the button re-enables itself
+  // when the window has actually passed instead of staying stuck.
+  useEffect(() => {
+    if (cooldownLeft <= 0) return
+    const id = window.setTimeout(() => setCooldownLeft((n) => Math.max(0, n - 1)), 1000)
+    return () => window.clearTimeout(id)
+  }, [cooldownLeft])
 
   // The page passes a fresh inline callback per render; keeping it in a ref
   // keeps `load` (and therefore the fetch effect) identity-stable so mounting
@@ -242,16 +288,36 @@ export function ModelExplorerPanel({
   )
 
   const onTestAll = useCallback(async () => {
-    const pending = models.filter((m) => m.status !== 'works')
-    if (pending.length === 0) return
+    const allPending = models.filter((m) => m.status !== 'works')
+    if (allPending.length === 0) return
+
+    // Free tier first, then unknown, then paid — the cap below is small, so
+    // spend it where a test is cheapest and most likely to inform.
+    const ordered = [...allPending].sort(
+      (a, b) => (TIER_TEST_ORDER[a.tier] ?? 1) - (TIER_TEST_ORDER[b.tier] ?? 1),
+    )
+    // Capped: 8 calls per click, never "every model in the account".
+    const pending = ordered.slice(0, TEST_ALL_CAP)
+    const notTested = allPending.length - pending.length
+
     setNotice(null)
-    let done = 0
-    let anyWorks = false
+    setCooldownLeft(0)
+    setBatchProgressSection({ tested: 0, capped: pending.length, total: allPending.length })
+    if (notTested > 0) {
+      setNotice(
+        `Testing ${pending.length} of ${allPending.length} models (${notTested} not tested). ` +
+          `Free models first; click Test all again in a minute for the next batch.`,
+      )
+    }
+
     const results = new Map<string, ProviderModelInfo>()
+    let anyWorks = false
+    let spent = 0
+    let halted = false
+
     for (let i = 0; i < pending.length; i += TEST_BATCH_SIZE) {
       const batch = pending.slice(i, i + TEST_BATCH_SIZE)
       setTestingIds(new Set(batch.map((m) => m.id)))
-      setBatchProgress({ done, total: pending.length })
       const outcomes = await Promise.allSettled(
         batch.map((m) => testProviderModel(routellmKey, providerName, m.id)),
       )
@@ -265,14 +331,33 @@ export function ModelExplorerPanel({
             last_checked_at: new Date().toISOString(),
           })
           if (outcome.value.status === 'works') anyWorks = true
+          return
+        }
+        // A rejected call is usually the SERVER's guard saying "slow down".
+        // Respect Retry-After instead of hammering the next batch into it.
+        const apiError = toApiError(outcome.reason)
+        if (apiError.status === 429) {
+          halted = true
+          setCooldownLeft(apiError.retryAfterSeconds ?? 60)
         }
       })
-      done += batch.length
+      spent += batch.length
+      if (halted) break
       if (!mounted.current) return
-      setBatchProgress({ done, total: pending.length })
+      setBatchProgressSection({
+        tested: spent,
+        capped: pending.length,
+        total: allPending.length,
+      })
+      // Pace: wait one slot before the next batch so the rolling window the
+      // server enforces is never exceeded by our own clicks.
+      if (spent < pending.length) {
+        await new Promise((resolve) => setTimeout(resolve, testPacingMs))
+        if (!mounted.current) return
+      }
     }
+
     setTestingIds(new Set())
-    setBatchProgress(null)
     setData((prev) =>
       prev
         ? {
@@ -282,7 +367,7 @@ export function ModelExplorerPanel({
         : prev,
     )
     onTestedRef.current?.(anyWorks || models.some((m) => m.status === 'works'))
-  }, [models, routellmKey, providerName])
+  }, [models, routellmKey, providerName, testPacingMs])
 
   /**
    * THE Test-connection button (Auto mode): one route, one code path with
@@ -632,20 +717,33 @@ export function ModelExplorerPanel({
         <button
           type="button"
           onClick={() => void onTestAll()}
-          disabled={loading || testingIds.size > 0 || models.length === 0}
+          disabled={loading || testingIds.size > 0 || models.length === 0 || cooldownLeft > 0}
           className="rl-btn-ghost border border-amber-400/25 px-2.5 py-1.5 text-xs text-amber-200 disabled:opacity-40"
           aria-label={`Test all ${providerDisplay} models`}
         >
           <FlaskConical size={12} aria-hidden="true" />
           {batchProgress
-            ? `Testing ${batchProgress.done}/${batchProgress.total}…`
-            : 'Test all (5 at a time)'}
+            ? `Testing ${batchProgress.tested}/${batchProgress.capped} of ${batchProgress.total}…`
+            : 'Test all (paced)'}
         </button>
       </div>
 
       {hiddenCount > 0 && (
         <p className="mt-2 text-xs text-text-secondary" role="note">
           {hiddenCount} non-chat model{hiddenCount === 1 ? '' : 's'} hidden (embeddings, TTS, image…).
+        </p>
+      )}
+
+      {cooldownLeft > 0 && (
+        <p
+          role="status"
+          data-testid="test-all-cooldown"
+          className="mt-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning"
+        >
+          Rate limited by the provider guard — retry in {cooldownLeft}s.
+          {batchProgress
+            ? ` Tested ${batchProgress.tested} of ${batchProgress.capped} before stopping.`
+            : ''}
         </p>
       )}
 

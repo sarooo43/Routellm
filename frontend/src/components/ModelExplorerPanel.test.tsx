@@ -90,6 +90,10 @@ function renderPanel(
     providerDisplay: 'Groq',
     routellmKey: SECRET,
     onTestedChange,
+    // Production paces at 7.5 s/batch (60 s window / 8 calls). Tests must not
+    // sleep that long, so the interval is injected; the pacing *behaviour*
+    // (cap, order, halt-on-429) is what is asserted.
+    testPacingMs: 0,
     ...props,
   }
   render(
@@ -326,6 +330,92 @@ describe('ModelExplorerPanel', () => {
     await waitFor(() =>
       expect(screen.getByTestId('status-groq-gemma2-9b-it')).toHaveTextContent('Works'),
     )
+  })
+
+  it('paces "Test all" for 25 models: caps at 8, free tier first, and says so', async () => {
+    // 25 models, mixed tiers. T8c: the old loop fired every one of them
+    // immediately in batches of 5 with no cap, so the button generated its own
+    // 429 from the server guard (10/min per key).
+    const many = Array.from({ length: 25 }, (_, i) =>
+      makeModel({
+        id: `model-${String(i).padStart(2, '0')}`,
+        display_name: `Model ${i}`,
+        tier: i % 3 === 0 ? 'free' : i % 3 === 1 ? 'paid' : 'unknown',
+      }),
+    )
+    vi.mocked(getProviderModels).mockResolvedValue(listResponse(many))
+    vi.mocked(testProviderModel).mockImplementation(async (_key, _provider, modelId) => ({
+      provider_name: 'groq',
+      model_id: modelId,
+      status: 'works',
+      latency_ms: 50,
+      error: null,
+    }))
+    renderPanel()
+    await screen.findByTestId('model-row-groq-model-00')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test all Groq models' }))
+
+    // Exactly 8 calls: never one per model, never more than the window allows.
+    await waitFor(() => expect(testProviderModel).toHaveBeenCalledTimes(8))
+    // And it stays at 8 — the cap is not a burst that keeps going.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(testProviderModel).toHaveBeenCalledTimes(8)
+
+    // Free-tier models were chosen first.
+    const testedIds = vi.mocked(testProviderModel).mock.calls.map((call) => call[2])
+    const freeIds = many.filter((m) => m.tier === 'free').map((m) => m.id)
+    expect(testedIds.some((id) => freeIds.includes(id))).toBe(true)
+
+    // The user is told what was left out rather than silently dropped.
+    expect(await screen.findByText(/Testing 8 of 25 models \(17 not tested\)/)).toBeInTheDocument()
+  })
+
+  it('stops the "Test all" walk on a 429 and shows a Retry-After countdown', async () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      makeModel({ id: `m-${i}`, display_name: `M ${i}`, tier: 'free' }),
+    )
+    vi.mocked(getProviderModels).mockResolvedValue(listResponse(many))
+
+    // A real axios 429 from the server guard: toApiError reads response.status
+    // and the retry-after header, so the test must throw that shape rather than
+    // hand-build an ApiError (which is what the first version of this test did,
+    // and why it silently never entered the cooldown branch).
+    let call = 0
+    vi.mocked(testProviderModel).mockImplementation(async (_key, _provider, modelId) => {
+      call += 1
+      if (call > 5) {
+        throw {
+          isAxiosError: true,
+          response: {
+            status: 429,
+            headers: { 'retry-after': '42' },
+            data: { detail: 'Too many test calls; retry later.' },
+          },
+        }
+      }
+      return { provider_name: 'groq', model_id: modelId, status: 'works', latency_ms: 10, error: null }
+    })
+    renderPanel()
+    await screen.findByTestId('model-row-groq-m-0')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test all Groq models' }))
+
+    // It surfaces the server's own delay and stops rather than marching on.
+    const cooldown = await screen.findByTestId('test-all-cooldown')
+    expect(cooldown).toHaveTextContent('retry in 42s')
+    expect(cooldown).toHaveTextContent('Tested 5 of 8')
+
+    const callsAtHalt = vi.mocked(testProviderModel).mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    // No further batches: a halted walk never generates its own 429 storm.
+    expect(vi.mocked(testProviderModel).mock.calls.length).toBe(callsAtHalt)
+    // 8 = the capped run's first batch (5) + the second batch (3) that hit the
+    // guard. Crucially it is NOT 12: the cap stopped it at 8, and the 429
+    // stopped it before any third batch.
+    expect(callsAtHalt).toBe(8)
+    // The button is disabled while the cooldown runs.
+    expect(screen.getByRole('button', { name: 'Test all Groq models' })).toBeDisabled()
   })
 
   it('shows the empty state (with the server reason when given)', async () => {
