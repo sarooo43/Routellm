@@ -193,7 +193,30 @@ def test_unqualified_refspec_is_rejected(workspace):
         assert "full refname" in push.stderr.lower()
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def _bash_is_usable() -> bool:
+    """Runtime condition, not a platform blanket skip (T8a).
+
+    On this Windows sandbox ``bash`` resolves to the WSL stub
+    (``C:\\Windows\\System32\\bash.exe``) with no distro installed, so
+    ``bash -n`` fails with a WSL relay error rather than a syntax
+    verdict. Skip only when bash cannot execute at all; on Linux CI this
+    returns True and the syntax check runs.
+    """
+    if shutil.which("bash") is None:
+        return False
+    probe = subprocess.run(
+        ["bash", "-c", "true"], capture_output=True, text=True, check=False
+    )
+    return probe.returncode == 0
+
+
+@pytest.mark.skipif(
+    not _bash_is_usable(),
+    reason=(
+        "bash here is the WSL stub with no distro installed, so it cannot "
+        "produce a syntax verdict; the check runs on Linux CI"
+    ),
+)
 def test_shell_script_is_syntactically_valid():
     result = subprocess.run(
         ["bash", "-n", str(SH)], capture_output=True, text=True, check=False
