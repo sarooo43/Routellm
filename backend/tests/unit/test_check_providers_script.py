@@ -354,3 +354,37 @@ async def test_json_mode_is_parseable_and_safe(script, respx_mock, monkeypatch, 
     assert payload[0]["provider"] == "groq"
     assert payload[0]["verdict"] == "valid"
     assert "gsk_TESTKEY1234567890" not in json.dumps(payload)
+
+
+# --------------------------------------------------------------------------
+# --report: the T1 diagnostics file (gitignored, contains no keys)
+# --------------------------------------------------------------------------
+
+
+async def test_report_flag_writes_a_markdown_report_with_no_keys(
+    script, respx_mock, monkeypatch, tmp_path, capsys
+):
+    """--report writes data/diagnostics/report.md; the file never has a key."""
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_TESTKEY1234567890")
+    respx_mock.get("https://api.groq.com/openai/v1/models").mock(
+        return_value=httpx.Response(200, json={"data": [{"id": "llama-3.1-8b-instant"}]})
+    )
+    # The provider echoes the key back — the worst case for the report sweep.
+    respx_mock.post("https://api.groq.com/openai/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            401, json={"error": {"message": f"bad key gsk_TESTKEY1234567890"}}
+        )
+    )
+    monkeypatch.setenv("ROUTELLM_DATA_DIR", str(tmp_path))
+    assert await script.main_async(["groq", "--env-file", "/nonexistent", "--report"]) == 1
+
+    printed = capsys.readouterr().out
+    assert "report written:" in printed
+    report_path = tmp_path / "diagnostics" / "report.md"
+    assert report_path.exists()
+    content = report_path.read_text(encoding="utf-8")
+    assert content.startswith("# Provider diagnostics report")
+    assert "Contains no keys" in content
+    assert "gsk_TESTKEY1234567890" not in content
+    assert "TESTKEY" not in content  # not even a fragment
+    assert "Key accepted" in content

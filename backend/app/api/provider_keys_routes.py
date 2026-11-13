@@ -17,13 +17,16 @@ candidate walk real routing uses, with the shared quota guard.
 """
 
 import asyncio
+import platform
 from typing import Optional
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import delete, select
 
+from app import __version__ as APP_VERSION
 from app.api.dependencies import require_api_key
 from app.core import model_discovery as md
 from app.core.provider_key_crypto import ProviderKeyEncryptionError
@@ -43,6 +46,8 @@ from app.models.provider_model_status import (
     ProviderModelPinDB,
     ProviderModelStatusDB,
 )
+from app.providers.model_registry import key_transport, model_catalog, spec_for
+from app.providers.outcomes import redact
 from app.providers.registry import PROVIDER_REGISTRY
 
 router = APIRouter(prefix="/provider-keys", tags=["Provider keys (BYOK)"])
@@ -458,3 +463,191 @@ async def set_pinned_model(
         api_key=api_key,
         db_session=db_session,
     )
+
+
+# ==========================================================================
+# T1: in-app diagnostics — replaces all manual terminal work
+# ==========================================================================
+
+
+def _scrub(text: str, stored_key: str) -> str:
+    """Remove the stored key verbatim, sweep key-shaped patterns, cap 1000.
+
+    Applied to EVERYTHING a diagnostics run returns, logs or copies. The
+    exact stored value rarely matches the generic patterns (prefixes vary),
+    so it goes first; then redact() handles AIza…/gsk_…/sk-…/Bearer…/key=…
+    shapes. The 1000-char cut runs LAST so redaction can never be sliced
+    open at the truncation point.
+    """
+    cleaned = (text or "").replace(stored_key, "***")
+    return redact(cleaned)[:1000]
+
+
+class DiagnosticsRow(BaseModel):
+    """One probed model in the diagnostics table (never a secret)."""
+
+    model_id: str
+    http_status: Optional[int] = None
+    provider_status: Optional[str] = None
+    provider_reason: Optional[str] = None
+    outcome: Optional[str] = None
+    success: bool = False
+    latency_ms: float = 0.0
+    message: Optional[str] = None  # sanitized, <= 1000 chars
+
+
+class DiagnosticsResponse(BaseModel):
+    """Everything a diagnostics run learned, redacted end to end."""
+
+    provider_name: str
+    generated_at: str
+    notice: str = "Contains no keys. Provider messages are redacted."
+    key_transport: str
+    api_host: str
+    api_version: str
+    list_http_status: Optional[int] = None
+    list_count_before_filter: Optional[int] = None
+    list_count_after_filter: Optional[int] = None
+    discovery_reason: Optional[str] = None
+    probe_count: int = 0
+    rows: list[DiagnosticsRow]
+    received_host: Optional[str] = None
+    app_version: str
+    python_version: str
+    report_markdown: str = ""
+
+
+def _diagnostics_markdown(d: DiagnosticsResponse) -> str:
+    """The clipboard report: same facts, pasteable Markdown, no secrets."""
+    if d.list_http_status is not None:
+        list_line = (
+            f"HTTP {d.list_http_status} — {d.list_count_before_filter} entries "
+            f"before filtering, {d.list_count_after_filter} chat-capable after"
+        )
+    else:
+        list_line = f"no usable response ({d.discovery_reason or 'transport error'})"
+    lines = [
+        f"# Provider diagnostics — {d.provider_name}",
+        f"Generated: {d.generated_at}",
+        "",
+        "Contains no keys. Provider messages are redacted; nothing below is a credential.",
+        "",
+        f"- Key transport: {d.key_transport}",
+        f"- API host / version: {d.api_host} / {d.api_version}",
+        f"- Received Host header: {d.received_host or '(none)'}",
+        f"- App version: {d.app_version} — Python: {d.python_version}",
+        f"- List call: {list_line}",
+        f"- Probes: top {d.probe_count} Auto candidates through the same walk the router uses",
+        "",
+        "| model | HTTP | provider status | provider reason | outcome | latency ms | message |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in d.rows:
+        message = (row.message or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {row.model_id.replace('|', '\\|')} | "
+            f"{row.http_status if row.http_status is not None else '—'} | "
+            f"{row.provider_status or '—'} | {row.provider_reason or '—'} | "
+            f"{row.outcome or '—'} | {row.latency_ms:.1f} | {message or '—'} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+@router.post("/{provider_name}/diagnostics", response_model=DiagnosticsResponse)
+async def run_provider_diagnostics(
+    provider_name: str,
+    request: Request,
+    api_key: ApiKeyDB = Depends(require_api_key),
+    db_session: AsyncSession = Depends(get_session),
+) -> DiagnosticsResponse:
+    """Diagnose one stored provider key in-app — no terminal work needed.
+
+    One run = ONE live list call (with its before/after filter counts) plus
+    up to 5 probes of the top Auto candidates through the SAME walk adapter
+    routing and the Test button use. The per-key test guard applies (one
+    acquisition per run). Every returned string — and the clipboard
+    Markdown — is scrubbed of the stored key and every key-shaped pattern;
+    rows carry the wire HTTP status plus the provider's own error.status /
+    error.reason identity so a 403 reads as a restriction, not a bad key.
+    """
+    _require_supported(provider_name)
+    spec = spec_for(provider_name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    stored_key = await _require_decrypted_key(db_session, api_key.id, provider_name)
+
+    from app.core.test_endpoint_guard import check_and_acquire, release
+
+    check_and_acquire(api_key.id)
+    try:
+        counts = await model_catalog.fetch_counts(spec, stored_key)
+        models, reason = await md.discover_models(
+            provider_name, stored_key, force=False
+        )
+        rows: list[DiagnosticsRow] = []
+        for candidate in md.rank_candidates(provider_name, models, set())[:5]:
+            walk = await md.walk_candidates(
+                provider_name,
+                "ping",
+                {"max_tokens": 1, "provider_api_key": stored_key},
+                stored_key,
+                first_model=candidate.id,
+                max_attempts=1,
+                db_session=db_session,
+                api_key_id=api_key.id,
+            )
+            response = walk.response
+            rows.append(
+                DiagnosticsRow(
+                    model_id=candidate.id,
+                    http_status=response.http_status,
+                    provider_status=response.provider_status,
+                    provider_reason=response.provider_reason,
+                    outcome=response.outcome,
+                    success=response.success,
+                    latency_ms=response.latency_ms,
+                    message=(
+                        _scrub(response.error or "", stored_key)
+                        if response.error
+                        else None
+                    ),
+                )
+            )
+    finally:
+        release(api_key.id)
+
+    from app.utils.logger import get_logger
+
+    get_logger(__name__).info(
+        "diagnostics_run",
+        provider=provider_name,
+        api_key_id=api_key.id,
+        list_http_status=counts.get("http_status"),
+        raw_count=counts.get("raw_count"),
+        chat_count=counts.get("chat_count"),
+        probes=len(rows),
+        # Counts only — provider bodies are never logged from here.
+    )
+
+    models_url = spec.models_url()
+    discovery_reason = None
+    if not models:
+        discovery_reason = reason or counts.get("error")
+    data = DiagnosticsResponse(
+        provider_name=provider_name,
+        generated_at=utcnow().isoformat(),
+        key_transport=key_transport(provider_name),
+        api_host=spec.host,
+        api_version=urlsplit(models_url).path.strip("/").split("/")[0],
+        list_http_status=counts.get("http_status"),
+        list_count_before_filter=counts.get("raw_count"),
+        list_count_after_filter=counts.get("chat_count"),
+        discovery_reason=discovery_reason,
+        probe_count=len(rows),
+        rows=rows,
+        received_host=request.headers.get("host"),
+        app_version=APP_VERSION,
+        python_version=platform.python_version(),
+    )
+    data.report_markdown = _scrub(_diagnostics_markdown(data), stored_key)
+    return data

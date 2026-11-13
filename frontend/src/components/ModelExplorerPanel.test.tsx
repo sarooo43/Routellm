@@ -12,14 +12,17 @@ vi.mock('../api/client', () => ({
   testProviderModel: vi.fn(),
   testProvider: vi.fn(),
   setPinnedModel: vi.fn(),
+  runProviderDiagnostics: vi.fn(),
 }))
 
 import {
   getProviderModels,
+  runProviderDiagnostics,
   setPinnedModel,
   testProvider,
   testProviderModel,
 } from '../api/client'
+import type { ProviderDiagnosticsResponse } from '../types/api'
 
 // A secret-shaped RouteLLM key: the panel receives it to authenticate, but it
 // must never appear anywhere in the rendered DOM.
@@ -375,5 +378,116 @@ describe('ModelExplorerPanel', () => {
     expect(await screen.findByRole('note')).toHaveTextContent(
       '4 non-chat models hidden',
     )
+  })
+
+  describe('T1 diagnostics', () => {
+    const diagResult: ProviderDiagnosticsResponse = {
+      provider_name: 'groq',
+      generated_at: '2026-11-13T00:00:00Z',
+      notice: 'Contains no keys. Provider messages are redacted.',
+      key_transport: 'header: Authorization: Bearer',
+      api_host: 'api.groq.com',
+      api_version: 'openai/v1',
+      list_http_status: 200,
+      list_count_before_filter: 30,
+      list_count_after_filter: 25,
+      discovery_reason: null,
+      probe_count: 2,
+      rows: [
+        {
+          model_id: 'llama-3.3-70b-versatile',
+          http_status: 200,
+          provider_status: null,
+          provider_reason: null,
+          outcome: null,
+          success: true,
+          latency_ms: 210,
+          message: null,
+        },
+        {
+          model_id: 'gemma2-9b-it',
+          http_status: 429,
+          provider_status: 'RESOURCE_EXHAUSTED',
+          provider_reason: null,
+          outcome: 'rate_limit_exceeded',
+          success: false,
+          latency_ms: 90,
+          message: 'rate limit exceeded: api.groq.com is rate limiting this key (HTTP 429).',
+        },
+      ],
+      received_host: 'testserver',
+      app_version: '0.1.0',
+      python_version: '3.13.2',
+      report_markdown:
+        '# Provider diagnostics — groq\n\nContains no keys. Provider messages are redacted; nothing below is a credential.\n',
+    }
+
+    beforeEach(() => {
+      vi.mocked(runProviderDiagnostics).mockResolvedValue(diagResult)
+    })
+
+    it('runs diagnostics and renders the wire facts plus the probe table', async () => {
+      renderPanel()
+      await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+
+      fireEvent.click(screen.getByTestId('run-diagnostics-groq'))
+
+      const report = await screen.findByTestId('diagnostics-groq')
+      // The wire facts the report exists for.
+      expect(report).toHaveTextContent('30 entries before filtering')
+      expect(report).toHaveTextContent('25 chat-capable after')
+      expect(report).toHaveTextContent('header: Authorization: Bearer')
+      // The per-row table: model id, HTTP status, provider identity.
+      expect(
+        screen.getByTestId('diag-row-groq-llama-3.3-70b-versatile'),
+      ).toHaveTextContent('200')
+      expect(
+        screen.getByTestId('diag-row-groq-gemma2-9b-it'),
+      ).toHaveTextContent('429')
+      expect(
+        screen.getByTestId('diag-row-groq-gemma2-9b-it'),
+      ).toHaveTextContent('RESOURCE_EXHAUSTED')
+      // The "Contains no keys" notice is always visible with a report.
+      expect(screen.getByTestId('diag-no-keys-groq')).toBeInTheDocument()
+      expect(runProviderDiagnostics).toHaveBeenCalledWith(SECRET, 'groq')
+    })
+
+    it('copies the server-built Markdown report and never renders the key', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+      })
+      renderPanel()
+      await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+
+      fireEvent.click(screen.getByTestId('run-diagnostics-groq'))
+      fireEvent.click(await screen.findByTestId('copy-report-groq'))
+
+      await waitFor(() => expect(writeText).toHaveBeenCalled())
+      expect(writeText.mock.calls[0][0]).toContain('# Provider diagnostics — groq')
+      expect(writeText.mock.calls[0][0]).toContain('Contains no keys')
+      // The panel authenticates with the RouteLLM key; it must never show it.
+      expect(document.body.textContent).not.toContain(SECRET)
+    })
+
+    it('surfaces a rate-limited diagnostics run as a readable notice', async () => {
+      vi.mocked(runProviderDiagnostics).mockRejectedValue({
+        response: {
+          status: 429,
+          data: {
+            detail: 'Rate limit: at most 10 tests per minute per key. Try again shortly.',
+          },
+        },
+      })
+      renderPanel()
+      await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+
+      fireEvent.click(screen.getByTestId('run-diagnostics-groq'))
+
+      expect(await screen.findByRole('status')).toHaveTextContent(
+        'Rate limit: at most 10 tests per minute per key',
+      )
+    })
   })
 })

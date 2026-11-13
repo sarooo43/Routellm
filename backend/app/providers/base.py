@@ -27,6 +27,10 @@ class ProviderResponse(BaseModel):
     #: explorer so a 403 is distinguishable from a 401 without prose.
     provider_status: Optional[str] = None
     provider_reason: Optional[str] = None
+    #: T1: the wire HTTP status (200 on success, the error status on
+    #: failure, None when no response arrived — network/timeout). The
+    #: diagnostics table reports it per probe row.
+    http_status: Optional[int] = None
 
 
 class ModelProvider(ABC):
@@ -50,6 +54,7 @@ def make_error(
     retry_after: Optional[float] = None,
     provider_status: Optional[str] = None,
     provider_reason: Optional[str] = None,
+    http_status: Optional[int] = None,
 ) -> ProviderResponse:
     return ProviderResponse(
         success=False,
@@ -63,6 +68,7 @@ def make_error(
         retry_after=retry_after,
         provider_status=provider_status,
         provider_reason=provider_reason,
+        http_status=http_status,
     )
 
 
@@ -72,6 +78,7 @@ def make_success(
     text: str,
     tokens_used,
     latency_ms: float,
+    http_status: Optional[int] = 200,
 ) -> ProviderResponse:
     if not text or not text.strip():
         return make_error(provider_name, model_name, "empty_response", latency_ms)
@@ -83,4 +90,5 @@ def make_success(
         error=None,
         provider_name=provider_name,
         model_name=model_name,
+        http_status=http_status,
     )

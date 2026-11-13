@@ -468,6 +468,11 @@ async def main_async(argv: list[str]) -> int:
         help="also run the candidate walk real routing uses (prints skipped models and reasons)",
     )
     parser.add_argument(
+        "--report",
+        action="store_true",
+        help="write a Markdown diagnostics report to data/diagnostics/report.md (gitignored, contains no keys)",
+    )
+    parser.add_argument(
         "--env-file",
         default=str(REPO_ROOT / ".env"),
         help="fallback .env path (default: repository root)",
@@ -511,6 +516,12 @@ async def main_async(argv: list[str]) -> int:
         if broken:
             print(f"failing: {', '.join(broken)}")
 
+    if args.report:
+        from app.local import data_dir
+
+        path = write_report(results, data_dir(create=True) / "diagnostics" / "report.md")
+        print(f"report written: {path}")
+
     return 0 if all(r.verdict in {"valid", "not_configured"} for r in results) else 1
 
 
@@ -522,6 +533,55 @@ def _print_walk(result: "Result") -> None:
         print(f"    {marker} {step['model']}: {step['reason'] or 'worked'}")
     if result.working_model:
         print(f"    working model: {result.working_model}")
+
+
+def write_report(results: list["Result"], report_path: Path) -> str:
+    """--report: the same diagnostics as the in-app report, as Markdown.
+
+    The file lands in ``data/diagnostics/report.md`` (gitignored). It
+    contains NO keys: the key column is the already-masked hint, provider
+    messages are swept through ``redact`` (AIza…/gsk_…/sk-…/Bearer…/key=…),
+    and nothing else in the report carries credential material.
+    """
+    from app.providers.outcomes import redact
+
+    lines = [
+        "# Provider diagnostics report",
+        "",
+        "Contains no keys. Provider messages are redacted; nothing below is a credential.",
+        "",
+    ]
+    for result in results:
+        spec = PROVIDER_SPECS[result.provider]
+        from app.providers.model_registry import key_transport
+
+        lines.append(f"## {result.provider} ({spec.host})")
+        lines.append("")
+        lines.append(f"- Key: {result.key_masked}")
+        lines.append(f"- Key transport: {key_transport(result.provider)}")
+        accepted = "unknown" if result.key_accepted is None else ("YES" if result.key_accepted else f"NO (HTTP {result.status})")
+        lines.append(f"- Key accepted: {accepted}")
+        lines.append(f"- Chat models listed: {len(result.models)}")
+        if result.chosen:
+            lines.append(f"- Would choose: {result.chosen} ({result.model_source})")
+        lines.append(f"- Probe: {'OK' if result.probe_ok else 'FAILED' if result.probe_ok is not None else 'skipped'} — verdict {result.verdict}")
+        if result.probe_detail:
+            detail = " ".join(redact(result.probe_detail).split())
+            lines.append(f"- Detail: {detail}")
+        if result.walk:
+            lines.append("")
+            lines.append("| model | result | reason |")
+            lines.append("|---|---|---|")
+            for step in result.walk:
+                reason = " ".join(redact(str(step.get("reason") or "")).split()).replace("|", "\\|")
+                lines.append(
+                    f"| {step['model']} | {step['outcome']} | {reason or '—'} |"
+                )
+        lines.append("")
+    report = "\n".join(lines)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+    return str(report_path)
 
 
 def main() -> int:

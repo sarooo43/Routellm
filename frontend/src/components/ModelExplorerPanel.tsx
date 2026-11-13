@@ -5,13 +5,16 @@ import {
   ChevronDown,
   ChevronUp,
   CircleSlash,
+  ClipboardCheck,
   Clock,
+  Copy,
   FlaskConical,
   Loader2,
   Pin,
   RefreshCw,
   Search,
   ShieldQuestion,
+  Stethoscope,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -19,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   getProviderModels,
+  runProviderDiagnostics,
   setPinnedModel,
   testProvider,
   testProviderModel,
@@ -29,6 +33,7 @@ import type {
   ModelSort,
   ModelStatus,
   ModelTier,
+  ProviderDiagnosticsResponse,
   ProviderModelInfo,
   ProviderModelsResponse,
   ProviderTestResult,
@@ -108,6 +113,10 @@ export function ModelExplorerPanel({
   // One Test-connection flow (the single route: POST /provider-test/{provider}).
   const [connResult, setConnResult] = useState<ProviderTestResult | null>(null)
   const [connTesting, setConnTesting] = useState(false)
+  // T1: in-app diagnostics state.
+  const [diag, setDiag] = useState<ProviderDiagnosticsResponse | null>(null)
+  const [diagBusy, setDiagBusy] = useState(false)
+  const [diagCopied, setDiagCopied] = useState(false)
   const mounted = useRef(true)
 
   // The page passes a fresh inline callback per render; keeping it in a ref
@@ -129,6 +138,8 @@ export function ModelExplorerPanel({
   // previous key, and leaving it up would be exactly the lie this replaces.
   useEffect(() => {
     setConnResult(null)
+    setDiag(null)
+    setDiagCopied(false)
   }, [routellmKey, providerName])
 
   const updateParams = useCallback(
@@ -302,6 +313,44 @@ export function ModelExplorerPanel({
     }
   }, [routellmKey, providerName, load])
 
+  /**
+   * T1: run the in-app diagnostics (replaces manual terminal work). The
+   * server returns the full wire report — list counts, transport, probe
+   * table — with every string already scrubbed of keys.
+   */
+  const onDiagnostics = useCallback(async () => {
+    setDiagBusy(true)
+    setNotice(null)
+    setDiagCopied(false)
+    try {
+      const result = await runProviderDiagnostics(routellmKey, providerName)
+      if (!mounted.current) return
+      setDiag(result)
+    } catch (err) {
+      if (!mounted.current) return
+      const apiError = toApiError(err)
+      setNotice(
+        `Diagnostics failed: ${apiError.serverDetail ?? apiError.message}`,
+      )
+    } finally {
+      if (mounted.current) setDiagBusy(false)
+    }
+  }, [routellmKey, providerName])
+
+  /** Copy the server-built Markdown report (contains no keys). */
+  const onCopyReport = useCallback(async () => {
+    if (!diag) return
+    try {
+      await navigator.clipboard.writeText(diag.report_markdown)
+      setDiagCopied(true)
+      window.setTimeout(() => {
+        if (mounted.current) setDiagCopied(false)
+      }, 2500)
+    } catch {
+      setNotice('Copy failed — your browser blocked clipboard access.')
+    }
+  }, [diag])
+
   const onUseModel = useCallback(
     async (modelId: string | null) => {
       setBusyModel(modelId ?? '__auto__')
@@ -431,6 +480,98 @@ export function ModelExplorerPanel({
         <p className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-xs leading-relaxed text-text-secondary">
           {connResult.error}
         </p>
+      )}
+
+      {/* T1: in-app diagnostics — no terminal work needed. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void onDiagnostics()}
+          disabled={diagBusy}
+          className="rl-btn-ghost border border-white/[0.1] px-2.5 py-1 text-xs disabled:opacity-40"
+          aria-label={`Run ${providerDisplay} diagnostics`}
+          data-testid={`run-diagnostics-${providerName}`}
+        >
+          {diagBusy ? (
+            <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Stethoscope size={12} aria-hidden="true" />
+          )}
+          {diagBusy ? 'Running…' : 'Run diagnostics'}
+        </button>
+        {diag && (
+          <>
+            <button
+              type="button"
+              onClick={() => void onCopyReport()}
+              className="rl-btn-ghost border border-white/[0.1] px-2.5 py-1 text-xs"
+              aria-label={`Copy the ${providerDisplay} diagnostics report`}
+              data-testid={`copy-report-${providerName}`}
+            >
+              {diagCopied ? (
+                <ClipboardCheck size={12} aria-hidden="true" />
+              ) : (
+                <Copy size={12} aria-hidden="true" />
+              )}
+              {diagCopied ? 'Copied' : 'Copy report'}
+            </button>
+            <span
+              className="rl-badge border-white/[0.08] bg-white/[0.04] text-text-secondary"
+              data-testid={`diag-no-keys-${providerName}`}
+            >
+              Contains no keys
+            </span>
+          </>
+        )}
+      </div>
+
+      {diag && (
+        <div
+          className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-xs text-text-secondary"
+          data-testid={`diagnostics-${providerName}`}
+          aria-label={`${providerDisplay} diagnostics report`}
+        >
+          <p className="leading-relaxed">
+            {diag.notice} List call: HTTP {diag.list_http_status ?? '—'}
+            {diag.list_count_before_filter !== null &&
+              ` — ${diag.list_count_before_filter} entries before filtering, ${diag.list_count_after_filter} chat-capable after`}
+            . Key transport: {diag.key_transport}. API {diag.api_version} at{' '}
+            {diag.api_host}. App {diag.app_version}, Python {diag.python_version}
+            .{diag.discovery_reason ? ` Note: ${diag.discovery_reason}` : ''}
+          </p>
+          {diag.rows.length > 0 && (
+            <table className="mt-2 w-full text-left text-xs">
+              <thead>
+                <tr className="text-text-secondary">
+                  <th scope="col" className="py-1 pr-2 font-normal">model</th>
+                  <th scope="col" className="py-1 pr-2 font-normal">HTTP</th>
+                  <th scope="col" className="py-1 pr-2 font-normal">provider status</th>
+                  <th scope="col" className="py-1 pr-2 font-normal">outcome</th>
+                  <th scope="col" className="py-1 text-right font-normal">ms</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diag.rows.map((row) => (
+                  <tr
+                    key={row.model_id}
+                    data-testid={`diag-row-${providerName}-${row.model_id}`}
+                  >
+                    <td className="py-1 pr-2 font-mono">{row.model_id}</td>
+                    <td className="py-1 pr-2">{row.http_status ?? '—'}</td>
+                    <td className="py-1 pr-2">
+                      {row.provider_status ?? '—'}
+                      {row.provider_reason ? ` · ${row.provider_reason}` : ''}
+                    </td>
+                    <td className="py-1 pr-2">
+                      {row.outcome ?? (row.success ? 'works' : '—')}
+                    </td>
+                    <td className="py-1 text-right">{Math.round(row.latency_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {/* Controls */}

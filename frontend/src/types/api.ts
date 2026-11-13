@@ -350,6 +350,38 @@ export interface ProviderModelTestResponse {
   error: string | null
 }
 
+/** One probed model row of the diagnostics report (T1; never a secret). */
+export interface ProviderDiagnosticsRow {
+  model_id: string
+  http_status: number | null
+  provider_status: string | null
+  provider_reason: string | null
+  outcome: string | null
+  success: boolean
+  latency_ms: number
+  message: string | null
+}
+
+/** POST /provider-keys/{provider}/diagnostics — the full wire report. */
+export interface ProviderDiagnosticsResponse {
+  provider_name: string
+  generated_at: string
+  notice: string
+  key_transport: string
+  api_host: string
+  api_version: string
+  list_http_status: number | null
+  list_count_before_filter: number | null
+  list_count_after_filter: number | null
+  discovery_reason: string | null
+  probe_count: number
+  rows: ProviderDiagnosticsRow[]
+  received_host: string | null
+  app_version: string
+  python_version: string
+  report_markdown: string
+}
+
 /** One candidate in the Test-connection walk (attempted or skipped). */
 export interface ProviderConnectionTestStep {
   model: string

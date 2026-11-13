@@ -707,13 +707,94 @@ class ModelCatalog:
         except Exception as exc:  # noqa: BLE001 - never break discovery
             logger.debug("model_cache_db_write_skipped", provider=provider, error=type(exc).__name__)
 
-    async def _fetch(self, spec: ProviderSpec, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
-        url = spec.models_url()
-        headers = {}
+    def _auth_headers(self, spec: ProviderSpec, api_key: Optional[str]) -> dict[str, str]:
+        """Credential transport: headers only, NEVER the URL query.
+
+        Gemini pins ``x-goog-api-key`` (OBSERVED LIVE: the owner's
+        header-auth list call worked); everything else uses a Bearer header.
+        Keeping this in one place is what lets the diagnostics report state
+        the transport as a fact instead of a hope.
+        """
+        headers: dict[str, str] = {}
         if api_key and spec.name == "gemini":
             headers["x-goog-api-key"] = api_key
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    async def fetch_counts(
+        self, spec: ProviderSpec, api_key: Optional[str]
+    ) -> dict:
+        """T1 diagnostics: ONE live list call, reported honestly.
+
+        Returns ``{"http_status", "raw_count", "chat_count", "error"}`` —
+        the wire status, how many entries the body carried before
+        filtering, how many survived the chat filter, and a transport-error
+        type name when no response arrived. A successful fetch warms the
+        same cache :meth:`_discover` uses, so the follow-up
+        ``discover_models`` costs NO second provider call.
+        """
+        url = spec.models_url()
+        headers = self._auth_headers(spec, api_key)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.get(url, headers=headers)
+        except Exception as exc:  # noqa: BLE001 - diagnostics is fail-soft
+            return {
+                "http_status": None,
+                "raw_count": None,
+                "chat_count": None,
+                "error": type(exc).__name__,
+            }
+
+        if response.status_code != 200:
+            logger.info(
+                "model_discovery_rejected",
+                provider=spec.name,
+                status=response.status_code,
+                # Never log the body here: it can echo credential hints.
+            )
+            _capture_provider_shape(spec.name, "list_models", response)
+            return {
+                "http_status": response.status_code,
+                "raw_count": None,
+                "chat_count": None,
+                "error": None,
+            }
+
+        try:
+            data = response.json()
+        except Exception:  # pragma: no cover - non-JSON 200
+            return {
+                "http_status": 200,
+                "raw_count": None,
+                "chat_count": None,
+                "error": "non_json_body",
+            }
+
+        _capture_provider_shape(spec.name, "list_models", response, data=data)
+        ids, meta, raw_count = _extract_model_ids_with_counts(spec, data)
+        logger.info(
+            "model_discovery_ok",
+            provider=spec.name,
+            models=len(ids),
+            raw_entries=raw_count,
+            sample=ids[:3],
+        )
+        if ids:
+            # Warm the shared cache so discover_models does not re-fetch.
+            self.store(spec.name, api_key, ids, meta=meta)
+            await self._save_persisted(spec.name, api_key, ids, meta)
+        return {
+            "http_status": 200,
+            "raw_count": raw_count,
+            "chat_count": len(ids),
+            "error": None,
+        }
+
+    async def _fetch(self, spec: ProviderSpec, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
+        url = spec.models_url()
+        headers = self._auth_headers(spec, api_key)
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -834,15 +915,29 @@ def _extract_model_ids(spec: ProviderSpec, data: dict) -> tuple[list[str], dict[
     missing fields, unexpected types or duplicate ids degrade to fewer/empty
     results — a parse failure NEVER raises into the endpoint.
     """
+    ids, meta, _raw_count = _extract_model_ids_with_counts(spec, data)
+    return ids, meta
+
+
+def _extract_model_ids_with_counts(
+    spec: ProviderSpec, data: dict
+) -> tuple[list[str], dict[str, dict], int]:
+    """The same tolerant parse, plus the RAW entry count (T1 diagnostics).
+
+    "List count before filtering" = how many entries the provider's list
+    body contained, before dedupe, malformed-entry drops and the
+    non-chat-marker filter; the returned ids are what the app kept.
+    """
     ids: list[str] = []
     meta: dict[str, dict] = {}
     if not isinstance(data, dict):
-        return [], {}
+        return [], {}, 0
     entries: list = []
     if isinstance(data.get("data"), list):
         entries = data["data"]
     elif isinstance(data.get("models"), list):
         entries = data["models"]
+    raw_count = len(entries)
 
     for item in entries[:MAX_CACHED_MODELS]:
         if isinstance(item, str):
@@ -899,7 +994,7 @@ def _extract_model_ids(spec: ProviderSpec, data: dict) -> tuple[list[str], dict[
         seen.add(name)
         if is_chat_capable(spec, name):
             cleaned.append(name)
-    return cleaned, {k: meta[k] for k in cleaned if k in meta}
+    return cleaned, {k: meta[k] for k in cleaned if k in meta}, raw_count
 
 
 #: Process-wide cache. Cheap to construct, so tests build their own.

@@ -17,6 +17,7 @@ import type {
   LogsQuery,
   LogsResponse,
   ModelsResponse,
+  ProviderDiagnosticsResponse,
   ProviderModelTestResponse,
   ProviderModelsResponse,
   ProviderKeyStatus,
@@ -188,6 +189,25 @@ export async function setPinnedModel(
   const { data } = await api.put<ProviderModelsResponse>(
     `/api/v1/provider-keys/${encodeURIComponent(providerName)}/model`,
     { model_id: modelId },
+    { headers: { 'X-API-Key': apiKey } },
+  )
+  return data
+}
+
+/**
+ * T1: run the in-app diagnostics for one stored provider key.
+ *
+ * One live list call + up to 5 probes of the top Auto candidates through
+ * the same walk routing uses. The response (and its ready-made Markdown
+ * report) contains no keys — provider messages are redacted server-side.
+ */
+export async function runProviderDiagnostics(
+  apiKey: string,
+  providerName: string,
+): Promise<ProviderDiagnosticsResponse> {
+  const { data } = await api.post<ProviderDiagnosticsResponse>(
+    `/api/v1/provider-keys/${encodeURIComponent(providerName)}/diagnostics`,
+    {},
     { headers: { 'X-API-Key': apiKey } },
   )
   return data
