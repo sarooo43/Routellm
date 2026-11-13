@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ProviderModelInfo,
   ProviderModelsResponse,
+  ProviderTestResult,
 } from '../types/api'
+import type { ComponentProps } from 'react'
+
+type ProviderExplorerProps = ComponentProps<typeof ModelExplorerPanel>
 import { ModelExplorerPanel } from './ModelExplorerPanel'
 
 vi.mock('../api/client', () => ({
@@ -416,6 +420,175 @@ describe('ModelExplorerPanel', () => {
     expect(callsAtHalt).toBe(8)
     // The button is disabled while the cooldown runs.
     expect(screen.getByRole('button', { name: 'Test all Groq models' })).toBeDisabled()
+  })
+
+  // ------------------------------------------------------------------
+  // T8d — mapping the 9 tests deleted with ProviderConnectionPanel.test.tsx
+  // (removed when the two panels merged into this one). The brief's five
+  // required behaviours are pinned below, plus three the old file covered.
+  //
+  // The verdict is read from testid connection-verdict-<provider> and the
+  // explanation from the status text, exactly as the passing
+  // "runs the one Test-connection flow" test does.
+  // ------------------------------------------------------------------
+
+  function connectionResult(overrides: Partial<ProviderTestResult> = {}): ProviderTestResult {
+    return {
+      provider: 'groq',
+      display: 'Groq',
+      verdict: 'valid',
+      key_valid: true,
+      model: 'llama-3.3-70b-versatile',
+      latency_ms: 120,
+      error: null,
+      available_models: ['llama-3.3-70b-versatile'],
+      model_source: 'discovered',
+      attempted: [],
+      skipped: [],
+      ...overrides,
+    }
+  }
+
+  async function runConnectionTest(props: Partial<ProviderExplorerProps> = {}) {
+    renderPanel(props)
+    // Wait for the list so the panel is interactive, then use the real label.
+    await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+    fireEvent.click(screen.getByRole('button', { name: /^Test .* connection$/ }))
+    await screen.findByTestId('connection-verdict-groq')
+    // The badge carries the verdict + model; the explanation is a sibling
+    // sentence. Return the section so assertions can see both, exactly as the
+    // user does.
+    return screen.getByLabelText('Groq model explorer')
+  }
+
+  it('T8d[404] names the model AND the host, and never says "check your key"', async () => {
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'model_not_found',
+        key_valid: false,
+        model: 'gemini-2.5-flash',
+        error:
+          "model_not_found: gemini (generativelanguage.googleapis.com) has no model named " +
+          "'gemini-2.5-flash' for this key (HTTP 404). The URL and your key are fine — " +
+          'the model string is wrong, retired, or not enabled for your account.',
+      }),
+    )
+    const verdict = await runConnectionTest()
+
+    expect(screen.getByTestId('connection-verdict-groq')).toHaveTextContent('Model unavailable')
+    expect(verdict).toHaveTextContent('gemini-2.5-flash')                 // the model
+    expect(verdict).toHaveTextContent('generativelanguage.googleapis.com') // the host
+    expect(verdict).not.toHaveTextContent(/check your key/i)
+    expect(verdict).toHaveTextContent(/your key are fine/i)
+  })
+
+  it('T8d[404] never renders "Key rejected" for a model problem', async () => {
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'model_not_found',
+        key_valid: false,
+        model: 'retired-model',
+        error:
+          "model_not_found: groq (api.groq.com) has no model named 'retired-model' for this key (HTTP 404).",
+      }),
+    )
+    const verdict = await runConnectionTest()
+    expect(screen.getByTestId('connection-verdict-groq')).toHaveTextContent('Model unavailable')
+    expect(verdict).not.toHaveTextContent('Key rejected')
+  })
+
+  it('T8d[403] shows the key-restrictions text, not "invalid key"', async () => {
+    // OBSERVED LIVE shape: the key listed models fine, then 403 on the call.
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'auth_failed',
+        key_valid: false,
+        model: 'gemini-3.8-flash',
+        error:
+          "auth_failed: This key can list models but isn't allowed to call this one. " +
+          'Check key restrictions, project access, region or billing. ' +
+          '(gemini (generativelanguage.googleapis.com), HTTP 403).',
+      }),
+    )
+    const verdict = await runConnectionTest()
+    expect(verdict).toHaveTextContent(/isn't allowed to call this one/i)
+    expect(verdict).toHaveTextContent(/key restrictions, project access/i)
+    expect(verdict).not.toHaveTextContent(/invalid key/i)
+  })
+
+  it('T8d[401] does blame the key — the only status that may', async () => {
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'auth_failed',
+        key_valid: false,
+        error:
+          'auth_failed: groq (api.groq.com) says the key itself is invalid (HTTP 401).',
+      }),
+    )
+    const verdict = await runConnectionTest()
+    expect(screen.getByTestId('connection-verdict-groq')).toHaveTextContent('Key rejected')
+    expect(verdict).toHaveTextContent(/key itself is invalid/i)
+  })
+
+  it('T8d[429] shows a rate-limit state', async () => {
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'rate_limited',
+        key_valid: false,
+        error: 'rate_limit_exceeded: groq (api.groq.com) is rate limiting this key (HTTP 429).',
+      }),
+    )
+    const verdict = await runConnectionTest()
+    expect(screen.getByTestId('connection-verdict-groq')).toHaveTextContent('Rate limited')
+    expect(verdict).not.toHaveTextContent('Key rejected')
+  })
+
+  it('T8d[no-secret] the panel never renders the key it was given', async () => {
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({ verdict: 'auth_failed', key_valid: false, error: 'auth_failed: groq rejected the credential (HTTP 401).' }),
+    )
+    await runConnectionTest()
+    // The panel is handed the caller's RouteLLM key to authenticate with; that
+    // value must not appear anywhere in the DOM.
+    expect(document.body.innerHTML).not.toContain(SECRET)
+  })
+
+  it('T8d[no-secret] a hostile provider echo must be redacted server-side, not here', async () => {
+    // KNOWN GAP, asserted so it cannot be forgotten: this panel renders
+    // `error` verbatim, because redaction belongs to the server (outcomes.py
+    // redacts the ~1000-char body before it is ever serialised). If a body
+    // carrying a raw key ever reached the client, the UI would show it.
+    // backend/tests/unit/test_no_secret_leaks.py is the test that must hold.
+    // Here we prove the SPAN the server sends is displayed faithfully.
+    vi.mocked(testProvider).mockResolvedValue(
+      connectionResult({
+        verdict: 'model_not_found',
+        key_valid: false,
+        error: "model_not_found: groq (api.groq.com) has no model named 'x' (HTTP 404).",
+      }),
+    )
+    const section = await runConnectionTest()
+    expect(section).toHaveTextContent('has no model named')
+  })
+
+  it('T8d[error] does not blame the provider when the dashboard itself fails', async () => {
+    vi.mocked(testProvider).mockRejectedValue(new Error('dashboard offline'))
+    renderPanel()
+    await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+    fireEvent.click(screen.getByRole('button', { name: /^Test .* connection$/ }))
+
+    // No verdict is invented; the failure is reported as a request problem.
+    await waitFor(() =>
+      expect(screen.queryByTestId('connection-verdict-groq')).not.toBeInTheDocument(),
+    )
+    expect(document.body.textContent).not.toMatch(/Key rejected/)
+  })
+
+  it('T8d[no-key-yet] claims nothing before the first test runs', async () => {
+    renderPanel()
+    await screen.findByTestId('model-row-groq-llama-3.3-70b-versatile')
+    expect(screen.queryByTestId('connection-verdict-groq')).not.toBeInTheDocument()
+    expect(testProvider).not.toHaveBeenCalled()
   })
 
   it('shows the empty state (with the server reason when given)', async () => {
