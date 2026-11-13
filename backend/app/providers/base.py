@@ -21,6 +21,12 @@ class ProviderResponse(BaseModel):
     #: Provider-supplied Retry-After in SECONDS (from the 429 header), when
     #: present. The model-status cache uses it as the rate_limited TTL.
     retry_after: Optional[float] = None
+    #: T4: the provider's own machine-readable error identity, parsed from
+    #: the JSON body — Google's ``error.status`` (e.g. PERMISSION_DENIED)
+    #: and ``error.reason`` when present. Surfaced by diagnostics and the
+    #: explorer so a 403 is distinguishable from a 401 without prose.
+    provider_status: Optional[str] = None
+    provider_reason: Optional[str] = None
 
 
 class ModelProvider(ABC):
@@ -42,6 +48,8 @@ def make_error(
     latency_ms: float,
     outcome: Optional[str] = None,
     retry_after: Optional[float] = None,
+    provider_status: Optional[str] = None,
+    provider_reason: Optional[str] = None,
 ) -> ProviderResponse:
     return ProviderResponse(
         success=False,
@@ -53,6 +61,8 @@ def make_error(
         model_name=model_name,
         outcome=outcome,
         retry_after=retry_after,
+        provider_status=provider_status,
+        provider_reason=provider_reason,
     )
 
 

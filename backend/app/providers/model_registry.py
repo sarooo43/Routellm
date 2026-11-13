@@ -179,6 +179,25 @@ def spec_for(provider: str) -> Optional[ProviderSpec]:
     return PROVIDER_SPECS.get(provider)
 
 
+#: T4: HOW each provider's credential travels, for the diagnostics report.
+#: Every supported provider authenticates with a request HEADER — the key
+#: must never ride in the URL query, where proxies, logs and error echoes
+#: copy it around. The gemini entry is pinned to the exact header Google's
+#: v1beta accepts (OBSERVED LIVE: the owner's header-auth list call worked).
+KEY_TRANSPORT = {
+    "gemini": "header: x-goog-api-key (never the URL query)",
+    "groq": "header: Authorization: Bearer",
+    "deepseek": "header: Authorization: Bearer",
+}
+
+
+def key_transport(provider: str) -> str:
+    """Human-readable transport description for the diagnostics report."""
+    return KEY_TRANSPORT.get(
+        provider, "header: Authorization: Bearer (assumed for unknown providers)"
+    )
+
+
 def is_chat_capable(spec: ProviderSpec, model_id: str) -> bool:
     """Filter out embeddings, audio, image and other non-chat endpoints."""
     lowered = model_id.lower()

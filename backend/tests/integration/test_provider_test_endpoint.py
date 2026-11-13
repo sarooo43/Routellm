@@ -111,7 +111,9 @@ async def test_auth_failure_is_the_only_thing_that_blames_the_key(respx_mock, db
     result = await provider_test_routes._probe("groq", "", db_session, _row())
     assert result.verdict == "auth_failed"
     assert result.key_valid is False
-    assert "credential" in (result.error or "")
+    # T4 wording: a 401 says the key itself is invalid (the old generic
+    # "credential" sentence was replaced deliberately).
+    assert "invalid" in (result.error or "").lower()
 
 
 @pytest.mark.parametrize("status,verdict", [

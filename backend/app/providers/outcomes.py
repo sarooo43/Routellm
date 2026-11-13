@@ -148,6 +148,23 @@ def describe_failure(
     detail = f" Provider said: {body}" if body else ""
 
     if outcome == "auth_failed":
+        lowered = body.lower()
+        # OBSERVED LIVE (owner's key): 403 PERMISSION_DENIED on every gemini
+        # generateContent call while the SAME key's list-models succeeded —
+        # so a 403 must never say "invalid key". Only a 401, or Google's
+        # literal "API key not valid" body, means the credential is bad.
+        if status_code == 401 or "api key not valid" in lowered:
+            return (
+                f"auth_failed: {label} says the key itself is invalid "
+                f"(HTTP {status_code}). Replace the key in Settings — this "
+                f"is not a permissions or region problem.{detail}"
+            )
+        if status_code == 403:
+            return (
+                f"auth_failed: This key can list models but isn't allowed to "
+                f"call this one. Check key restrictions, project access, "
+                f"region or billing. ({label}, HTTP {status_code}).{detail}"
+            )
         return (
             f"auth_failed: {label} rejected the credential (HTTP {status_code})."
             f"{detail}"
@@ -215,6 +232,7 @@ def error_for_status(
         outcome = "model_not_found"
 
     body = snippet(response)
+    provider_status, provider_reason = _provider_error_identity(response)
     return make_error(
         provider,
         model,
@@ -231,6 +249,41 @@ def error_for_status(
         outcome=outcome,
         #: T3: the model-status cache honors the provider's own backoff hint.
         retry_after=_retry_after_seconds(response),
+        #: T4: the provider's own machine error identity (error.status /
+        #: error.reason), surfaced by diagnostics and the explorer.
+        provider_status=provider_status,
+        provider_reason=provider_reason,
+    )
+
+
+def _provider_error_identity(response) -> tuple[Optional[str], Optional[str]]:
+    """Google's ``error.status`` / ``error.reason`` from a JSON body.
+
+    OBSERVED LIVE (observation 4): the owner's direct generateContent calls
+    answered 403 with the body unseen — so the identity must come from the
+    body WHEN we have one and must degrade to (None, None) when we don't.
+    Non-JSON bodies (plain text, HTML) simply carry no identity.
+    """
+    try:
+        raw = response.text or ""
+    except Exception:  # pragma: no cover - exotic transport
+        return None, None
+    if not raw.lstrip().startswith("{"):
+        return None, None
+    import json
+
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None, None
+    err = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(err, dict):
+        return None, None
+    status = err.get("status")
+    reason = err.get("reason")
+    return (
+        status if isinstance(status, str) and status else None,
+        reason if isinstance(reason, str) and reason else None,
     )
 
 
