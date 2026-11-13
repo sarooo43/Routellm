@@ -543,9 +543,12 @@ def _diagnostics_markdown(d: DiagnosticsResponse) -> str:
         "|---|---|---|---|---|---|---|",
     ]
     for row in d.rows:
+        # Escaped outside the f-string: a backslash inside an f-string
+        # expression is a SyntaxError before Python 3.12, and CI runs 3.11.
         message = (row.message or "").replace("|", "\\|").replace("\n", " ")
+        model_cell = row.model_id.replace("|", "\\|")
         lines.append(
-            f"| {row.model_id.replace('|', '\\|')} | "
+            f"| {model_cell} | "
             f"{row.http_status if row.http_status is not None else '—'} | "
             f"{row.provider_status or '—'} | {row.provider_reason or '—'} | "
             f"{row.outcome or '—'} | {row.latency_ms:.1f} | {message or '—'} |"
