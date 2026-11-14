@@ -1,6 +1,6 @@
 import { AlertTriangle, ExternalLink, KeyRound, PlugZap, Save, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   deleteProviderKey,
   generateApiKey,
@@ -17,7 +17,7 @@ import {
   type StoredApiKey,
 } from '../api/keyStorage'
 import { GlassCard } from '../components/GlassCard'
-import { ProviderConnectionPanel } from '../components/ProviderConnectionPanel'
+import { ModelExplorerPanel } from '../components/ModelExplorerPanel'
 import { PageHeader } from '../components/PageHeader'
 import { toApiError } from '../api/errors'
 import { relativeTime } from '../lib/format'
@@ -64,9 +64,11 @@ function errorDetail(err: unknown, fallback: string): string {
 }
 
 export function ProviderKeys() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [keys, setKeys] = useState<StoredApiKey[]>(() => getStoredKeys())
   const [activePrefix, setActivePrefix] = useState<string | null>(() => getActiveKey()?.key_prefix ?? null)
   const [statuses, setStatuses] = useState<Record<string, ProviderKeyStatus>>({})
+  const [testedByProvider, setTestedByProvider] = useState<Record<string, boolean>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -78,6 +80,32 @@ export function ProviderKeys() {
   const activeKey = keys.find((key) => key.key_prefix === activePrefix && !key.revoked) ?? null
   const usableKeys = keys.filter((key) => !key.revoked)
   const anyUserKeyConfigured = Object.values(statuses).some((status) => status.configured)
+
+  // Open model-explorer panel persists in the URL (?panel=groq) so a refresh
+  // or a shared link keeps the same provider expanded.
+  const openProvider = searchParams.get('panel')
+  const setOpenProvider = useCallback(
+    (providerName: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (providerName === null) next.delete('panel')
+          else next.set('panel', providerName)
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
+
+  /** Badge input from the panel: has the key produced at least one working model? */
+  const onTestedChange = useCallback((providerName: string, hasWorking: boolean) => {
+    setTestedByProvider((prev) => {
+      if (prev[providerName] === hasWorking) return prev
+      return { ...prev, [providerName]: hasWorking }
+    })
+  }, [])
 
   const syncLocal = useCallback(() => {
     setKeys(getStoredKeys())
@@ -169,7 +197,11 @@ export function ProviderKeys() {
       const status = await setProviderKey(current.api_key, provider.name, draft)
       setStatuses((prev) => ({ ...prev, [provider.name]: status }))
       setDrafts((prev) => ({ ...prev, [provider.name]: '' }))
+      setTestedByProvider((prev) => ({ ...prev, [provider.name]: false }))
       setNotice(`${provider.display} key encrypted and saved for ${current.key_prefix}…`)
+      // Discovery is non-blocking on the server; open the panel so the caller
+      // sees the model list populate (URL-persisted).
+      setOpenProvider(provider.name)
     } catch (err) {
       setError(errorDetail(err, `Could not save the ${provider.display} key.`))
     } finally {
@@ -196,6 +228,8 @@ export function ProviderKeys() {
         },
       }))
       setDrafts((prev) => ({ ...prev, [provider.name]: '' }))
+      setTestedByProvider((prev) => ({ ...prev, [provider.name]: false }))
+      if (openProvider === provider.name) setOpenProvider(null)
       setNotice(`${provider.display} key removed from ${current.key_prefix}…`)
     } catch (err) {
       setError(errorDetail(err, `Could not remove the ${provider.display} key.`))
@@ -326,11 +360,19 @@ export function ProviderKeys() {
                 <span
                   className={`rl-badge ${
                     configured
-                      ? 'border-success/25 bg-success/10 text-success'
+                      ? testedByProvider[provider.name]
+                        ? 'border-success/25 bg-success/10 text-success'
+                        : 'border-warning/25 bg-warning/10 text-warning'
                       : 'border-white/[0.08] bg-white/[0.04] text-text-secondary'
                   }`}
                 >
-                  {configured ? 'Configured' : 'Not configured'}
+                  {/* Honest wording: a stored key says nothing about whether a
+                      model call actually succeeds until a test has passed. */}
+                  {configured
+                    ? testedByProvider[provider.name]
+                      ? 'Configured'
+                      : 'Key saved, not tested'
+                    : 'Not configured'}
                 </span>
               </div>
 
@@ -387,6 +429,18 @@ export function ProviderKeys() {
                     {removing === provider.name ? 'Removing…' : 'Remove'}
                   </button>
                 )}
+                {configured && (
+                  <button
+                    type="button"
+                    onClick={() => setOpenProvider(openProvider === provider.name ? null : provider.name)}
+                    disabled={!activeKey}
+                    aria-expanded={openProvider === provider.name}
+                    aria-controls={`model-explorer-${provider.name}`}
+                    className="rl-btn-ghost border border-amber-400/25 px-3 py-1.5 text-xs text-amber-200 disabled:opacity-40"
+                  >
+                    {openProvider === provider.name ? 'Hide models' : 'View models'}
+                  </button>
+                )}
                 <a
                   href={provider.consoleUrl}
                   target="_blank"
@@ -397,14 +451,16 @@ export function ProviderKeys() {
                 </a>
               </div>
 
-              {/* "Configured" above only means a row exists. This is the part
-                  that proves the key works, using the same call routing makes. */}
-              <ProviderConnectionPanel
-                apiKey={activeKey?.api_key ?? ''}
-                provider={provider.name}
-                display={provider.display}
-                enabled={Boolean(activeKey) && configured && !busy}
-              />
+              {configured && openProvider === provider.name && activeKey && (
+                <div id={`model-explorer-${provider.name}`} className="mt-4">
+                  <ModelExplorerPanel
+                    providerName={provider.name}
+                    providerDisplay={provider.display}
+                    routellmKey={activeKey.api_key}
+                    onTestedChange={(hasWorking) => onTestedChange(provider.name, hasWorking)}
+                  />
+                </div>
+              )}
             </GlassCard>
           )
         })}

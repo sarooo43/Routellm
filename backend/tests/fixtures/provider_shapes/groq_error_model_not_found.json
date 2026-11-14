@@ -1,0 +1,25 @@
+[
+  {
+    "_notice": "SYNTHETIC, UNVERIFIED AGAINST THE LIVE API. Two Groq-flavored model errors: a retired model id and a decommissioned model. Both must classify as model_not_found (never an auth failure).",
+    "model_not_found": {
+      "status": 404,
+      "body": {
+        "error": {
+          "message": "model_not_found: the model 'llama-3.3-70b-versatile' has no model named llama-3.3-70b-versatile (api.groq.com). Your key and account are fine.",
+          "type": "invalid_request_error",
+          "code": "model_not_found"
+        }
+      }
+    },
+    "model_decommissioned": {
+      "status": 404,
+      "body": {
+        "error": {
+          "message": "The model `mixtral-8x7b-32768` has been decommissioned. Please use llama-3.3-70b-versatile instead.",
+          "type": "invalid_request_error",
+          "code": "model_decommissioned"
+        }
+      }
+    }
+  }
+]

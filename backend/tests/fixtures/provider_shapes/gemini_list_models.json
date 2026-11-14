@@ -1,0 +1,37 @@
+[
+  {
+    "_notice": "SYNTHETIC, UNVERIFIED AGAINST THE LIVE API. Built from Google's public v1beta Model documentation. Use only to test parser tolerance; real shapes should replace this via ROUTELLM_CAPTURE_PROVIDER_SHAPES=true.",
+    "models": [
+      {
+        "name": "models/gemini-2.0-flash",
+        "displayName": "Gemini 2.0 Flash",
+        "description": "Fast, versatile multimodal model.",
+        "inputTokenLimit": 1048576,
+        "outputTokenLimit": 8192,
+        "supportedGenerationMethods": ["generateContent", "countTokens"]
+      },
+      {
+        "name": "models/gemini-2.5-flash",
+        "displayName": "Gemini 2.5 Flash",
+        "description": "Balanced speed and quality.",
+        "inputTokenLimit": 1048576,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": ["generateContent"]
+      },
+      {
+        "name": "models/gemini-3.8-flash",
+        "displayName": "Gemini 3.8 Flash",
+        "description": "Newest generation.",
+        "inputTokenLimit": 2097152,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": ["generateContent"]
+      },
+      {
+        "name": "models/text-embedding-004",
+        "displayName": "Text Embedding 004",
+        "inputTokenLimit": 2048,
+        "supportedGenerationMethods": ["embedContent"]
+      }
+    ]
+  }
+]

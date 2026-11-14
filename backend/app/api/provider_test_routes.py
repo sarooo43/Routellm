@@ -8,13 +8,20 @@ that 404 was reported as a bad key.
 The rule here is that a test must not be able to disagree with production:
 
 *   same URL builder (``ProviderSpec.chat_url``),
-*   same model resolution (``resolve_model`` → discovery + preference order),
+*   same candidate ranking (``model_registry.rank_candidate_ids`` — one
+    ordering for the explorer, the walk and ``choose_model``),
 *   same provider class (``PROVIDER_REGISTRY[name].generate``),
-*   same outcome classification (``outcome`` on the response).
+*   same outcome classification (``outcome`` on the response),
+*   in Auto mode the SAME candidate walk routing uses, so "denied" models are
+    skipped exactly as a real route would skip them.
 
 A 1-token prompt is the only difference, so a passing test predicts a working
-route. Everything reported here (model, latency, outcome) comes from that one
-live call rather than from stored state.
+route. Everything reported here (model, latency, outcome, the walk's
+attempted/skipped lists) comes from those live calls rather than stored state.
+
+Because every test spends the user's provider quota, this endpoint is guarded
+by :mod:`app.core.test_endpoint_guard`: at most 10 tests per key per minute
+and 5 in flight, answered with 429 + Retry-After beyond that.
 """
 
 from typing import Optional
@@ -24,11 +31,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import require_api_key
-from app.config import settings
 from app.core.provider_key_manager import is_supported_provider
+from app.core.test_endpoint_guard import check_and_acquire, release
 from app.db.session import get_session
 from app.models.api_key import ApiKeyDB
-from app.providers.model_registry import model_catalog, resolve_model, spec_for
+from app.providers.model_registry import model_catalog, spec_for
 from app.providers.registry import PROVIDER_REGISTRY
 
 router = APIRouter(prefix="/provider-test", tags=["Provider test"])
@@ -36,9 +43,6 @@ router = APIRouter(prefix="/provider-test", tags=["Provider test"])
 #: Cheapest possible request that still proves authentication AND model access.
 PROBE_PROMPT = "ping"
 PROBE_MAX_TOKENS = 1
-
-#: How long the UI should wait before giving up on the whole test.
-TIMEOUT_HINT_S = 20
 
 #: Key-specific outcomes. Only these may be described as "your key".
 KEY_OUTCOMES = frozenset({"auth_failed", "missing_provider_key"})
@@ -60,6 +64,15 @@ VERDICT_BY_OUTCOME = {
 }
 
 
+class ProviderTestStep(BaseModel):
+    """One candidate in the walk: attempted+result, or skipped with reason."""
+
+    model: str
+    skipped: bool
+    reason: str
+    success: bool = False
+
+
 class ProviderTestResponse(BaseModel):
     """Result of one live probe. Contains no secret of any kind."""
 
@@ -78,10 +91,9 @@ class ProviderTestResponse(BaseModel):
     available_models: list[str] = []
     #: Whether the model was an override, discovered, or the static default.
     model_source: Optional[str] = None
-
-
-class SetModelRequest(BaseModel):
-    model: str
+    #: The candidate walk (Auto mode): which models were tried, which skipped.
+    attempted: list[ProviderTestStep] = []
+    skipped: list[ProviderTestStep] = []
 
 
 def _display(provider: str) -> str:
@@ -91,11 +103,31 @@ def _display(provider: str) -> str:
     return meta["display"] if meta else provider
 
 
+def _steps(walk) -> tuple[list[ProviderTestStep], list[ProviderTestStep]]:
+    attempted = [
+        ProviderTestStep(
+            model=s.model,
+            skipped=False,
+            reason=s.reason or ("worked" if s.success else "failed"),
+            success=s.success,
+        )
+        for s in walk.steps
+        if not s.skipped
+    ]
+    skipped = [
+        ProviderTestStep(model=s.model, skipped=True, reason=s.reason, success=False)
+        for s in walk.steps
+        if s.skipped
+    ]
+    return attempted, skipped
+
+
 async def _probe(provider: str, api_key: str, db_session: AsyncSession, api_key_row: ApiKeyDB):
-    """Run one tiny request through the real provider class."""
+    """Run the real path: discovery → ranked walk → outcome classification."""
     if not is_supported_provider(provider):
         raise HTTPException(status_code=404, detail="Unknown provider")
 
+    from app.core.model_discovery import operator_env_model, walk_candidates
     from app.core.provider_key_manager import get_provider_key, server_key_for
 
     # Caller's stored key wins, then the environment — exactly as routing does.
@@ -114,51 +146,68 @@ async def _probe(provider: str, api_key: str, db_session: AsyncSession, api_key_
         )
 
     spec = spec_for(provider)
-    override = settings.__dict__.get(f"{provider.upper()}_MODEL") or None
-    model, available, source = await resolve_model(provider, effective_key, override=override)
+    override = operator_env_model(provider)
 
-    instance = PROVIDER_REGISTRY[provider]
-    response = await instance.generate(
+    # ONE code path with routing: the same lazy candidate walk the executor
+    # uses, driven by the same ranking. An explicit pin/override is tried
+    # first; otherwise the top-ranked discovered model goes first and a
+    # model_not_found moves on to the next candidate.
+    kwargs = {"provider_api_key": effective_key, "max_tokens": PROBE_MAX_TOKENS}
+    if provider == "deepseek":
+        kwargs["task_type"] = "general"
+    walk = await walk_candidates(
+        provider,
         PROBE_PROMPT,
-        provider_api_key=effective_key,
-        max_tokens=PROBE_MAX_TOKENS,
-        **({"task_type": "general"} if provider == "deepseek" else {}),
+        kwargs,
+        effective_key,
+        first_model=override,
+        provider=PROVIDER_REGISTRY[provider],
     )
 
+    response = walk.response
     if response.success:
+        # Discovery already ran (the walk uses it); this is a cache read, not
+        # a second provider call.
+        available, model_source = ([], None)
+        if spec is not None:
+            available, model_source = await model_catalog.list_models(spec, effective_key)
+        attempted, skipped = _steps(walk)
         return ProviderTestResponse(
             provider=provider,
             display=_display(provider),
             verdict="valid",
             key_valid=True,
-            model=response.model_name or model,
+            model=walk.model_used or response.model_name,
             latency_ms=round(response.latency_ms, 1),
             available_models=available[:50],
-            model_source=source,
+            model_source=model_source,
+            attempted=attempted,
+            skipped=skipped,
         )
 
     outcome = response.outcome or "provider_error"
     verdict = VERDICT_BY_OUTCOME.get(outcome, "provider_error")
 
-    if outcome in ("model_not_found", "endpoint_not_found"):
-        # Refresh the list so the UI can offer a choice immediately rather than
-        # showing an empty dropdown after telling the user to pick a model.
-        model_catalog.invalidate(provider)
-        refreshed, _source = await model_catalog.list_models(
-            spec, effective_key, force_refresh=True
-        ) if spec else ([], "unavailable")
-        available = refreshed or available
+    available, model_source = ([], None)
+    if spec is not None:
+        try:
+            available, model_source = await model_catalog.list_models(spec, effective_key)
+        except Exception:  # noqa: BLE001 - listing is an affordance, not the verdict
+            available, model_source = [], None
 
+    attempted, skipped = _steps(walk)
     return ProviderTestResponse(
         provider=provider,
         display=_display(provider),
         verdict=verdict,
         key_valid=False,
-        model=response.model_name or model,
+        model=response.model_name or walk.model_used,
         latency_ms=round(response.latency_ms, 1),
         error=response.error,
         available_models=available[:50],
-        model_source=source,
+        model_source=model_source,
+        attempted=attempted,
+        skipped=skipped,
     )
 
 
@@ -171,28 +220,10 @@ async def test_provider(
     """Live probe of one provider using the caller's stored key.
 
     Returns the real classification, never a guess from "a row exists".
+    Rate limited to protect the caller's provider quota.
     """
-    return await _probe(provider, "", db_session, api_key_row)
-
-
-@router.get("/{provider}/models", response_model=list[str])
-async def list_provider_models(
-    provider: str,
-    refresh: bool = False,
-    api_key_row: ApiKeyDB = Depends(require_api_key),
-    db_session: AsyncSession = Depends(get_session),
-) -> list[str]:
-    """Chat models available to the caller's key — the model dropdown's source."""
-    if not is_supported_provider(provider):
-        raise HTTPException(status_code=404, detail="Unknown provider")
-    from app.core.provider_key_manager import get_provider_key, server_key_for
-
-    key = await get_provider_key(db_session, api_key_row.id, provider) or server_key_for(provider)
-    if not key:
-        raise HTTPException(status_code=409, detail="No key is configured for this provider.")
-
-    spec = spec_for(provider)
-    if spec is None:  # pragma: no cover - guarded above
-        raise HTTPException(status_code=404, detail="Unknown provider")
-    models, _source = await model_catalog.list_models(spec, key, force_refresh=refresh)
-    return models[:50]
+    check_and_acquire(api_key_row.id)
+    try:
+        return await _probe(provider, "", db_session, api_key_row)
+    finally:
+        release(api_key_row.id)

@@ -116,8 +116,12 @@ async def test_post_route_success_exact_shape(client, install_stubs):
         "success",
         "error",
         "latency_ms",
+        # Walk-aware chain: each attempt names the upstream model it referred
+        # to (None = provider default). See AttemptLog in core/executor.py.
+        "model",
         "chaos_injected",
     }
+    assert attempt["model"] is None
     assert attempt["provider_name"] == "groq"
     assert attempt["success"] is True
     assert attempt["chaos_injected"] is False

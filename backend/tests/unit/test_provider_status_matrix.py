@@ -24,15 +24,15 @@ PROVIDERS = {
     "deepseek": "https://api.deepseek.com/v1/chat/completions",
 }
 
-#: status -> (expected outcome, must the message mention the key?)
+#: status -> (expected outcome, must the message address the credential?)
 MATRIX = {
     400: ("bad_request", False),
-    401: ("auth_failed", True),
-    403: ("auth_failed", True),
-    404: ("model_not_found", False),
-    429: ("rate_limit_exceeded", False),
-    500: ("provider_server_error", False),
-    503: ("provider_server_error", False),
+    401: ("auth_failed", "invalid"),
+    403: ("auth_failed", "restricted"),
+    404: ("model_not_found", None),
+    429: ("rate_limit_exceeded", None),
+    500: ("provider_server_error", None),
+    503: ("provider_server_error", None),
 }
 
 
@@ -117,7 +117,7 @@ def mock_post(respx_mock):
 @pytest.mark.parametrize("status", list(MATRIX))
 async def test_status_classification_end_to_end(provider, mock_post, status):
     name, instance = provider
-    expected_outcome, key_mentioned = MATRIX[status]
+    expected_outcome, key_wording = MATRIX[status]
     url = PROVIDERS[name].replace("m:generateContent", "gemini-2.0-flash:generateContent")
 
     mock_post.post(url).mock(
@@ -130,8 +130,14 @@ async def test_status_classification_end_to_end(provider, mock_post, status):
     assert resp.error.startswith(expected_outcome)
     # The failing provider is always named.
     assert name in resp.error
-    if key_mentioned:
-        assert "credential" in resp.error
+    if key_wording == "invalid":
+        # 401: the key itself is bad — say so, and only here.
+        assert "invalid" in resp.error.lower()
+    elif key_wording == "restricted":
+        # T4 (owner's text): a 403 never says "invalid key" — the same key
+        # can list models. It names restrictions instead.
+        assert "isn't allowed to call this one" in resp.error
+        assert "invalid" not in resp.error.lower()
     else:
         # Everything except 401/403 must not send the user to their key.
         assert "your key is invalid" not in resp.error.lower()

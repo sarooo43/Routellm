@@ -156,7 +156,10 @@ def test_generated_key_is_never_logged(data_dir, capsys):
     assert key
     assert key not in output
     assert "encryption_key" in output  # the event name is fine...
-    assert str(data_dir) in output  # ...and so is the path
+    # The structured-JSON sink escapes backslashes on Windows ("C:\\Users");
+    # unescape before comparing so the assertion means "the path is in the
+    # log" on every platform, not "the raw OS spelling survived JSON".
+    assert str(data_dir) in output.replace("\\\\", "\\")  # ...and so is the path
 
 
 def test_unwritable_location_returns_the_key_without_persisting(tmp_path, monkeypatch):

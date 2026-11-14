@@ -31,9 +31,12 @@ from urllib.parse import urlsplit
 
 from app.providers.base import make_error, make_success, elapsed_ms
 
-#: How much of the provider body we keep. Long enough to carry a real message
-#: ("The model `x` does not exist"), short enough for a log line and a card.
-BODY_SNIPPET_CHARS = 200
+#: How much of the provider body we keep. Raised from 200 to 1000 (T4): the
+#: retired-model 404 OBSERVED LIVE carries its full guidance ("...Please
+#: update your code to use models/gemini-3.8-flash for the latest features
+#: and improve...") and the 200-char cap cut the tail off in logs and UI.
+#: 1000 chars still fits a log line; redaction still runs over the text.
+BODY_SNIPPET_CHARS = 1000
 
 #: Every outcome this module can produce. Kept in one place so the API's
 #: user-facing verdict table can be asserted to cover all of them instead of
@@ -79,14 +82,34 @@ def redact(text: str) -> str:
     return cleaned
 
 
+def scrub(text: str, *secrets: Optional[str]) -> str:
+    """Redact the EXACT stored key value(s) plus every key-shaped pattern.
+
+    T1: diagnostics copy the provider's words into a response body, a log
+    and a clipboard report. The stored key itself rarely matches the
+    generic patterns (prefixes vary), so it is removed first, verbatim;
+    then redact() sweeps the standard shapes (AIza…, gsk_…, sk-…, Bearer…,
+    key=… query echoes).
+    """
+    cleaned = text or ""
+    for secret in secrets:
+        if secret:
+            cleaned = cleaned.replace(secret, "***")
+    return redact(cleaned)
+
+
 def snippet(response) -> str:
-    """First ~200 chars of the body, redacted and whitespace-collapsed."""
+    """First ~1000 chars of the body, redacted and whitespace-collapsed.
+
+    Redaction runs BEFORE the slice: a credential echoed near the cut point
+    would otherwise survive half-redacted.
+    """
     try:
         raw = response.text or ""
     except Exception:  # pragma: no cover - exotic transport
         return ""
     collapsed = " ".join(raw.split())
-    return redact(collapsed[:BODY_SNIPPET_CHARS])
+    return redact(collapsed)[:BODY_SNIPPET_CHARS]
 
 
 def host_of(url: str) -> str:
@@ -141,6 +164,23 @@ def describe_failure(
     detail = f" Provider said: {body}" if body else ""
 
     if outcome == "auth_failed":
+        lowered = body.lower()
+        # OBSERVED LIVE (owner's key): 403 PERMISSION_DENIED on every gemini
+        # generateContent call while the SAME key's list-models succeeded —
+        # so a 403 must never say "invalid key". Only a 401, or Google's
+        # literal "API key not valid" body, means the credential is bad.
+        if status_code == 401 or "api key not valid" in lowered:
+            return (
+                f"auth_failed: {label} says the key itself is invalid "
+                f"(HTTP {status_code}). Replace the key in Settings — this "
+                f"is not a permissions or region problem.{detail}"
+            )
+        if status_code == 403:
+            return (
+                f"auth_failed: This key can list models but isn't allowed to "
+                f"call this one. Check key restrictions, project access, "
+                f"region or billing. ({label}, HTTP {status_code}).{detail}"
+            )
         return (
             f"auth_failed: {label} rejected the credential (HTTP {status_code})."
             f"{detail}"
@@ -188,13 +228,27 @@ def error_for_status(
     A 404 is only treated as ``model_not_found`` when the request actually named
     a model and carried a credential; otherwise it is a wrong URL. Guessing here
     is what produced the original misdiagnosis.
+
+    DeepSeek bridge: DeepSeek answers **400** (not 404) with "Model Not Exist"
+    for a retired model string. That is still a targeting problem, not a
+    malformed request, so when the body says the MODEL does not exist we
+    classify it as ``model_not_found`` — the candidate walk needs that signal.
     """
     status_code = response.status_code
     outcome = classify_status(status_code)
     if outcome == "not_found":
         outcome = "model_not_found" if (model_call and model and has_auth_header) else "endpoint_not_found"
+    elif (
+        outcome == "bad_request"
+        and model_call
+        and model
+        and has_auth_header
+        and _body_says_model_missing(response)
+    ):
+        outcome = "model_not_found"
 
     body = snippet(response)
+    provider_status, provider_reason = _provider_error_identity(response)
     return make_error(
         provider,
         model,
@@ -209,7 +263,78 @@ def error_for_status(
         latency_ms,
         #: Machine-readable outcome for breaker/telemetry decisions.
         outcome=outcome,
+        #: T3: the model-status cache honors the provider's own backoff hint.
+        retry_after=_retry_after_seconds(response),
+        #: T4: the provider's own machine error identity (error.status /
+        #: error.reason), surfaced by diagnostics and the explorer.
+        provider_status=provider_status,
+        provider_reason=provider_reason,
+        #: T1: the actual wire status for the diagnostics table.
+        http_status=status_code,
     )
+
+
+def _provider_error_identity(response) -> tuple[Optional[str], Optional[str]]:
+    """Google's ``error.status`` / ``error.reason`` from a JSON body.
+
+    OBSERVED LIVE (observation 4): the owner's direct generateContent calls
+    answered 403 with the body unseen — so the identity must come from the
+    body WHEN we have one and must degrade to (None, None) when we don't.
+    Non-JSON bodies (plain text, HTML) simply carry no identity.
+    """
+    try:
+        raw = response.text or ""
+    except Exception:  # pragma: no cover - exotic transport
+        return None, None
+    if not raw.lstrip().startswith("{"):
+        return None, None
+    import json
+
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None, None
+    err = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(err, dict):
+        return None, None
+    status = err.get("status")
+    reason = err.get("reason")
+    return (
+        status if isinstance(status, str) and status else None,
+        reason if isinstance(reason, str) and reason else None,
+    )
+
+
+def _retry_after_seconds(response) -> Optional[float]:
+    """Numeric Retry-After header in seconds, or None (HTTP-date ignored)."""
+    try:
+        raw = response.headers.get("retry-after")
+    except Exception:  # pragma: no cover - exotic transport
+        return None
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, value)
+
+
+_MODEL_MISSING_RE = re.compile(
+    r"model.{0,40}(not\s*exist|does\s*not\s*exist|not\s*found|not\s*available)"
+    r"|invalid\s+model"
+    r"|model_not_found",
+    re.IGNORECASE,
+)
+
+
+def _body_says_model_missing(response) -> bool:
+    """True when a 400 body blames the MODEL string (DeepSeek's wording)."""
+    try:
+        raw = response.text or ""
+    except Exception:  # pragma: no cover - exotic transport
+        return False
+    return bool(_MODEL_MISSING_RE.search(" ".join(raw.split())[:400]))
 
 
 def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, latency_ms: float):

@@ -96,3 +96,17 @@ async def require_provider_api_keys(
             status_code=503,
             detail="Provider key encryption is unavailable. Contact the operator.",
         ) from exc
+
+
+async def require_provider_model_pins(
+    api_key: ApiKeyDB = Depends(require_api_key),
+    db_session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """The calling key's pinned model per provider (empty dict = all Auto).
+
+    Routing precedence: pinned model, then the provider's .env model
+    override, then Auto (candidate walking).
+    """
+    from app.core.model_discovery import load_provider_pins
+
+    return await load_provider_pins(db_session, api_key.id)

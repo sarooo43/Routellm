@@ -1,0 +1,20 @@
+[
+  {
+    "_notice": "SYNTHETIC, UNVERIFIED AGAINST THE LIVE API. Built from DeepSeek's public /v1/models documentation. DeepSeek lists only chat models; fields are id/object/created/owned_by.",
+    "object": "list",
+    "data": [
+      {
+        "id": "deepseek-chat",
+        "object": "model",
+        "created": 1706745938,
+        "owned_by": "deepseek"
+      },
+      {
+        "id": "deepseek-reasoner",
+        "object": "model",
+        "created": 1735584000,
+        "owned_by": "deepseek"
+      }
+    ]
+  }
+]

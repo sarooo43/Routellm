@@ -79,7 +79,13 @@ def test_snippet_of_a_huge_body_stays_bounded_and_clean():
         400, text=f"{'x' * 4000} {secret} {'y' * 4000}", request=httpx.Request("GET", "https://x.test/")
     )
     out = snippet(response)
-    assert len(out) <= 200
+    # T3/T4 raised the cap from 200 to 1000 chars (the retired-model 404
+    # body OBSERVED LIVE names its replacement in the tail). The bound here
+    # tracks the constant so the two can't drift apart silently.
+    from app.providers.outcomes import BODY_SNIPPET_CHARS
+
+    assert len(out) <= BODY_SNIPPET_CHARS
+    assert len(out) > 200  # the cap genuinely moved
     _assert_clean(out)
 
 

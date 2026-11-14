@@ -159,19 +159,31 @@ def test_the_repository_has_no_credentials_in_the_tree(scanner):
     assert not findings, f"credential-shaped strings in the working tree:\n{rendered}"
 
 
+@pytest.mark.slow
 def test_repository_scan_never_raises_on_binary_history(scanner):
     """The whole-graph scan must report, not explode, whatever history holds.
 
     A crash is indistinguishable from a clean run to a CI reader, which is how
     a real credential slips through: this scanner used to die on the first
     non-UTF-8 blob in the object database.
+
+    SLOW: walks every blob in the object database (~3 s here, and it grows with
+    history). Deselected from the default run — `-m slow` in CI, or
+    `pytest -m slow --no-header` locally. Measured on this machine: 2.8 s of
+    the 6.6 s file, against a 28 s whole suite.
     """
     findings = scanner.scan_history()
     assert isinstance(findings, list)
 
 
+@pytest.mark.slow
 def test_history_scan_is_clean_or_reports_nothing_actionable(scanner):
-    """History is checked wholesale: a key removed later is still public."""
+    """History is checked wholesale: a key removed later is still public.
+
+    SLOW: the full history scan again (2.8 s). The CI job that runs `-m slow`
+    checks out with fetch-depth 0 so this sees the real history rather than a
+    shallow clone that would trivially pass.
+    """
     findings = scanner.dedupe(scanner.scan_history())
     rendered = "\n".join(f.render(strict=True) for f in findings)
     assert not findings, f"credential-shaped strings in git history:\n{rendered}"
