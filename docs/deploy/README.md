@@ -18,7 +18,7 @@
 | [HUGGINGFACE_AND_MANAGED.md](HUGGINGFACE_AND_MANAGED.md) | Hugging Face Space + Neon/Upstash layout, environment variables, the verified dependency set, TLS notes |
 | [DEPLOY_WALKTHROUGH.md](DEPLOY_WALKTHROUGH.md) | Step-by-step walkthrough of that deployment, including the failures that shaped it |
 | [HF_BUILD_TROUBLESHOOTING.md](HF_BUILD_TROUBLESHOOTING.md) | Space build failures (ZeroGPU, Gradio/pydantic resolution, read-only filesystem) |
-| [CLOUDFLARE.md](CLOUDFLARE.md) | The optional Worker that serves the dashboard and proxies `/api/*`, `/v1/*`, `/health` server-to-server |
+| [CLOUDFLARE.md](CLOUDFLARE.md) | **Archived** — the optional Worker that served the dashboard and proxied `/api/*`, `/v1/*`, `/health` server-to-server |
 | [HTTPS_AND_WEBHOOKS.md](HTTPS_AND_WEBHOOKS.md) | Caddy TLS, webhook receivers, and why a proxy hop must re-issue cross-origin requests |
 | [VERIFICATION.md](VERIFICATION.md) | Commands used to verify each deployment claim |
 
@@ -53,7 +53,7 @@ putting it on the internet:
 |---|---|
 | `.github/workflows/deploy-hf.yml` | Kept, gated on the `HF_TOKEN` secret; skipped when unset |
 | `.github/workflows/keepalive.yml` | Kept; no-ops when no Space URL is configured |
-| `cloudflare/worker.js` + `wrangler.jsonc` | Kept and tested (`npm run test:cloudflare`) |
+| `docs/deploy/cloudflare/worker.js` + `wrangler.jsonc` | **Archived** (T2): the `cloudflare-worker` CI job and the root deploy scripts are gone; the code and the walkthrough stay here for reference, and the attempt is tagged `cloud-deploy-attempt` |
 | `Caddyfile`, `docker-compose.yml` (previous multi-service version) | Replaced by the single-service compose file; the Caddy path is documented in [HTTPS_AND_WEBHOOKS.md](HTTPS_AND_WEBHOOKS.md) |
 
 Their tests still run in CI, so a change that breaks them is caught even though

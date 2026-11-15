@@ -271,9 +271,10 @@ pip install -r backend/requirements-ml.txt
 # then set ENABLE_ML_ROUTING=true once a model exists
 ```
 
-**Cloud** — the previous Hugging Face Space / Cloudflare Worker path still
-works and is still tested, but it is documented as experimental in
-[docs/deploy/](docs/deploy/) and is not the recommended way to run this.
+**Cloud** — the previous Hugging Face Space path is documented as experimental in
+[docs/deploy/](docs/deploy/). The Cloudflare Worker attempt is **archived** (tag
+`cloud-deploy-attempt`; code kept under `docs/deploy/cloudflare/`) — local-first
+`python run.py` is the supported way to run this.
 
 ---
 

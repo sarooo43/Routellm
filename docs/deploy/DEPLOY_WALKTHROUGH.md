@@ -1,5 +1,12 @@
 # Deploying the Cloudflare Worker — absolute beginner walkthrough
 
+> **ARCHIVED (v0.1.0 cleanup, T2).** The Cloudflare attempt is closed: the
+> `cloudflare-worker` CI job and the root `wrangler`/`deploy` scripts are gone,
+> so the commands below no longer work from the repository root as written.
+> The worker code is kept for reference under `docs/deploy/cloudflare/`, and
+> the exact state of the attempt is tagged `cloud-deploy-attempt`. The
+> supported deployment today is local-first: `python run.py`.
+
 No prior terminal experience assumed. If a command fails, stop and read the
 error line before continuing.
 
@@ -12,9 +19,9 @@ The Worker is the thing your browser talks to at
 forwards `/api/*`, `/v1/*` and `/health` to the FastAPI backend on Hugging Face.
 
 The Worker needs to know the backend's address. That address now lives in
-`wrangler.jsonc` (`vars.ROUTELLM_API_ORIGIN`), so it is part of the repo — but
-**it only reaches Cloudflare when you deploy.** Editing it and pushing to GitHub
-is not enough.
+`docs/deploy/cloudflare/wrangler.jsonc` (`vars.ROUTELLM_API_ORIGIN`), so it is
+part of the repo — but **it only reaches Cloudflare when you deploy.** Editing
+it and pushing to GitHub is not enough.
 
 ---
 
