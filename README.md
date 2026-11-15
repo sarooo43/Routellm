@@ -202,25 +202,29 @@ re-enter them on the Providers page.
 
 ## Benchmarks
 
-**Placeholder — no numbers are claimed yet.**
+**No numbers are claimed here — the benchmark writes yours.**
 
 The repository contains a benchmark harness (`benchmark/`) that compares a
 naive single-model baseline against this router under identical conditions,
-including a deterministic simulated outage. A real run needs real provider keys
-and must be regenerated before anything is published here:
+including a deterministic Chaos-Mode simulated outage. Every number it
+produces comes from your own run on your own machine with your own provider
+keys; nothing is pre-computed or shipped in the repo.
+
+One command (backend already running, e.g. `python run.py`):
 
 ```bash
-cd benchmark
-pip install -r requirements.txt
-python run_benchmark.py --scenario normal
-python run_benchmark.py --scenario outage
-python generate_report.py
+# Windows (PowerShell, repo root)
+backend\.venv\Scripts\python.exe benchmark\run_benchmark.py
+
+# macOS / Linux (repo root)
+backend/.venv/bin/python benchmark/run_benchmark.py
 ```
 
-The currently committed `benchmark/results/REPORT.md` is from a run **without**
-provider credentials (every arm reports 0% success). It is kept only as an
-artefact of the harness and must not be quoted as a result. Demo-mode traffic is
-never included in benchmark runs.
+It runs both scenarios (normal + chaos outage), then writes
+`benchmark/results/REPORT.md` — a Markdown results table with the date, the
+models each arm used, and the naive vs router success rates side by side.
+Details, options and prerequisites: [benchmark/README.md](benchmark/README.md).
+Demo-mode traffic is never included in benchmark runs.
 
 ---
 
