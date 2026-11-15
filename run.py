@@ -299,17 +299,60 @@ def dist_is_usable() -> bool:
     return (DIST_DIR / "index.html").is_file()
 
 
+#: Everything a dashboard rebuild depends on: all of src/ (recursive) plus the
+#: top-level build inputs. One new glob entry here costs one stat — cheap.
+_SOURCE_GLOBS = ("src/**/*", "index.html", "package.json", "package-lock.json",
+                 "vite.config.ts", "tsconfig*.json", "tailwind.config.js",
+                 "postcss.config.js")
+
+
+def frontend_is_stale(
+    frontend_dir: Optional[Path] = None, dist_dir: Optional[Path] = None
+) -> bool:
+    """True when any dashboard source is newer than the built bundle (T1).
+
+    The stale-build failure this guards: ``python run.py`` serves the old
+    ``frontend/dist`` while ``frontend/src`` has moved on, so the dashboard
+    runs code from a previous commit — exactly what the owner saw when an old
+    server kept running after the merge (walk + diagnostics looked broken).
+
+    Uses mtimes, not hashes: hashing every source file on every start costs
+    more than it saves. ``dist/index.html`` missing is NOT "stale" — the
+    missing-dist path above handles that. Fail-soft: any stat problem reads
+    as "not stale" so a weird filesystem can never loop the builder.
+    """
+    frontend_dir = frontend_dir or FRONTEND_DIR
+    dist_dir = dist_dir or DIST_DIR
+    dist_marker = dist_dir / "index.html"
+    try:
+        if not dist_marker.is_file():
+            return False
+        dist_mtime = dist_marker.stat().st_mtime
+        for pattern in _SOURCE_GLOBS:
+            for path in frontend_dir.glob(pattern):
+                if path.is_file() and path.stat().st_mtime > dist_mtime:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def ensure_frontend(dev: bool = False, rebuild: bool = False) -> Optional[Path]:
     """Ensure a built dashboard exists. Returns the dist dir, or None.
 
     ``None`` is a legitimate result: the backend then serves a small status
     page at ``/`` explaining how to build the frontend. That is better than
     aborting a backend that works.
+
+    T1: a usable dist that is OLDER than the sources is rebuilt too — an
+    outdated bundle must not survive a restart just because it exists.
     """
     if dev:
         return DIST_DIR if dist_is_usable() else None
     if dist_is_usable() and not rebuild:
-        return DIST_DIR
+        if not frontend_is_stale():
+            return DIST_DIR
+        print(f"  {dim('dashboard sources changed since the last build — rebuilding')}")
 
     npm = shutil.which("npm")
     version = node_version()

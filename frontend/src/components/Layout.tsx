@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { ChaosBanner } from './ChaosBanner'
+import { BuildVersionBanner, BuildVersionChips } from './BuildVersion'
 import { APP_SHORT_NAME } from '../appInfo'
 
 const COLLAPSE_STORAGE_KEY = 'routellm.sidebar.collapsed.v1'
@@ -61,10 +62,13 @@ export function Layout() {
         <Topbar onMobileMenuOpen={openMobile} mobileMenuOpen={mobileOpen} />
         <ChaosBanner />
         <main id="main-content" className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <BuildVersionBanner />
           <Outlet />
         </main>
         <footer className="border-t border-white/[0.04] px-4 py-4 text-center text-[11px] text-text-secondary/50 sm:px-6 lg:px-8">
           {APP_SHORT_NAME} · intelligent routing, automatic fallback, live observability
+          <span className="mx-1.5 text-text-secondary/30">·</span>
+          <BuildVersionChips />
           <span className="mx-1.5 text-text-secondary/30">·</span>
           <a
             href="https://github.com/sarooo43/Routellm"
