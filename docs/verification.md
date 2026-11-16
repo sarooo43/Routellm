@@ -185,8 +185,13 @@ classify (`test_provider_test_endpoint.py`), diagnostics
 - `tests/unit/test_model_discovery.py::test_is_valid_model_id_rejects_path_traversal_and_urls`
   — the mutation-7 gap test.
 
-Frontend coverage: `@vitest/coverage-v8` was not installed; installed
-`--no-save` and ran (result recorded in the audit session output).
+Frontend coverage (**OBSERVED**, `npx vitest run --coverage` with
+`@vitest/coverage-v8` installed `--no-save`): `Test Files 18 passed (18)`,
+`Tests 112 passed (112)`, `All files 81.99% stmts / 74.92% branch / 80.99%
+funcs / 84.48% lines`. Least-covered: `src/api/client.ts` 27.4% stmts,
+`src/api/workerDetail.ts` 37.5%, `src/api/navigation.ts` 42.9%,
+`src/api/errors.ts` 58.2%, `src/components/KpiCard.tsx` 66.7% (its test file
+exercises render, not the branch), `src/pages/RoutingExplorer.tsx` 76.4%.
 
 ---
 
