@@ -98,7 +98,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://routellm:routellm@localhost:5432/routellm_test
           REDIS_URL: redis://localhost:6379/0
-        run: pytest --cov=app --cov-report=term-missing
+        run: pytest --cov=app --cov-report=term-missing -rs
 
   slow-tests:
     # The default `pytest` run deselects @pytest.mark.slow (pytest.ini:

@@ -264,3 +264,20 @@ async def test_unsupported_provider_is_not_invented():
     assert model == ""
     assert models == []
     assert source == "unsupported"
+
+# --- audit A4/mutation-7: pin-validation charset layer, pinned directly ---
+
+def test_is_valid_model_id_rejects_path_traversal_and_urls():
+    from app.core.model_discovery import is_valid_model_id
+
+    # The exact injection shapes the pin endpoint must refuse (422):
+    assert not is_valid_model_id("../x")
+    assert not is_valid_model_id("models/../secret")
+    assert not is_valid_model_id("https://evil.com/x")
+    assert not is_valid_model_id("")
+    assert not is_valid_model_id(None)
+
+    # Real ids keep validating, including dots and slashes (Gemini style):
+    assert is_valid_model_id("gemini-3.8-flash")
+    assert is_valid_model_id("models/gemini-3.8-flash")
+    assert is_valid_model_id("llama-3.1-8b-instant")
