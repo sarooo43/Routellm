@@ -120,8 +120,9 @@ def test_runtime_set_is_fully_pinned():
 
 
 @pytest.mark.skipif(
-    not __import__("os").environ.get("ROUTELLM_CHECK_PYPI"),
-    reason="set ROUTELLM_CHECK_PYPI=1 to query PyPI",
+    not __import__("os").environ.get("ROUTTENER_CHECK_PYPI")
+    and not __import__("os").environ.get("ROUTELLM_CHECK_PYPI"),
+    reason="set ROUTTENER_CHECK_PYPI=1 (legacy ROUTELLM_CHECK_PYPI) to query PyPI",
 )
 def test_pinned_set_satisfies_gradio_extras_on_pypi():
     """Resolve the real metadata: gradio[<extras>] must accept every pin."""
