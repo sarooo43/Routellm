@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-deploy smoke test for a live RouteLLM deployment.
+"""Post-deploy smoke test for a live Routtener deployment.
 
 Works against a Hugging Face Space, a self-hosted instance, or a local server.
 Pure stdlib + httpx, so it runs the same on Windows PowerShell, macOS and Linux.
@@ -187,7 +187,7 @@ def check_routing(client: httpx.Client, base: str) -> list[Result]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Smoke test a deployed RouteLLM API.")
+    parser = argparse.ArgumentParser(description="Smoke test a deployed Routtener API.")
     parser.add_argument("--api", required=True, help="Base URL, e.g. https://x-y.hf.space")
     parser.add_argument(
         "--origin",

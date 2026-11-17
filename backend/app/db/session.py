@@ -87,7 +87,7 @@ def database_url_normalized() -> str:
     if not raw:
         raise DatabaseUnavailableError(
             "No database is configured and the local data directory is not "
-            "writable. Set ROUTELLM_DATA_DIR to a writable path, or set "
+            "writable. Set ROUTTENER_DATA_DIR (or legacy ROUTELLM_DATA_DIR) to a writable path, or set "
             "DATABASE_URL, e.g. postgresql+asyncpg://user:password@localhost:5432/routellm"
         )
     try:

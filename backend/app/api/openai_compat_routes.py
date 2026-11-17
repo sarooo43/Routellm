@@ -1,4 +1,4 @@
-"""OpenAI-compatible text-chat adapter over the existing RouteLLM executor.
+"""OpenAI-compatible text-chat adapter over the existing Routtener executor.
 
 Mounted at /v1, independently of the richer /api/v1 API. This module only
 translates requests/responses and error envelopes: classification, scoring,
@@ -55,7 +55,7 @@ class OpenAIChatMessage(BaseModel):
 
 
 class OpenAIChatRequest(BaseModel):
-    """The supported OpenAI chat request, plus RouteLLM's task_type override."""
+    """The supported OpenAI chat request, plus Routtener's task_type override."""
 
     model: str
     messages: list[OpenAIChatMessage] = Field(min_length=1)
@@ -265,7 +265,7 @@ async def chat_completions(
     provider_api_keys: dict[str, str] = Depends(require_provider_api_keys),
     provider_models: dict[str, str] = Depends(require_provider_model_pins),
 ):
-    """Run text chat through RouteLLM's existing routing/forced-provider paths."""
+    """Run text chat through Routtener's existing routing/forced-provider paths."""
     if body.stream:
         return _error_response(
             400,

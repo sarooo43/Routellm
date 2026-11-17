@@ -1,4 +1,4 @@
-"""RouteLLM benchmark runner — naive single-model baseline vs full routing.
+"""Routtener benchmark runner — naive single-model baseline vs full routing.
 
 ONE command runs everything (both scenarios + the Markdown report):
 
@@ -291,7 +291,7 @@ async def generate_demo_key(client: httpx.AsyncClient, base_url: str) -> str:
     """Create a lightweight demo API key for this benchmark run."""
     resp = await client.post(
         f"{base_url}/api/v1/keys/generate",
-        json={"label": "RouteLLM benchmark"},
+        json={"label": "Routtener benchmark"},
         timeout=30.0,
     )
     if resp.status_code != 201:
@@ -396,7 +396,7 @@ async def run_scenario(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark: naive single-model baseline vs RouteLLM full system."
+        description="Benchmark: naive single-model baseline vs Routtener full system."
     )
     parser.add_argument(
         "--scenario",

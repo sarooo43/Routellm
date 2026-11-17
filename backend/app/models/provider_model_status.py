@@ -1,6 +1,6 @@
 """Per-caller model explorer state: tested statuses + pinned model.
 
-Both tables are scoped to one RouteLLM caller key (``api_keys.id``) and one
+Both tables are scoped to one Routtener caller key (``api_keys.id``) and one
 upstream provider. Status rows record what a REAL 1-token test (or a routing
 attempt) observed for one discovered model id — "denied" (e.g. Gemini's
 "no longer available to new users"), "rate_limited" (429, transient, NOT

@@ -263,7 +263,7 @@ def test_the_report_is_written_even_without_matplotlib(report, tmp_path, monkeyp
     monkeypatch.setattr(report, "matplotlib", None)
     report.main()
     written = (results / "REPORT.md").read_text(encoding="utf-8")
-    assert "# RouteLLM Benchmark Report" in written
+    assert "# Routtener Benchmark Report" in written
     assert "**Generated:**" in written
     assert not (results / "success_rate_comparison.png").exists()
     assert "matplotlib" in capsys.readouterr().out  # the skip is explained, not silent

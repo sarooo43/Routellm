@@ -1,8 +1,8 @@
-# RouteLLM Benchmark — naive baseline vs full routing system
+# Routtener Benchmark — naive baseline vs full routing system
 
 Concrete numbers instead of vague resilience claims: the same prompt set is
 sent through (a) a naively hardcoded single model with **zero fallback**, and
-(b) RouteLLM's full classify → rank → fallback pipeline, under **identical**
+(b) Routtener's full classify → rank → fallback pipeline, under **identical**
 conditions — including a deterministic, chaos-injected provider outage.
 
 > **Every number in the results comes from your own run.** This repository
@@ -63,7 +63,7 @@ resilience system at all". We deliberately pick **gemini**:
 
 - It is mid-pack everywhere — it is never the runaway best choice the scorer
   would pick anyway (groq wins `qa`, deepseek wins `code`/`reasoning`), so the
-  comparison is not rigged in RouteLLM's favor on capability.
+  comparison is not rigged in Routtener's favor on capability.
 - It is a real first-guess many teams would hardcode: a well-known generalist.
 - When chaos injects an outage **on gemini specifically**, the naive baseline
   thereby simulates "the model everyone hardcoded just went down mid-usage",
@@ -146,6 +146,6 @@ produce — none are printed here on purpose):
 - Normal conditions: both approaches should succeed at similar rates — the
   naive system looks fine when nothing is broken.
 - Chaos outage: the naive baseline (hardcoded gemini) fails at ~1 minus its
-  normal success rate; RouteLLM reroutes around the outage at near-normal
+  normal success rate; Routtener reroutes around the outage at near-normal
   success. The **gap between those two numbers under outage** is the
   concrete, measurable value of the fallback system in your setup.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Call a self-hosted RouteLLM gateway over HTTPS.
+# Call a self-hosted Routtener gateway over HTTPS.
 # Usage:
-#   ROUTELLM_BASE_URL=https://routellm.example.com ROUTELLM_API_KEY=rk_... ./call_routellm.sh "Hello"
+#   ROUTTENER_BASE_URL=https://routtener.example.com ROUTTENER_API_KEY=rk_... ./call_routellm.sh "Hello"
 set -euo pipefail
 
-BASE_URL="${ROUTELLM_BASE_URL:-https://routellm.example.com}"
-API_KEY="${ROUTELLM_API_KEY:?Set ROUTELLM_API_KEY to your rk_ key}"
+BASE_URL="${ROUTTENER_BASE_URL:-${ROUTELLM_BASE_URL:-https://routtener.example.com}}"
+API_KEY="${ROUTTENER_API_KEY:-${ROUTELLM_API_KEY:?Set ROUTTENER_API_KEY (or legacy ROUTELLM_API_KEY) to your rk_ key}}"
 PROMPT="${1:-Hello from a webhook}"
 
 curl -sS -X POST "${BASE_URL%/}/api/v1/route" \

@@ -5,12 +5,34 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-> **Name:** RouteLLM Gateway is an independent project. It is not affiliated
-> with LMSYS RouteLLM, the routing-model research project of the same name.
+> **Name:** Routtener (previously RouteLLM Gateway) is an independent project.
+> It is not affiliated with LMSYS RouteLLM, the routing-model research project
+> whose name this project previously shared.
 
 ---
 
 ## [Unreleased]
+
+### Changed
+
+- **Renamed the project RouteLLM → Routtener.** Display name, dashboard title
+  and header, OpenAPI title, launcher banner, health `service` field, release
+  archive name, and docs. Compatibility surfaces deliberately unchanged so
+  existing installs keep working:
+  - the `routellm.db` SQLite filename, `encryption.key`, the `./data`
+    directory, all DB tables/columns, and the OS user-data directory name —
+    a pre-rename data directory decrypts and serves unchanged;
+  - `ROUTELLM_*` environment variables keep working as a documented fallback;
+    the new primary prefix is `ROUTTENER_*` (e.g. `ROUTTENER_DATA_DIR`,
+    `ROUTTENER_CAPTURE_PROVIDER_SHAPES`), and the new one wins if both are set;
+  - gateway API keys: the `rk_` key prefix, generation and the hash-based
+    authentication path are unchanged, so every existing key still
+    authenticates;
+  - the OpenAI-compatible `routellm-auto` model id, the
+    `x_routellm_metadata` response field, the `x-routellm-source` Worker
+    proxy header, and the browser localStorage keys.
+- Cloud CI jobs (`hf-space-boot`, `cloudflare-worker`) and `docs/deploy`
+  contents are intentionally left as they were on main.
 
 ### Added
 

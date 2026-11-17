@@ -1,6 +1,6 @@
 """Benchmark report generator.
 
-Reads both scenario result files (each containing the naive and the RouteLLM
+Reads both scenario result files (each containing the naive and the Routtener
 arm = 4 datasets: {naive, routellm} × {no-chaos, chaos}), writes
 results/REPORT.md — a Markdown results table with the generation date and the
 models each arm actually used — and renders:
@@ -47,7 +47,7 @@ SCENARIOS = [
     ("scenario_1_results.json", "Normal conditions"),
     ("scenario_2_results.json", "Simulated outage (chaos on baseline)"),
 ]
-ARMS = [("naive_baseline", "Naive\n(single model)"), ("routellm_full", "RouteLLM\n(full system)")]
+ARMS = [("naive_baseline", "Naive\n(single model)"), ("routellm_full", "Routtener\n(full system)")]
 
 ACCENT = "#E87722"
 GREEN = "#3DDC97"
@@ -102,7 +102,7 @@ def build_table(datasets: dict[str, dict]) -> str:
     c_r = datasets["chaos:routellm"]
 
     lines = [
-        "# RouteLLM Benchmark Report",
+        "# Routtener Benchmark Report",
         "",
         f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
         f"**Prompts per arm:** {nc_n['total_prompts']} (identical set in all four runs)  ",
@@ -113,11 +113,11 @@ def build_table(datasets: dict[str, dict]) -> str:
         "## Models used",
         "",
         models_line("Naive baseline (single forced model)", nc_n),
-        models_line("RouteLLM, normal conditions (router's own picks)", nc_r),
+        models_line("Routtener, normal conditions (router's own picks)", nc_r),
         models_line("Naive baseline under the simulated outage", c_n),
-        models_line("RouteLLM under the simulated outage", c_r),
+        models_line("Routtener under the simulated outage", c_r),
         "",
-        "| Scenario | Naive (single model) | RouteLLM |",
+        "| Scenario | Naive (single model) | Routtener |",
         "|---|---|---|",
         f"| Normal — success rate | {fmt_pct(nc_n['success_rate'])} | {fmt_pct(nc_r['success_rate'])} |",
         f"| **Simulated outage — success rate** | **{fmt_pct(c_n['success_rate'])}** | **{fmt_pct(c_r['success_rate'])}** |",
@@ -127,7 +127,7 @@ def build_table(datasets: dict[str, dict]) -> str:
         "",
         "## Per-task-type breakdown (success rate)",
         "",
-        "| Task type | Naive (normal) | RouteLLM (normal) | Naive (outage) | RouteLLM (outage) |",
+        "| Task type | Naive (normal) | Routtener (normal) | Naive (outage) | Routtener (outage) |",
         "|---|---|---|---|---|",
     ]
     task_types = sorted(
@@ -148,9 +148,9 @@ def build_table(datasets: dict[str, dict]) -> str:
     lines += [
         "",
         f"During the simulated outage, the naive baseline's success rate "
-        f"dropped to **{fmt_pct(c_n['success_rate'])}** while RouteLLM "
+        f"dropped to **{fmt_pct(c_n['success_rate'])}** while Routtener "
         f"maintained **{fmt_pct(c_r['success_rate'])}** by rerouting to "
-        f"healthy providers; RouteLLM's spread vs the naive under-outage "
+        f"healthy providers; Routtener's spread vs the naive under-outage "
         f"baseline is {fmt_pct(c_r['success_rate'] - c_n['success_rate'])} "
         f"points, and the outage cost the naive approach "
         f"{dropped} points vs normal conditions.",
@@ -193,7 +193,7 @@ def build_charts(datasets: dict[str, dict]) -> bool:
 
     # Grouped layout: no-chaos pair then chaos pair, per arm.
     order = ["no_chaos:naive", "no_chaos:routellm", "chaos:naive", "chaos:routellm"]
-    labels = ["No outage\nNaive", "No outage\nRouteLLM", "Outage\nNaive", "Outage\nRouteLLM"]
+    labels = ["No outage\nNaive", "No outage\nRouttener", "Outage\nNaive", "Outage\nRouttener"]
     colors = ["#9E9E9E", GREEN, "#C77878", PURPLE]
 
     rates = [datasets[k]["success_rate"] * 100 for k in order]
@@ -201,7 +201,7 @@ def build_charts(datasets: dict[str, dict]) -> bool:
 
     bar_chart(
         rates, labels, colors,
-        title="Success Rate: Naive Single Model vs RouteLLM",
+        title="Success Rate: Naive Single Model vs Routtener",
         ylabel="Success rate (%)",
         out_path=RESULTS_DIR / "success_rate_comparison.png",
         pct=True,

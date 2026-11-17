@@ -1,4 +1,4 @@
-# Contributing to RouteLLM Gateway
+# Contributing to Routtener Gateway
 
 Thanks for taking a look. This is a small, deliberately readable project: a
 FastAPI gateway that classifies a prompt, ranks providers, executes with
@@ -7,8 +7,9 @@ automatic fallback, and shows what happened — plus a React dashboard.
 Everything below can be run on a laptop with no Docker, no Postgres and no
 Redis.
 
-> **Name note:** this project is not affiliated with LMSYS RouteLLM, the
-> routing-model research project of the same name.
+> **Name note:** this project is called Routtener (previously RouteLLM) and is
+> not affiliated with LMSYS RouteLLM, the routing-model research project whose
+> name it previously shared.
 
 ## The 60-second setup
 

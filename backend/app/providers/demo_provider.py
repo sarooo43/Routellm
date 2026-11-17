@@ -74,7 +74,7 @@ _CANNED: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 _DEFAULT_BODY = (
-    "Synthetic completion. RouteLLM classified this prompt, ranked the "
+    "Synthetic completion. Routtener classified this prompt, ranked the "
     "available providers, and called one of them — in demo mode that provider "
     "is this mock, so no network request and no credits were used."
 )

@@ -1,4 +1,4 @@
-"""Manually curated catalog metadata for the models RouteLLM can route to.
+"""Manually curated catalog metadata for the models Routtener can route to.
 
 This is editorial/descriptive data for the Catalog page. Operational health,
 pricing numbers, and live performance are merged in by the API at request time.

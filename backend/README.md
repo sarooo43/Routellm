@@ -1,5 +1,5 @@
 ---
-title: RouteLLM API
+title: Routtener API
 emoji: 🔀
 colorFrom: yellow
 colorTo: red
@@ -8,10 +8,10 @@ sdk_version: 6.31.0
 python_version: "3.12"
 app_file: hf_app.py
 pinned: false
-short_description: RouteLLM Gateway backend (experimental cloud path)
+short_description: Routtener Gateway backend (experimental cloud path)
 ---
 
-# RouteLLM Gateway — backend
+# Routtener Gateway - backend
 
 FastAPI service that classifies a prompt, ranks the configured providers, and
 executes with automatic fallback. It also serves the built dashboard, so a
@@ -32,8 +32,8 @@ local setup. This file covers the backend itself.
   ../docs/deploy/ for the full experimental cloud path.
 -->
 
-> Not affiliated with LMSYS RouteLLM, the routing-model research project of the
-> same name.
+> Not affiliated with LMSYS RouteLLM, the routing-model research project whose
+> name this project previously shared.
 
 ## Run it
 
@@ -56,7 +56,7 @@ Everything is optional. Full comments live in [`.env.example`](.env.example).
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ROUTELLM_DATA_DIR` | `./data` | SQLite file, generated encryption key, logs. Falls back to the per-user data dir when the checkout is read-only |
+| `ROUTTENER_DATA_DIR` (legacy `ROUTELLM_DATA_DIR` also accepted) | `./data` | SQLite file, generated encryption key, logs. Falls back to the per-user data dir when the checkout is read-only |
 | `DATABASE_URL` | unset → SQLite | Any Postgres DSN works; set it to opt out of SQLite |
 | `REDIS_URL` | unset → in-process | Set it to share breaker/quota/chaos state across processes |
 | `REQUIRE_API_KEY` | `false` | `true` restores `X-API-Key` on every protected route |

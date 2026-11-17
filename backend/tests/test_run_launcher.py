@@ -217,13 +217,14 @@ def test_requirements_stamp_tracks_the_pinned_file(launcher):
 
 
 def test_backend_env_defaults_to_loopback_and_the_data_dir(launcher, monkeypatch):
+    monkeypatch.delenv("ROUTTENER_DATA_DIR", raising=False)
     monkeypatch.delenv("ROUTELLM_DATA_DIR", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     env = launcher.backend_env(8000, "127.0.0.1", dev=False)
     assert env["PORT"] == "8000"
     assert env["HOST"] == "127.0.0.1"
     assert env["PYTHONPATH"] == str(launcher.BACKEND_DIR)
-    assert env["ROUTELLM_DATA_DIR"].endswith("data")
+    assert env["ROUTTENER_DATA_DIR"].endswith("data")
     assert "VITE_DEV_SERVER" not in env
 
 

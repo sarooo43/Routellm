@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RouteLLM launcher — clone, run one command, get the app.
+"""Routtener launcher - clone, run one command, get the app.
 
     python run.py                 # build/install what is missing, then serve
     python run.py --dev           # backend reload + Vite dev server
@@ -454,7 +454,7 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     """The one thing worth reading: where the app is and what to do next."""
     line = "─" * 58
     print()
-    print(bold("  RouteLLM is running"))
+    print(bold("  Routtener is running"))
     print(f"  {dim(line)}")
     print(f"  Dashboard   {bold(url)}")
     print(f"  API docs    {url}docs")
@@ -523,7 +523,7 @@ def open_browser(url: str) -> None:
 def backend_env(port: int, host: str, dev: bool) -> dict:
     """Environment for the backend process (never contains secrets)."""
     env = dict(os.environ)
-    env.setdefault("ROUTELLM_DATA_DIR", str(DATA_DIR))
+    env.setdefault("ROUTTENER_DATA_DIR", str(DATA_DIR))
     env.setdefault("PORT", str(port))
     env.setdefault("HOST", host)
     if dev:
@@ -584,7 +584,7 @@ def serve_dev_frontend(dev: bool) -> Optional[subprocess.Popen]:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python run.py",
-        description="Start RouteLLM locally (no Docker, no Postgres, no Redis).",
+        description="Start Routtener locally (no Docker, no Postgres, no Redis).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -622,7 +622,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
 
     print()
-    print(f"  {bold('RouteLLM')} {dim('local launcher')}  {dim(f'({platform.system()})')}")
+    print(f"  {bold('Routtener')} {dim('local launcher')}  {dim(f'({platform.system()})')}")
 
     try:
         check_python()
@@ -700,7 +700,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dev_frontend.terminate()
     except LauncherError as exc:
         print()
-        print(f"  {fail('Could not start RouteLLM')}")
+        print(f"  {fail('Could not start Routtener')}")
         for line in str(exc).splitlines():
             print(f"  {line}")
         print()

@@ -18,12 +18,16 @@ import pytest
 from app import local
 from app.config import settings
 
+#: The env var names after the rename (legacy ROUTELLM_DATA_DIR also works).
+DATA_DIR_ENV_NEW = "ROUTTENER_DATA_DIR"
+DATA_DIR_ENV_LEGACY = "ROUTELLM_DATA_DIR"
+
 
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     """Point the runtime at a throwaway directory for one test."""
     target = tmp_path / "data"
-    monkeypatch.setenv(local.DATA_DIR_ENV, str(target))
+    monkeypatch.setenv(DATA_DIR_ENV_NEW, str(target))
     monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", "", raising=False)
     return target
 
@@ -42,7 +46,8 @@ def test_env_var_override_is_created_on_demand(data_dir):
 
 def test_settings_value_is_honoured_when_the_env_var_is_unset(tmp_path, monkeypatch):
     """A .env entry must work, not only an exported variable."""
-    monkeypatch.delenv(local.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV_NEW, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV_LEGACY, raising=False)
     configured = tmp_path / "from-settings"
     monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", str(configured))
     assert local.data_dir() == configured
@@ -51,14 +56,14 @@ def test_settings_value_is_honoured_when_the_env_var_is_unset(tmp_path, monkeypa
 def test_relative_override_is_resolved_against_the_cwd(tmp_path, monkeypatch):
     """The sqlite path must not depend on where the process was started."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv(local.DATA_DIR_ENV, "data")
+    monkeypatch.setenv(DATA_DIR_ENV_NEW, "data")
     monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", "", raising=False)
     assert local.data_dir() == (tmp_path / "data").resolve()
 
 
 def test_default_is_the_repo_data_directory(monkeypatch):
     """No configuration at all still yields a single, predictable place."""
-    monkeypatch.delenv(local.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV_NEW, raising=False)
     monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", "", raising=False)
     resolved = local.data_dir(create=False)
     assert resolved.name == "data"
@@ -67,7 +72,8 @@ def test_default_is_the_repo_data_directory(monkeypatch):
 
 def test_read_only_checkout_falls_back_to_a_user_directory(tmp_path, monkeypatch):
     """An un-writable checkout (release zip in /opt, Program Files) still runs."""
-    monkeypatch.delenv(local.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV_NEW, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV_LEGACY, raising=False)
     monkeypatch.setattr(settings, "ROUTELLM_DATA_DIR", "", raising=False)
     fallback = tmp_path / "user-data"
     monkeypatch.setattr(local, "_is_writable", lambda _p: False)

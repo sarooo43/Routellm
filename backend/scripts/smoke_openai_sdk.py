@@ -1,4 +1,4 @@
-"""Smoke-test the REAL OpenAI SDK over HTTP against a running RouteLLM server.
+"""Smoke-test the REAL OpenAI SDK over HTTP against a running Routtener server.
 
 Start the credential-free demo server first (from backend/):
     python -m uvicorn scripts.demo_server:app --host 0.0.0.0 --port 8000
@@ -11,7 +11,7 @@ This is deliberately not an ASGITransport/TestClient test: the SDK's normal
 HTTP transport connects to localhost:8000. Only upstream LLM providers are
 stubbed by demo_server; the HTTP server, routing pipeline and SDK are real.
 The demo database is local demo.db, and no provider API keys are needed.
-The script generates a lightweight RouteLLM demo API key and sends it as
+The script generates a lightweight demo API key and sends it as
 X-API-Key; protected routing/chat endpoints require that header.
 """
 

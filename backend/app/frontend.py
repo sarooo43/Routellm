@@ -42,11 +42,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 #: Marker attribute so a second call cannot mount the SPA twice (tests call
 #: ``create_app``/``mount_frontend`` repeatedly on the same module state).
-_MOUNTED_FLAG = "_routellm_frontend_mounted"
+_MOUNTED_FLAG = "_routtener_frontend_mounted"
 #: ``app.state`` key holding the outcome, for the startup log and the banner.
 STATUS_ATTR = "frontend_status"
 #: Extra request attributes used by the response path to tag SPA responses.
-_SPA_RESPONSE_HEADER = "X-RouteLLM-Frontend"
+_SPA_RESPONSE_HEADER = "X-Routtener-Frontend"
 _ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 _INDEX_CACHE_CONTROL = "no-cache"
 
@@ -190,12 +190,12 @@ def install_root_status_page(app: FastAPI) -> None:
     async def _status() -> HTMLResponse:  # pragma: no cover - trivial HTML
         body = (
             "<!doctype html><html><head><meta charset='utf-8'>"
-            "<title>RouteLLM API</title>"
+            "<title>Routtener API</title>"
             "<style>body{font-family:system-ui,sans-serif;max-width:40rem;"
             "margin:4rem auto;padding:0 1.5rem;line-height:1.6;color:#1f2937}"
             "code{background:#f3f4f6;padding:.15rem .35rem;border-radius:.25rem}"
             "a{color:#b45309}</style></head><body>"
-            "<h1>RouteLLM API is running</h1>"
+            "<h1>Routtener API is running</h1>"
             "<p>The backend is up, but <code>frontend/dist</code> is not built, "
             "so there is no dashboard to serve yet.</p>"
             "<p>Build it, then reload this page:</p>"

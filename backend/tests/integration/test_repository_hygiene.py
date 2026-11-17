@@ -81,8 +81,8 @@ def test_upstream_disclaimer_is_stated_in_both_languages():
 def test_app_name_constant_is_the_declared_one():
     from app.identity import APP_NAME, APP_SHORT_NAME
 
-    assert APP_NAME == "RouteLLM Gateway"
-    assert APP_SHORT_NAME == "RouteLLM"
+    assert APP_NAME == "Routtener Gateway"
+    assert APP_SHORT_NAME == "Routtener"
 
 
 def test_readme_disclaims_affiliation():

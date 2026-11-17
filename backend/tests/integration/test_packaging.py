@@ -45,7 +45,7 @@ def test_dockerfile_uses_the_repo_root_as_build_context():
 
 def test_dockerfile_keeps_state_in_a_volume_and_drops_privileges():
     text = _read(DOCKERFILE)
-    assert "ROUTELLM_DATA_DIR=/data" in text
+    assert "ROUTTENER_DATA_DIR=/data" in text
     assert "VOLUME [\"/data\"]" in text
     assert "USER appuser" in text
     assert "chown -R appuser:appuser /data" in text

@@ -1,9 +1,9 @@
-"""Minimal HTTPS webhook receiver that calls RouteLLM.
+"""Minimal HTTPS webhook receiver that calls Routtener.
 
 Run:
     pip install fastapi uvicorn httpx
-    export ROUTELLM_BASE_URL=https://routellm.example.com
-    export ROUTELLM_API_KEY=rk_...
+    export ROUTTENER_BASE_URL=https://routtener.example.com  # legacy ROUTELLM_BASE_URL also accepted
+    export ROUTTENER_API_KEY=rk_...  # legacy ROUTELLM_API_KEY also accepted
     export WEBHOOK_SECRET=choose-a-long-random-secret
     uvicorn examples.webhook.receiver:app --host 0.0.0.0 --port 9000
 
@@ -19,7 +19,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="RouteLLM webhook example")
+app = FastAPI(title="Routtener webhook example")
 
 
 class WebhookPayload(BaseModel):
@@ -33,15 +33,15 @@ async def webhook(
     payload: WebhookPayload,
     x_webhook_secret: str = Header(default=None),
 ) -> dict:
-    """Verify the shared secret, call RouteLLM over HTTPS, return the answer."""
+    """Verify the shared secret, call Routtener over HTTPS, return the answer."""
     expected = os.environ.get("WEBHOOK_SECRET")
     if not expected or not hmac.compare_digest(x_webhook_secret or "", expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    base_url = os.environ.get("ROUTELLM_BASE_URL", "https://routellm.example.com")
-    api_key = os.environ.get("ROUTELLM_API_KEY")
+    base_url = os.environ.get("ROUTTENER_BASE_URL") or os.environ.get("ROUTELLM_BASE_URL", "https://routtener.example.com")
+    api_key = os.environ.get("ROUTTENER_API_KEY") or os.environ.get("ROUTELLM_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="ROUTELLM_API_KEY is not configured")
+        raise HTTPException(status_code=500, detail="ROUTTENER_API_KEY (or legacy ROUTELLM_API_KEY) is not configured")
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
@@ -50,7 +50,7 @@ async def webhook(
             json={"prompt": payload.text},
         )
     if response.status_code != 200:
-        raise HTTPException(status_code=502, detail="RouteLLM request failed")
+        raise HTTPException(status_code=502, detail="Routtener request failed")
     data = response.json()
     return {
         "model_used": data.get("model_used"),

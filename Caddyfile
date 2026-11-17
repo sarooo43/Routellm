@@ -1,10 +1,10 @@
-# RouteLLM auto-HTTPS reverse proxy.
+# Routtener auto-HTTPS reverse proxy.
 #
 # Set DOMAIN to a public DNS name pointing at this host (ports 80/443 open).
 # Caddy then obtains/renews a Let's Encrypt certificate automatically.
 # For local experiments, DOMAIN=localhost uses Caddy's internal CA.
 #
-#   DOMAIN=routellm.example.com docker compose up --build -d
+#   DOMAIN=routtener.example.com docker compose up --build -d
 #
 # Browser/webhook traffic:
 #   https://DOMAIN/            -> React dashboard (frontend nginx)

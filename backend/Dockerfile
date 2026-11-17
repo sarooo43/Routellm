@@ -1,4 +1,4 @@
-# RouteLLM backend — single-container image (API + built dashboard).
+# Routtener backend - single-container image (API + built dashboard).
 #
 #   docker build -t routellm ./backend
 #   docker run --rm -p 8000:8000 -v routellm-data:/data routellm
@@ -26,7 +26,7 @@ FROM python:3.12-slim
 # No .pyc files inside the image; logs stream straight to stdout.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    ROUTELLM_DATA_DIR=/data \
+    ROUTTENER_DATA_DIR=/data \
     PORT=8000 \
     HOST=0.0.0.0
 

@@ -1,4 +1,4 @@
-# RouteLLM Gateway
+# Routtener Gateway
 
 **An LLM router you can actually run.** Point one endpoint at several providers;
 it classifies each prompt, ranks Groq / Google AI Studio / DeepSeek, and falls
@@ -10,7 +10,13 @@ showing you exactly what it decided and why.
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
 [![Node 20+ (only to build the UI)](https://img.shields.io/badge/node-20%2B%20(optional)-339933.svg)](https://nodejs.org)
 
-> **Name:** this project is independent and **not affiliated with LMSYS RouteLLM**, the routing-model research project of the same name.
+> **Name:** this project is called **Routtener**. It was previously called
+> RouteLLM — a name it shared, entirely coincidentally, with **LMSYS RouteLLM**,
+> the routing-model research project. It is independent and not affiliated with
+> LMSYS. Compatibility surfaces kept from the old name: the `ROUTELLM_*`
+> environment-variable fallback, the `rk_` API-key prefix, the
+> `routellm-auto` OpenAI model id, and the `routellm.db` data filename — all
+> still work so existing installs keep their data.
 
 <!--
   Demo placeholder — replace with a real screen recording before announcing.
@@ -32,6 +38,10 @@ git clone https://github.com/sarooo43/Routellm.git
 cd Routellm
 python run.py
 ```
+
+(All clone/badge URLs in this README use the pre-rename repo name, which
+GitHub redirects after a rename — see the release notes for the list to
+update once the repository itself is renamed.)
 
 `run.py` creates a virtualenv, installs the backend, builds the dashboard if
 Node is available (or uses a prebuilt one), creates `./data`, and opens
@@ -171,7 +181,7 @@ default (the launcher creates it for you on first run).
 
 | Variable | Default | What it changes |
 |---|---|---|
-| `ROUTELLM_DATA_DIR` | `./data` | Where SQLite, the generated encryption key and logs live |
+| `ROUTTENER_DATA_DIR` (legacy `ROUTELLM_DATA_DIR` also accepted; new wins) | `./data` | Where SQLite, the generated encryption key and logs live |
 | `DATABASE_URL` | unset → SQLite | Set any Postgres DSN to use Postgres instead |
 | `REDIS_URL` | unset → in-process | Set it to share breaker/quota/chaos state across processes |
 | `REQUIRE_API_KEY` | `false` | `true` requires `X-API-Key` on `/api/v1/route` and `/v1/chat/completions` |
@@ -193,7 +203,9 @@ warning off loopback), `--dev`, `--no-browser`, `--reinstall`, `--rebuild`,
 
 ### Where your data lives
 
-`./data` (git-ignored) holds `routellm.db`, `encryption.key` and logs. It is
+`./data` (git-ignored) holds `routellm.db`, `encryption.key` and logs (the
+database filename keeps its pre-rename name so existing installs keep their
+data). It is
 never uploaded anywhere. Delete it to start clean — **deleting
 `encryption.key` makes previously stored provider keys unreadable**, so
 re-enter them on the Providers page.
@@ -309,7 +321,7 @@ Being explicit about what this is and is not:
 | Launcher reports *Port 8000 is busy* | It auto-advances and prints the port it used; pass `--port` to choose one |
 | Dashboard at `/` shows a status page instead of the app | `frontend/dist` is missing — run `npm ci && npm run build` in `frontend/`, or `python run.py --rebuild` |
 | Pages load but every number is empty | Backend not reachable: check `http://127.0.0.1:8000/health`. The pill in the top bar says which dependency is down |
-| `/health` reports `"db": "down"` | The SQLite file is missing or unwritable — check `ROUTELLM_DATA_DIR`, or your `DATABASE_URL` if you set one |
+| `/health` reports `"db": "down"` | The SQLite file is missing or unwritable - check `ROUTTENER_DATA_DIR`, or your `DATABASE_URL` if you set one |
 | Saving a provider key returns 503 | No usable encryption key: make the data directory writable (a key is generated automatically), or set `PROVIDER_KEY_ENCRYPTION_KEY` |
 | Stored provider keys stop working after you deleted `data/` | The generated key is gone, so the ciphertext cannot be decrypted — re-enter the keys |
 | Every route fails with a connection error | No provider key is configured and demo mode is off, or this machine cannot reach the provider API |

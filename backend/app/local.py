@@ -20,12 +20,14 @@ Design rules this module follows:
   where the OS supports it (``os.name == "posix"``), and a failure to tighten
   them is logged, never fatal.
 * **Explicit beats implicit.** Every directory and file can be overridden
-  (``ROUTELLM_DATA_DIR``); the default is ``./data`` next to the repo root so a
-  contributor can see and delete their own state.
+  (``ROUTTENER_DATA_DIR``, legacy ``ROUTELLM_DATA_DIR`` also accepted); the
+  default is ``./data`` next to the repo root so a contributor can see and
+  delete their own state.
 
 Resolution order for the data directory:
 
-1. ``ROUTELLM_DATA_DIR`` (absolute or relative to the current directory).
+1. ``ROUTTENER_DATA_DIR`` (new name; legacy ``ROUTELLM_DATA_DIR`` still
+   accepted; absolute or relative to the current directory).
 2. ``<repo>/data`` where the repo root is the parent of ``backend/``.
 3. The OS user-data directory, when the repo checkout is read-only
    (for example a prebuilt release unzipped into ``/opt`` or ``Program Files``).
@@ -39,12 +41,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from app.env_compat import get as env_get
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-#: Override for the data directory.
-DATA_DIR_ENV = "ROUTELLM_DATA_DIR"
+#: Override for the data directory. Primary name after the rename; the
+#: legacy ``ROUTELLM_DATA_DIR`` keeps working (see app/env_compat.py).
+DATA_DIR_ENV_SUFFIX = "DATA_DIR"
 #: Filename of the SQLite database inside the data directory.
 SQLITE_FILENAME = "routellm.db"
 #: Filename of the generated Fernet key inside the data directory.
@@ -81,7 +85,7 @@ def _is_writable(directory: Path) -> bool:
     """True when ``directory`` exists (or can be created) and is writable."""
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        probe = directory / ".routellm-write-probe"
+        probe = directory / ".routtener-write-probe"
         probe.write_text("", encoding="utf-8")
         probe.unlink()
         return True
@@ -96,9 +100,10 @@ def data_dir(create: bool = True) -> Path:
     directory instead of crashing the first run.
     """
     # The env var wins (tests and the launcher set it), then the pydantic
-    # setting, so both `ROUTELLM_DATA_DIR=... python run.py` and a .env entry
-    # work without the caller knowing which one to set.
-    override = os.environ.get(DATA_DIR_ENV, "").strip()
+    # setting, so both `ROUTTENER_DATA_DIR=... python run.py` (or the legacy
+    # ROUTELLM_DATA_DIR) and a .env entry work without the caller knowing
+    # which one to set.
+    override = env_get(DATA_DIR_ENV_SUFFIX).strip()
     if not override:
         try:
             from app.config import settings

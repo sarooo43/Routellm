@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# RouteLLM launcher (macOS / Linux).
+# Routtener launcher (macOS / Linux).
 #
 #   ./start.sh                  # http://127.0.0.1:8000
 #   ./start.sh --dev            # backend reload + Vite dev server

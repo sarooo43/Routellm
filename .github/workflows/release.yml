@@ -58,7 +58,7 @@ jobs:
             VERSION="${{ github.event.inputs.tag }}"
             VERSION="${VERSION#v}"
           fi
-          STAGE="routellm-${VERSION}"
+          STAGE="routtener-${VERSION}"
           mkdir -p "dist-release/${STAGE}"
           # Backend without tests or caches: it is what runs, not what proves it.
           rsync -a \
@@ -84,7 +84,7 @@ jobs:
           TMP="$(mktemp -d)"
           cd "$TMP"
           unzip -q "$GITHUB_WORKSPACE/$ARCHIVE"
-          cd routellm-*
+          cd routtener-*
           python -m venv .venv
           ./.venv/bin/pip -q install -r backend/requirements.txt
           # No provider keys, no database, no Redis: /health must still answer.
@@ -107,13 +107,13 @@ jobs:
           files: ${{ env.ARCHIVE }}
           generate_release_notes: true
           body: |
-            ## RouteLLM — local-first routing gateway
+            ## Routtener — local-first routing gateway
 
             **Quick start (no Docker, no Postgres, no Redis):**
 
             ```bash
-            unzip routellm-*.zip
-            cd routellm-*
+            unzip routtener-*.zip
+            cd routtener-*
             python run.py
             ```
 

@@ -1,6 +1,6 @@
 """Per-caller provider key management (BYOK) + model explorer.
 
-All endpoints require a valid RouteLLM ``X-API-Key`` and only ever touch rows
+All endpoints require a valid Routtener ``X-API-Key`` and only ever touch rows
 scoped to that calling key. Raw provider keys are accepted once on PUT, stored
 encrypted, and never returned again. GET reports configuration status for every
 registered provider so the dashboard can render a section per provider.
@@ -117,7 +117,7 @@ async def set_provider_key(
     api_key: ApiKeyDB = Depends(require_api_key),
     db_session: AsyncSession = Depends(get_session),
 ) -> ProviderKeyStatusResponse:
-    """Encrypt and store a provider key for the calling RouteLLM key."""
+    """Encrypt and store a provider key for the calling Routtener key."""
     _require_supported(provider_name)
     cleaned = body.api_key.strip()
     if len(cleaned) < 8 or len(cleaned) > 512:

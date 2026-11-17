@@ -119,12 +119,12 @@ PATTERNS: tuple[Pattern, ...] = (
         re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b"),
         "Slack token — revoke it.",
     ),
-    # RouteLLM's own demo keys: only a problem if a REAL one (not a placeholder)
+    # the app's own demo keys (legacy routellm naming): only a problem if a REAL one (not a placeholder)
     # ever lands in the repository.
     Pattern(
         "routellm-demo-key",
         re.compile(r"\brk_[A-Za-z0-9_-]{30,}\b"),
-        "A RouteLLM demo key. These are disposable, but treat one in git as "
+        "A demo key. These are disposable, but treat one in git as "
         "revoked and regenerate it.",
     ),
 )

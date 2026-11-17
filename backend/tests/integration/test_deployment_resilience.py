@@ -38,7 +38,7 @@ async def test_health_is_public_and_reports_components(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] in {"ok", "degraded"}
-    assert body["service"] == "routellm-backend"
+    assert body["service"] == "routtener-backend"
     assert body["version"]
     assert body["uptime_s"] >= 0
     # Flat aliases the deploy smoke test relies on.

@@ -124,7 +124,7 @@ async def health_payload() -> tuple[dict[str, Any], int]:
 
     payload = {
         "status": status,
-        "service": "routellm-backend",
+        "service": "routtener-backend",
         "version": package_version,
         # T1 stale-build detection: the commit this process runs from, so the
         # dashboard can flag a frontend bundle built from a different commit.
