@@ -275,6 +275,29 @@ included in benchmark runs.
 
 ---
 
+## Evals
+
+The repository also ships an eval suite (`evals/`) that checks routing
+accuracy (100 human-labeled prompts, confusion matrix, calibration bins),
+resilience (5 scripted failure scenarios vs a naive single-provider baseline,
+Wilson 95% intervals), quality (exact-match math / unit-tested code / JSON
+schema — no LLM judge) and routing overhead (p50/p95). One command runs all
+of it and writes `docs/eval-results.md`:
+
+```bash
+python evals/run_evals.py
+```
+
+**All numbers come from the owner's own run.** By default the whole suite
+runs in mocked mode — deterministic scripted providers, no network, no keys —
+and its output measures the routing machinery, not real model quality. The
+generated `docs/eval-results.md` is deliberately not committed; run the suite
+yourself (optionally with `--live` and your own keys for the resilience
+scenario) and read your own file. Every success rate it prints carries a
+Wilson 95% interval, and each report states what the numbers do not show.
+
+---
+
 ## Privacy
 
 Local-first is the point, not a setting.

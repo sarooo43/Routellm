@@ -61,3 +61,7 @@ Thumbs.db
 # Created automatically by `python run.py`; never commit it.
 data/
 backend/data/
+
+# Generated eval report (python evals/run_evals.py). Never commit pre-filled
+# numbers: every published result must come from the owner's own run.
+docs/eval-results.md
