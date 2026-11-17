@@ -1,11 +1,5 @@
 # Deploying RouteLLM to Cloudflare Workers
 
-> **ARCHIVED (v0.1.0 cleanup, T2).** The Cloudflare deployment attempt is closed:
-> local-first serving (`python run.py`) is the supported path, the
-> `cloudflare-worker` CI job is gone, and the code below is kept only for
-> reference under `docs/deploy/cloudflare/` (config: `docs/deploy/cloudflare/wrangler.jsonc`).
-> The exact state of the attempt is preserved in the git tag `cloud-deploy-attempt`.
-
 RouteLLM has two very different pieces:
 
 | Piece | Tech | Can Cloudflare Workers run it? |
@@ -67,12 +61,19 @@ curl https://api.example.com/api/v1/catalog
 
 ## 2. Cloudflare Workers build settings
 
-> These settings are historical (the attempt is archived). If the worker is
-> ever revived from `docs/deploy/cloudflare/`, the equivalent of the old
-> package script is:
+Use these settings for the Worker deployment:
+
+| Setting | Value |
+|---|---|
+| Root directory | `/` |
+| Build command | `npm run build` |
+| Deploy command | `npm run deploy` |
+| Build output | handled by `wrangler.jsonc` (`frontend/dist`) |
+
+Use `npm run deploy`, not a bare `npx wrangler deploy`. The package script runs:
 
 ```bash
-wrangler deploy --config docs/deploy/cloudflare/wrangler.jsonc --keep-vars --no-autoconfig
+wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig
 ```
 
 That makes the repository config explicit, preserves variables/secrets set in the
@@ -81,8 +82,9 @@ setup.
 
 The repo includes:
 
-- `docs/deploy/cloudflare/wrangler.jsonc` - Worker + static asset config
-- `docs/deploy/cloudflare/worker.js` - serves the SPA and proxies API paths
+- `wrangler.jsonc` — Worker + static asset config
+- `cloudflare/worker.js` — serves the SPA and proxies API paths
+- root `package-lock.json` — reproducible root Wrangler install
 
 If you are deploying from GitHub, make sure the branch Cloudflare builds contains
 these files. If Cloudflare is still building an older commit, the old root
@@ -210,7 +212,7 @@ env.ROUTELLM_API_ORIGIN ("https://saboornotgonna-routellm.hf.sp...")  Environmen
 ```
 
 If that row is missing, the build would deploy a Worker whose every API call
-503s - `docs/deploy/cloudflare/config.test.js` fails in that case.
+503s — `cloudflare/config.test.js` fails in that case, so CI catches it.
 
 A dashboard variable still **overrides** the config value if you ever need to
 point somewhere else. To set one explicitly:

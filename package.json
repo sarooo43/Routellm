@@ -2,7 +2,7 @@
   "name": "routellm-monorepo",
   "private": true,
   "type": "module",
-  "description": "RouteLLM gateway monorepo. The React dashboard lives in frontend/; the FastAPI gateway lives in backend/.",
+  "description": "RouteLLM gateway monorepo. The React dashboard lives in frontend/; the FastAPI gateway lives in backend/. npm workspaces install frontend dependencies at the root so Cloudflare builds do not need a nested npm ci.",
   "workspaces": [
     "frontend"
   ],
@@ -13,6 +13,12 @@
     "lint": "npm run lint --workspace frontend",
     "test": "npm run test --workspace frontend",
     "test:watch": "npm run test:watch --workspace frontend",
-    "preview": "npm run preview --workspace frontend"
+    "preview": "npm run preview --workspace frontend",
+    "deploy": "wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig",
+    "deploy:dry-run": "wrangler deploy --config wrangler.jsonc --keep-vars --no-autoconfig --dry-run",
+    "test:cloudflare": "node --test cloudflare/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.156.0"
   }
 }

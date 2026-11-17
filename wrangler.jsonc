@@ -14,10 +14,7 @@
   // use https://<your-worker-domain>/api/v1/route once the backend is reachable.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "routellm",
-  // Archived under docs/deploy/cloudflare/ — adjust "main" for the new layout
-  // so the archived copy stays deployable with:
-  //   cd docs/deploy/cloudflare && npm i wrangler && npx wrangler deploy --config wrangler.jsonc
-  "main": "worker.js",
+  "main": "cloudflare/worker.js",
   // The backend origin this Worker proxies /api/*, /v1/* and /health to.
   //
   // It lives HERE, in git, on purpose. As a dashboard-only variable it was
