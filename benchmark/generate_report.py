@@ -8,6 +8,11 @@ models each arm actually used — and renders:
   - results/success_rate_comparison.png
   - results/cost_comparison.png
 
+The same Markdown report is ALSO written to ``docs/benchmark-results.md`` at
+the repository root, so the repo has one stable, linkable location for the
+result table. That file is created by YOUR run and is not shipped with the
+repository — no pre-computed numbers live in git.
+
 The charts need matplotlib; REPORT.md does not. When matplotlib is not
 installed the report is still written and the charts are skipped with a
 message, so the one-command benchmark run never dies on a plotting library.
@@ -41,7 +46,11 @@ if hasattr(sys.stdout, "reconfigure") and (
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BENCHMARK_DIR.parent
 RESULTS_DIR = BENCHMARK_DIR / "results"
+#: Second copy of the report: the repo-root docs location the README links
+#: to. Written by main() on every report generation; never pre-shipped.
+DOCS_REPORT_PATH = REPO_ROOT / "docs" / "benchmark-results.md"
 
 SCENARIOS = [
     ("scenario_1_results.json", "Normal conditions"),
@@ -221,7 +230,10 @@ def main() -> None:
     datasets = load_datasets()
     report = build_table(datasets)
     (RESULTS_DIR / "REPORT.md").write_text(report, encoding="utf-8")
-    print(f"✓ saved {RESULTS_DIR / 'REPORT.md'}\n")
+    print(f"✓ saved {RESULTS_DIR / 'REPORT.md'}")
+    DOCS_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DOCS_REPORT_PATH.write_text(report, encoding="utf-8")
+    print(f"✓ saved {DOCS_REPORT_PATH}\n")
     print(report)
     build_charts(datasets)
 

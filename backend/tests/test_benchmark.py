@@ -260,6 +260,7 @@ def test_the_report_is_written_even_without_matplotlib(report, tmp_path, monkeyp
                      "routellm_full": _arm(10, 10, 1.0, 600.0, 0.02, ["groq/llama-3.3-70b"])},
         }), encoding="utf-8")
     monkeypatch.setattr(report, "RESULTS_DIR", results)
+    monkeypatch.setattr(report, "DOCS_REPORT_PATH", tmp_path / "docs" / "benchmark-results.md")
     monkeypatch.setattr(report, "matplotlib", None)
     report.main()
     written = (results / "REPORT.md").read_text(encoding="utf-8")
@@ -277,3 +278,95 @@ def test_the_shipped_results_folder_stays_empty(tmp_path):
         f"results/ must contain only README.md until the owner runs the "
         f"benchmark, found: {shipped}"
     )
+
+
+# --------------------------------------------------------------------------
+# End to end over a mocked transport: one command -> docs/benchmark-results.md
+# --------------------------------------------------------------------------
+
+
+class _RouteFakeClient:
+    """Scripted stand-in for httpx.AsyncClient: every endpoint the benchmark
+    touches, zero network.
+
+    The gemini baseline answers healthy until the chaos inject fires and dies
+    while the outage is active — mirroring what real Chaos Mode does to the
+    forced naive arm, so ONE fake produces both scenarios of the table.
+    """
+
+    def __init__(self, chaos_state: dict):
+        self._chaos = chaos_state
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, **kwargs):
+        assert url.endswith("/api/v1/health")
+        return _FakeResp(200, {"components": {"database": "up", "redis": "up"}})
+
+    async def post(self, url, json=None, **kwargs):
+        if url.endswith("/api/v1/keys/generate"):
+            return _FakeResp(201, {"api_key": "rk_fake_benchmark_key"})
+        if url.endswith("/admin/chaos/inject"):
+            self._chaos["active"] = True
+            return _FakeResp(200, {"provider_name": json["provider_name"],
+                                   "expires_in_seconds": json["duration_seconds"]})
+        if url.endswith("/admin/chaos/clear"):
+            self._chaos["active"] = False
+            return _FakeResp(200, {})
+        assert url.endswith("/api/v1/route"), f"unexpected POST {url}"
+        forced_gemini_down = "force_provider" in json and self._chaos["active"]
+        return _FakeResp(200, {
+            "success": not forced_gemini_down,
+            "model_used": None if forced_gemini_down else (
+                "gemini/gemini-2.0-flash" if "force_provider" in json
+                else "groq/llama-3.3-70b"
+            ),
+            "tokens_used": 0 if forced_gemini_down else 10,
+            "result": "synthetic completion",
+            "request_id": "req-mocked",
+        })
+
+
+def test_one_command_end_to_end_over_a_mocked_transport(
+    runner, report, tmp_path, monkeypatch
+):
+    """run_benchmark.py --scenario all, with no network at all.
+
+    Both scenarios run through the scripted transport, the scenario files are
+    written, and the report lands in BOTH locations: benchmark/results/
+    REPORT.md and the repo-root docs/benchmark-results.md the README links.
+    """
+    chaos_state = {"active": False}
+    monkeypatch.setattr(
+        runner.httpx, "AsyncClient", lambda *a, **kw: _RouteFakeClient(chaos_state)
+    )
+    monkeypatch.setattr(runner, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(report, "RESULTS_DIR", tmp_path)
+    docs_report = tmp_path / "docs" / "benchmark-results.md"
+    monkeypatch.setattr(report, "DOCS_REPORT_PATH", docs_report)
+    # generate_report_only() does `import generate_report`: hand it the
+    # already-patched module instead of re-importing a clean copy.
+    monkeypatch.setitem(sys.modules, "generate_report", report)
+    monkeypatch.setattr(sys, "argv", ["run_benchmark.py"])
+
+    runner.main()  # default --scenario all: normal + chaos + the report
+
+    written = docs_report.read_text(encoding="utf-8")
+    assert "# Routtener Benchmark Report" in written
+    assert "**Generated:**" in written
+    assert datetime.now(timezone.utc).strftime("%Y-%m-%d") in written
+    # The documented table shape: header + the outage comparison row.
+    assert "| Scenario | Naive (single model) | Routtener |" in written
+    assert "| Normal — success rate | 100% | 100% |" in written
+    assert "| **Simulated outage — success rate** | **0%** | **100%** |" in written
+    # Models each arm actually used, as produced by the mocked transport.
+    assert "`gemini/gemini-2.0-flash`" in written
+    assert "`groq/llama-3.3-70b`" in written
+    # The numbers say where they came from — never invented.
+    assert "your" in written.lower()
+    # Same report in both locations.
+    assert (tmp_path / "REPORT.md").read_text(encoding="utf-8") == written

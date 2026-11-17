@@ -232,11 +232,16 @@ backend\.venv\Scripts\python.exe benchmark\run_benchmark.py
 backend/.venv/bin/python benchmark/run_benchmark.py
 ```
 
-It runs both scenarios (normal + chaos outage), then writes
-`benchmark/results/REPORT.md` — a Markdown results table with the date, the
-models each arm used, and the naive vs router success rates side by side.
-Details, options and prerequisites: [benchmark/README.md](benchmark/README.md).
-Demo-mode traffic is never included in benchmark runs.
+It runs both scenarios (normal + chaos outage), then writes the report in
+two places: `benchmark/results/REPORT.md` and
+`docs/benchmark-results.md` (the repo-root copy this section links to once
+you have run it — no benchmark numbers are committed to the repository). Each
+report is a Markdown table with the date, the models each arm used, and the
+naive vs router success rates side by side, under normal conditions and the
+Chaos-Mode simulated outage. Every number in it is produced by your run;
+nothing is sampled, estimated or copied. Details, options and prerequisites:
+[benchmark/README.md](benchmark/README.md). Demo-mode traffic is never
+included in benchmark runs.
 
 ---
 
