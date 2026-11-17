@@ -58,6 +58,20 @@ def evals_runner():
     return _load("evals_run_evals", "run_evals.py")
 
 
+@pytest.fixture(scope="module")
+def evals_harness():
+    return _load("evals_harness", "harness.py")
+
+
+@pytest.fixture(autouse=True)
+def _restore_structlog_after_each_test(evals_harness):
+    """The eval scripts silence the app's structlog globally; make sure no
+    test leaves it silenced for the rest of the suite (regression seen in
+    CI: tests/unit/test_local.py captures structlog stdout)."""
+    yield
+    evals_harness.restore_structlog()
+
+
 # --------------------------------------------------------------------------
 # E1: routing accuracy
 # --------------------------------------------------------------------------

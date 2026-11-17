@@ -261,19 +261,41 @@ def count_real_attempts(fallback_chain: list) -> int:
     return sum(1 for a in fallback_chain if a.error not in skip_errors)
 
 
+_SAVED_STRUCTLOG_CONFIG = None
+
+
 def silence_structlog() -> None:
     """Point the app's structlog output at the void.
 
     The app configures structlog to print JSON events to stdout (see
     app/utils/logger.py). The eval scenarios intentionally produce hundreds
     of expected failure events; without this the report drowns in them.
+
+    Saves the previous configuration so :func:`restore_structlog` can undo
+    it - required when this runs inside the pytest process, where later
+    tests capture structlog output on stdout.
     """
+    global _SAVED_STRUCTLOG_CONFIG
     import os
     import structlog
 
+    if _SAVED_STRUCTLOG_CONFIG is None:
+        _SAVED_STRUCTLOG_CONFIG = structlog.get_config()
     structlog.configure(
         logger_factory=structlog.PrintLoggerFactory(
             file=open(os.devnull, "w", encoding="utf-8")
         )
     )
     logging.getLogger().setLevel(logging.CRITICAL)
+
+
+def restore_structlog() -> None:
+    """Undo :func:`silence_structlog` (no-op if it was never called)."""
+    global _SAVED_STRUCTLOG_CONFIG
+    if _SAVED_STRUCTLOG_CONFIG is None:
+        return
+    import structlog
+
+    structlog.configure(**_SAVED_STRUCTLOG_CONFIG)
+    _SAVED_STRUCTLOG_CONFIG = None
+    logging.getLogger().setLevel(logging.INFO)

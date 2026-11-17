@@ -179,6 +179,11 @@ def main() -> None:
 
     blob = run_all(args.n, args.n_overhead)
     report = render_report(blob)
+    # Undo the log silencing so an embedded caller (tests) keeps a working
+    # logger; harmless in CLI use where the process exits anyway.
+    from harness import restore_structlog
+
+    restore_structlog()
 
     if args.json:
         print(json.dumps(blob, indent=2))
