@@ -300,10 +300,24 @@ sandbox holds no provider credentials**):
    features/removals.)
 2. **Pin-validation charset layer had no direct test** — masked by the
    discovered-list layer. Fixed this audit (mutation-7 test).
-3. **Coverage under-reporting for `provider_keys_routes.py`** — tool artifact:
-   executed handler lines unrecorded + phantom line numbers (1981/2287 on a
-   656-line file) recorded under this filename; direct calls record correctly;
-   Python 3.12 + httpx.ASGITransport. All such regions have passing tests.
+3. **Coverage under-reporting for `provider_keys_routes.py`** — follow-up T5
+   tested the two hypotheses the owner raised: there was NO coverage config
+   (`.coveragerc` now added with `concurrency = thread`; `parallel` stays off so
+   `.coverage` is always overwritten, never merged with stale data — confirmed
+   via `coverage debug config`: `concurrency: thread`, `parallel: False`, and the
+   stale `.coverage` was deleted before rerunning). The report is UNCHANGED
+   (66%). Four facts pin the artifact on the tracer, not the tests: (a) no
+   version of the file in any ref ever exceeded 569 lines (`git log --all`
+   line-count dump), yet the data file records lines up to 2287 under this
+   filename; (b) `gc` scan finds no live phantom code objects after a run;
+   (c) direct in-process handler calls DO record (lines 108–110 and 576–578/580
+   recorded in probe 3); (d) three NEW endpoint tests through
+   `httpx.ASGITransport` (`tests/integration/test_provider_keys_endpoints.py`)
+   execute exactly the reported-missed lines — list happy path (109–110), DELETE
+   cascade with seeded pin+status rows (159–178), diagnostics unknown-provider
+   404 (579) — and the report STILL marks them missed in the same data file.
+   The reported number is therefore understood as a floor; every region has
+   named passing tests.
 4. **Frontend components/pages without tests** — listed in A1.
 5. **`joblib` missing in fresh dev venvs** — one extra skip on 3.11/3.13
    (`test_ml_classifier.py:87`); installing `joblib` (in requirements or docs)
