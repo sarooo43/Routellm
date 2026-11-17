@@ -323,3 +323,98 @@ sandbox holds no provider credentials**):
    (`test_ml_classifier.py:87`); installing `joblib` (in requirements or docs)
    would remove the 3.11/3.13-vs-3.12 count difference.
 6. **Python 3.14 not tested** — not installed in the audit sandbox.
+
+---
+
+## Follow-up (2026-11-18): timing contradiction, skip accounting, cloud refs
+
+### T2 — why the old numbers (2.8 s / 23 s) and the audit numbers (706 s / 227–318 s) differ
+
+`pytest.ini` itself documents the origin of the small numbers: the slow
+marker comment says "it was **2.8 s of a 28 s suite on the machine this was
+measured on**". Those numbers come from the author's environment — a
+different machine and, crucially, a SHALLOW git history (the history secret
+scan is O(history depth); on a fresh 100+-commit clone with full depth it
+walks hundreds of MB of blobs). The audit machine measured, same code:
+
+- `pytest -q --durations=25` (default suite, full-depth clone, 3.12):
+  `815 passed, 15 skipped, 2 deselected, 1 warning in 358.34s`, slowest:
+  `51.89s test_check_secrets.py::test_the_repository_has_no_credentials_in_the_tree`,
+  `44.91s test_repository_hygiene.py::test_no_dangling_references_to_the_old_docs_paths`,
+  `35.82s test_deploy_scripts.py::test_qualified_refspec_push_succeeds`,
+  `9.03s test_routes.py::test_rate_limit_kicks_in_after_31_requests`.
+- `pytest -m slow --durations=10`:
+  `224.92s test_history_scan_is_clean_or_reports_nothing_actionable`,
+  `218.39s test_repository_scan_never_raises_on_binary_history`,
+  `2 passed, 830 deselected in 485.66s`.
+
+What differs between the environments (**ASSUMED from evidence in repo**):
+machine speed ( Codespace vs this Windows box), git history depth (shallow
+checkout vs `fetch-depth: 0` full object database), cold pip/npm caches,
+and whether `.venv` was already built. Which number applies where: the
+**706 s slow + ~4–6 min default** numbers apply to a normal contributor
+laptop cloning the repo at full depth; CI runs the history scan with
+`fetch-depth: 0` too, so CI behaves like the audit numbers, not like the
+2.8 s/28 s numbers. CI job durations: recorded from the PR run URL in the
+final report of this follow-up.
+
+### T3 — skip accounting (11 → 15/16)
+
+The default suite now reports **15 skipped + 2 deselected** (3.12) and
+**16 skipped + 2 deselected** (3.11/3.13 fresh venvs). All mechanisms,
+with what changed in PR #16 (`git grep` against `136fae0` and `35898f9`):
+
+| Skip site | Reason | Since #16? |
+|---|---|---|
+| test_deploy_scripts.py:213 | bash here is the WSL stub… (win32) | existed before |
+| test_hf_requirements.py:121 | set ROUTELLM_CHECK_PYPI=1 to query PyPI | existed before (opt-in; verified passing) |
+| unit/test_local.py:140 | POSIX permission bits only | existed before |
+| test_hf_app.py ×9 | could not import 'gradio'/'spaces' | existed before (importorskip sites unchanged) |
+| unit/test_ml_classifier.py:87 | could not import 'joblib' | existed before |
+| test_run_launcher.py:141 | Windows SO_REUSEADDR… Linux in production | **NEW in #16** |
+| test_hf_app.py:229, :298 | Windows SO_REUSEADDR… Linux deploy host | **NEW in #16** |
+| integration/test_deployment_resilience.py:378 | WinError 10106 (win32 socket) | **NEW in #16** |
+| (2 history-scan tests) | now DESELECTED by `addopts = -m "not slow"`, run as the dedicated CI `-m slow` job | **NEW in #16** (pre-#16 pytest.ini had no addopts) |
+
+The 16th skip (3.11/3.13 only) is the same `joblib` importorskip — the
+fresh audit venvs had not installed it. **joblib is intentionally
+optional**: `backend/requirements-ml.txt` says "OPTIONAL — the app runs
+fine without these"; `ml_classifier.py` imports it lazily so the app must
+start cleanly without it; and the no-joblib failure path ALREADY has a
+test that runs without joblib
+(`test_load_missing_ml_deps_is_graceful` — simulates `ImportError`, runs
+in CI). The corrupt-pickle test (`:87`) is the only one that needs the
+real joblib and importorskips in CI — documented as intentionally optional,
+no install change made.
+
+### T6 — origin/cleanup/v0.1.0 and cloud leftovers
+
+`git log origin/main..origin/cleanup/v0.1.0 --oneline` (**OBSERVED**):
+
+```
+a15fe15 T3 follow-up: hygiene tests assert the new no-shipped-numbers contract
+7918fee T4: repo hygiene - changelog, env examples, no release tag
+842e1eb T3: one-command benchmark, report with date and models used
+ac48020 T2: remove cloud leftovers from CI, archive the worker code
+2489f2c T1: stale build detection - banner when bundle and backend commits differ
+```
+
+`git merge-base --is-ancestor origin/cleanup/v0.1.0 origin/main` → exit 1:
+**NOT merged into main.** Its commit `ac48020` is exactly the "remove cloud
+leftovers from CI" change, which is why main still carries them.
+
+Still ACTIVE on main (reported, nothing removed):
+
+- `.github/workflows/ci.yml`: job `hf-space-boot` (lines 165–280; boots
+  `hf_app.py`, probes public paths), job `cloudflare-worker` (289–304;
+  `npm run test:cloudflare`), step "Verify the Hugging Face entrypoint
+  imports" (91–92), step "Validate Wrangler deploy config" (309).
+- `.github/workflows/deploy-hf.yml`: full HF Space deploy pipeline
+  (inert without the `HF_TOKEN` secret; pushes to
+  `huggingface.co/spaces/saboornotgonna/routellm`).
+- `.github/workflows/keepalive.yml`: "Keep the Space awake"
+  (targets `https://saboornotgonna-routellm.hf.space`).
+- `docs/testing.md`: documents the gradio/spaces skips as Space-runtime
+  only; `docs/deploy/HUGGINGFACE_AND_MANAGED.md` referenced by the deploy
+  workflow. A `cloudflare/` directory exists at the repo root (archived on
+  the cleanup branch).
