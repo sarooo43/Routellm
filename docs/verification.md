@@ -387,6 +387,45 @@ in CI). The corrupt-pickle test (`:87`) is the only one that needs the
 real joblib and importorskips in CI — documented as intentionally optional,
 no install change made.
 
+CI runs for this PR (**OBSERVED** via the GitHub API):
+
+- Run #48 @ `ba7bb07` — https://github.com/sarooo43/Routellm/actions/runs/44176824524
+  — `completed / success`, 8/8 jobs green: No credentials 11s, frontend 42s,
+  hf-space-boot 50s, cloudflare-worker 28s, Slow tests (history depth) 35s,
+  backend-tests 3.13 44s, 3.11 79s, 3.12 89s.
+- Run #50 @ `2295d01` — https://github.com/sarooo43/Routellm/actions/runs/44177691849
+  — `completed / success`, 8/8 jobs green (durations above unchanged in kind:
+  backend 3.12 job 79s incl. install, suite `832 passed, 11 skipped, 2
+  deselected, 227 warnings in 42.29s`).
+
+CI backend suite is ~4–7× faster than the audit Windows box (42–50 s vs
+227–358 s; the full-depth history scan `2 passed, 833 deselected in 10.52s`
+vs 218–225 s per test locally) — CI, not the audit laptop, is the reference
+for contributor timing; the 2.8 s/28 s figures in pytest.ini's comment were
+measured on the author's machine with a shallower history.
+
+**Skip count and reasons printed BY CI** (run #50, `pytest -rs` added to the
+coverage job in `2295d01`, 3.12 job log, verbatim):
+
+```
+SKIPPED [1] tests/test_hf_app.py:128: could not import 'gradio': No module named 'gradio'
+SKIPPED [1] tests/test_hf_app.py:137: could not import 'gradio': No module named 'gradio'
+SKIPPED [1] tests/test_hf_app.py:162: could not import 'gradio': No module named 'gradio'
+SKIPPED [1] tests/test_hf_app.py:184: could not import 'gradio': No module named 'gradio'
+SKIPPED [1] tests/test_hf_app.py:532: could not import 'spaces': No module named 'spaces'
+SKIPPED [1] tests/test_hf_app.py:561: could not import 'spaces': No module named 'spaces'
+SKIPPED [1] tests/test_hf_app.py:577: could not import 'spaces': No module named 'spaces'
+SKIPPED [1] tests/test_hf_app.py:595: could not import 'spaces': No module named 'spaces'
+SKIPPED [1] tests/test_hf_app.py:646: could not import 'gradio': No module named 'gradio'
+SKIPPED [1] tests/test_hf_requirements.py:121: set ROUTELLM_CHECK_PYPI=1 to query PyPI
+SKIPPED [1] tests/unit/test_ml_classifier.py:87: could not import 'joblib': No module named 'joblib'
+========= 832 passed, 11 skipped, 2 deselected, 227 warnings in 42.29s =========
+```
+
+On Linux CI the four win32 SO_REUSEADDR skip sites and the POSIX/deploy-script
+tests RUN instead of skipping (843 collected vs 833 selected on Windows), which
+is why CI counts 11 while Windows counts 15/16.
+
 ### T6 — origin/cleanup/v0.1.0 and cloud leftovers
 
 `git log origin/main..origin/cleanup/v0.1.0 --oneline` (**OBSERVED**):
