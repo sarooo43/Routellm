@@ -100,12 +100,26 @@ The dashboard needs a build. Without Node, the launcher runs the API only and
 
 ### Then, in the app
 
-1. **Providers** → paste a free key (Groq, Google AI Studio or DeepSeek — links
+1. **Providers** — paste a free key (Groq, Google AI Studio or DeepSeek — links
    are on the page). Keys are encrypted at rest and win over environment
    variables.
-2. **Explorer** → send a prompt and watch the routing decision.
-3. Leave it alone for demo mode: with no key configured, a **labelled MOCK**
+2. **Run diagnostics** — on the Explorer page, one click per stored provider
+   key probes that provider's real model list over the wire and reports what
+   works, what is rate-limited and what is denied. Replaces all manual
+   terminal curl-ing; the report is redacted end to end.
+3. **Explorer** — send a prompt and watch the routing decision.
+4. Leave it alone for demo mode: with no key configured, a **labelled MOCK**
    provider answers so the UI is explorable without spending anything.
+
+> **Two tips worth knowing:**
+>
+> - **After a `git pull`, restart `python run.py`.** It rebuilds the dashboard
+>   when frontend sources changed. If you keep an old tab open anyway, the app
+>   itself shows a stale-build banner telling you to restart.
+> - **GitHub Codespaces work out of the box.** The forwarded
+>   `https://<codespace>-<port>.app.github.dev` URL is allow-listed via
+>   `CODESPACE_NAME`; if a proxy still rewrites the Host header, the
+>   Troubleshooting section covers `Invalid Host header`.
 
 ### Use it from code
 
@@ -170,6 +184,22 @@ flowchart LR
 - **Chaos mode**: simulate a provider outage and watch the failover happen.
 - **Everything optional**: SQLite or Postgres, in-process store or Redis,
   local only or containerised.
+
+---
+
+## Screenshots
+
+<!-- OWNER TASK: add the four PNGs listed below to docs/images/ before
+     tagging v0.1.0. The references are slots — the image files do not exist
+     in the repository yet, so this section will render broken-image icons
+     until they are committed. Nothing here claims a measured result; the
+     numbers story lives in Benchmarks. -->
+
+| Dashboard overview | Model Explorer |
+|---|---|
+| ![Dashboard overview: KPIs, live request feed and provider health](docs/images/overview.png) | ![Model Explorer: routing decision, per-model statuses and Run diagnostics](docs/images/explorer.png) |
+| **Failover chain** | **Diagnostics response** |
+| ![Failover: the recorded attempt chain after a simulated provider outage](docs/images/failover.png) | ![Diagnostics response: the redacted wire report for one stored key](docs/images/response.png) |
 
 ---
 
@@ -404,6 +434,20 @@ first. Nothing else from an error message is ever used. If every candidate
 fails, check the Providers page → the model list shows each model's status
 (`denied` / `rate_limited` / `works`), and a 401 is always reported as an
 auth problem, never as `model_not_found`.
+
+---
+
+## Why I built this
+
+<!-- OWNER TASK: replace this TODO with your own story, in your own voice,
+     before tagging v0.1.0. Suggested shape: the itch (a provider dying
+     mid-task, free-tier keys expiring, juggling three dashboards), what you
+     wanted instead (one local endpoint that reroutes by itself and shows
+     you why), and what surprised you while building it. Keep it honest —
+     no performance claims in this section; measured numbers, if any, live
+     in Benchmarks. -->
+
+TODO: owner's own words go here.
 
 ---
 
