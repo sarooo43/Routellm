@@ -353,6 +353,6 @@ async def test_health_returns_ok_shape(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] in {"ok", "degraded"}
-    assert body["service"] == "routellm-backend"
+    assert body["service"] == "routtener-backend"
     assert "redis" in body["components"]
     assert "database" in body["components"]

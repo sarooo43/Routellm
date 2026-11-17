@@ -119,12 +119,16 @@ async def health_payload() -> tuple[dict[str, Any], int]:
     status = "degraded" if any_down else "ok"
 
     from app import __version__ as package_version
+    from app.build_info import build_info
     from app.main import app_uptime_seconds
 
     payload = {
         "status": status,
-        "service": "routellm-backend",
+        "service": "routtener-backend",
         "version": package_version,
+        # T1 stale-build detection: the commit this process runs from, so the
+        # dashboard can flag a frontend bundle built from a different commit.
+        "build": build_info(),
         "uptime_s": app_uptime_seconds(),
         # Flat aliases for simple monitors (`db`/`redis` are what the deploy
         # smoke test and most uptime checkers look for).

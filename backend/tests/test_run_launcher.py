@@ -217,13 +217,14 @@ def test_requirements_stamp_tracks_the_pinned_file(launcher):
 
 
 def test_backend_env_defaults_to_loopback_and_the_data_dir(launcher, monkeypatch):
+    monkeypatch.delenv("ROUTTENER_DATA_DIR", raising=False)
     monkeypatch.delenv("ROUTELLM_DATA_DIR", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     env = launcher.backend_env(8000, "127.0.0.1", dev=False)
     assert env["PORT"] == "8000"
     assert env["HOST"] == "127.0.0.1"
     assert env["PYTHONPATH"] == str(launcher.BACKEND_DIR)
-    assert env["ROUTELLM_DATA_DIR"].endswith("data")
+    assert env["ROUTTENER_DATA_DIR"].endswith("data")
     assert "VITE_DEV_SERVER" not in env
 
 
@@ -241,3 +242,108 @@ def test_backend_env_never_invents_secrets(launcher):
     # Whatever is already in the parent environment is passed through; the
     # launcher itself must not add any of these.
     assert invented <= set(__import__("os").environ)
+
+
+# --------------------------------------------------------------------------
+# Stale-build detection (T1): sources newer than dist must trigger a rebuild
+# --------------------------------------------------------------------------
+
+
+def _make_frontend(tmp_path, monkeypatch, launcher):
+    """A fake frontend tree: one source file and one built bundle."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    source = src_dir / "App.tsx"
+    source.write_text("export const x = 1\n", encoding="utf-8")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    bundle = dist / "index.html"
+    bundle.write_text("<html></html>\n", encoding="utf-8")
+    # Bundling dist/index.html writes AFTER the source, as a real build does:
+    # this base state is "fresh". Individual tests then age one side.
+    bundle_time = source.stat().st_mtime + 10
+    import os
+
+    os.utime(bundle, (bundle_time, bundle_time))
+    monkeypatch.setattr(launcher, "FRONTEND_DIR", tmp_path)
+    monkeypatch.setattr(launcher, "DIST_DIR", dist)
+    return source, bundle
+
+
+def test_a_fresh_build_is_not_stale(launcher, tmp_path, monkeypatch):
+    _make_frontend(tmp_path, monkeypatch, launcher)
+    assert launcher.frontend_is_stale() is False
+
+
+def test_a_source_newer_than_the_bundle_is_stale(launcher, tmp_path, monkeypatch):
+    import os
+
+    source, _bundle = _make_frontend(tmp_path, monkeypatch, launcher)
+    future = source.stat().st_mtime + 100
+    os.utime(source, (future, future))
+    assert launcher.frontend_is_stale() is True
+
+
+def test_a_nested_source_file_counts_too(launcher, tmp_path, monkeypatch):
+    import os
+
+    _source, _bundle = _make_frontend(tmp_path, monkeypatch, launcher)
+    nested = tmp_path / "src" / "deep" / "edit.tsx"
+    nested.parent.mkdir()
+    nested.write_text("export const y = 2\n", encoding="utf-8")
+    bundle_mtime = (tmp_path / "dist" / "index.html").stat().st_mtime
+    os.utime(nested, (bundle_mtime + 5, bundle_mtime + 5))
+    assert launcher.frontend_is_stale() is True
+
+
+def test_a_missing_bundle_is_reported_missing_not_stale(launcher, tmp_path, monkeypatch):
+    _source, _bundle = _make_frontend(tmp_path, monkeypatch, launcher)
+    (tmp_path / "dist" / "index.html").unlink()
+    assert launcher.frontend_is_stale() is False
+
+
+def test_an_untouchable_source_reads_as_not_stale(launcher, tmp_path, monkeypatch):
+    """Fail-soft: a stat error must not loop the builder (T1 contract)."""
+    import pathlib
+
+    _source, _bundle = _make_frontend(tmp_path, monkeypatch, launcher)
+    monkeypatch.setattr(
+        pathlib.Path,
+        "stat",
+        lambda self, *a, **k: (_ for _ in ()).throw(OSError("locked")),
+    )
+    assert launcher.frontend_is_stale() is False
+
+
+def test_ensure_frontend_rebuilds_when_stale(launcher, tmp_path, monkeypatch, capsys):
+    """A stale dist must not survive a restart just because it exists."""
+    import os
+
+    source, _bundle = _make_frontend(tmp_path, monkeypatch, launcher)
+    future = source.stat().st_mtime + 100
+    os.utime(source, (future, future))
+
+    monkeypatch.setattr(launcher, "dist_is_usable", lambda: True)
+    monkeypatch.setattr(launcher, "node_version", lambda: (22, 0, 0))
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: "npm")
+    calls = []
+    monkeypatch.setattr(
+        launcher, "_run", lambda cmd, what, cwd: calls.append(cmd)
+    )
+
+    result = launcher.ensure_frontend()
+    assert result == tmp_path / "dist"
+    # node_modules is absent in the fake tree, so ci runs first; the build
+    # itself must be among the calls (that is the stale-rebuild proof).
+    assert any("build" in call[-1] for call in calls)
+    assert "rebuilding" in capsys.readouterr().out
+
+
+def test_ensure_frontend_skips_the_rebuild_when_fresh(launcher, tmp_path, monkeypatch):
+    _make_frontend(tmp_path, monkeypatch, launcher)
+    monkeypatch.setattr(launcher, "dist_is_usable", lambda: True)
+    calls = []
+    monkeypatch.setattr(launcher, "_run", lambda cmd, what, cwd: calls.append(cmd))
+    result = launcher.ensure_frontend()
+    assert result == tmp_path / "dist"
+    assert calls == []

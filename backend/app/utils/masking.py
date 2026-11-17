@@ -15,7 +15,7 @@ _CRED_IN_URL_RE = re.compile(r"([a-z][a-z0-9+.\-]*://)([^:/@\s]+):([^@\s/]+)@")
 
 # Token-shaped prefixes: scheme marker + a long opaque tail.
 _TOKEN_PATTERNS = (
-    re.compile(r"\b(rk_[A-Za-z0-9_\-]{4,})"),  # RouteLLM keys
+    re.compile(r"\b(rk_[A-Za-z0-9_\-]{4,})"),  # Routtener keys (prefix unchanged)
     re.compile(r"\b(hf_[A-Za-z0-9_\-]{4,})"),  # HuggingFace tokens
     re.compile(r"\b(gsk_[A-Za-z0-9_\-]{4,})"),  # Groq
     re.compile(r"\b(AIza[A-Za-z0-9_\-]{10,})"),  # Google

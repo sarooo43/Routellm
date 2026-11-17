@@ -1,4 +1,4 @@
-# RouteLLM — optional single-service container.
+# Routtener - optional single-service container.
 #
 # The supported local path needs no Docker at all:
 #
@@ -36,7 +36,7 @@ services:
       - routellm-data:/data
     environment:
       # Uncomment to pin configuration instead of using backend/.env:
-      # ROUTELLM_DATA_DIR: /data
+      # ROUTTENER_DATA_DIR: /data
       # DATABASE_URL: postgresql://user:password@host:5432/routellm
       # REDIS_URL: redis://host:6379/0
       # REQUIRE_API_KEY: "true"

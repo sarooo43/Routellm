@@ -57,7 +57,7 @@ not return pricing. If a provider starts returning it, that field is where it
 goes. Capture mode exists to replace the estimates with observed shapes:
 
 ```bash
-ROUTELLM_CAPTURE_PROVIDER_SHAPES=true python run.py
+ROUTTENER_CAPTURE_PROVIDER_SHAPES=true python run.py
 # then use the Providers page; sanitized shapes land in
 # data/provider_shapes/<provider>.json (gitignored, never contains a key)
 ```

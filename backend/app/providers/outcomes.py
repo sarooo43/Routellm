@@ -82,22 +82,6 @@ def redact(text: str) -> str:
     return cleaned
 
 
-def scrub(text: str, *secrets: Optional[str]) -> str:
-    """Redact the EXACT stored key value(s) plus every key-shaped pattern.
-
-    T1: diagnostics copy the provider's words into a response body, a log
-    and a clipboard report. The stored key itself rarely matches the
-    generic patterns (prefixes vary), so it is removed first, verbatim;
-    then redact() sweeps the standard shapes (AIza…, gsk_…, sk-…, Bearer…,
-    key=… query echoes).
-    """
-    cleaned = text or ""
-    for secret in secrets:
-        if secret:
-            cleaned = cleaned.replace(secret, "***")
-    return redact(cleaned)
-
-
 def snippet(response) -> str:
     """First ~1000 chars of the body, redacted and whitespace-collapsed.
 

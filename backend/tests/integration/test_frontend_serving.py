@@ -137,7 +137,7 @@ async def test_client_side_routes_render_the_app(dist):
     )
     assert response.status_code == 200
     assert "<div id='root'>" in response.text
-    assert response.headers["x-routellm-frontend"] == "fallback"
+    assert response.headers["x-routtener-frontend"] == "fallback"
 
 
 async def test_unknown_api_path_without_html_accept_stays_json(dist):
@@ -199,7 +199,7 @@ async def test_no_build_gets_a_status_page_instead_of_a_bare_404(monkeypatch, tm
     install_root_status_page(test_app)
     response = await _get(test_app, "/")
     assert response.status_code == 200
-    assert "RouteLLM API is running" in response.text
+    assert "Routtener API is running" in response.text
     assert "npm run build" in response.text
     assert "/docs" in response.text
 
@@ -215,4 +215,4 @@ async def test_status_page_replaces_any_existing_root_route():
 
     install_root_status_page(test_app)
     response = await _get(test_app, "/")
-    assert "RouteLLM API is running" in response.text
+    assert "Routtener API is running" in response.text

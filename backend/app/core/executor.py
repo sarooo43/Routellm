@@ -426,7 +426,7 @@ async def _execute_forced_single_provider(
     max_tokens: Optional[int] = None,
     provider_api_keys: Optional[dict[str, str]] = None,
 ) -> ExecutionResult:
-    """The naive alternative RouteLLM is benchmarked against: one hardcoded
+    """The naive alternative Routtener is benchmarked against: one hardcoded
     model, zero resilience infrastructure — no scoring/ranking, no quota or
     circuit pre-flight gates, no retry/fallback, and (deliberately) no
     breaker/quota side effects since a naive deployment has neither.
@@ -651,7 +651,7 @@ async def execute_with_fallback(
     chain but do not consume the max_fallbacks budget — only real provider
     calls count as attempts.
 
-    api_key_id (T3): the calling RouteLLM key's DB id, when known. Walks
+    api_key_id (T3): the calling Routtener key's DB id, when known. Walks
     persist per-(key, provider, model) statuses under it, so a restart keeps
     the last-known-good model and the 24h denied set instead of re-learning.
 
@@ -662,12 +662,12 @@ async def execute_with_fallback(
     temperature/max_tokens are optional pass-through generation settings;
     leaving them unset preserves each provider's existing defaults.
 
-    provider_api_keys is the calling RouteLLM key's decrypted BYOK mapping.
+    provider_api_keys is the calling Routtener key's decrypted BYOK mapping.
     When non-empty, routing is restricted to those providers and each attempt
     receives its own ``provider_api_key`` kwarg. When empty/None, legacy
     operator/demo behavior is preserved (providers read settings.*_API_KEY).
 
-    provider_models is the calling RouteLLM key's pinned model per provider
+    provider_models is the calling Routtener key's pinned model per provider
     (None = Auto). Routing precedence: pinned model, then the provider's
     .env model override, then Auto (candidate walking by rank).
     """

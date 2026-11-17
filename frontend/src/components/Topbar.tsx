@@ -1,5 +1,6 @@
 import { Menu } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
+import { APP_SHORT_NAME } from '../appInfo'
 import { ConnectionStatus } from './ConnectionStatus'
 import { findNavItem } from './navigation'
 
@@ -28,7 +29,7 @@ export function Topbar({ onMobileMenuOpen, mobileMenuOpen }: TopbarProps) {
 
         <div className="min-w-0">
           <p className="hidden text-[10px] font-semibold uppercase tracking-[0.22em] text-text-secondary/60 sm:block">
-            RouteLLM / {current?.shortLabel ?? 'Dashboard'}
+            {APP_SHORT_NAME} / {current?.shortLabel ?? 'Dashboard'}
           </p>
           <h1 className="truncate text-base font-semibold tracking-tight text-text-primary sm:text-lg">
             {current?.label ?? 'Dashboard'}

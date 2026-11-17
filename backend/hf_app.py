@@ -63,7 +63,8 @@ SdkMode = Literal["gradio", "plain"]
 
 #: How long to wait for 7860 to become bindable before giving up. Hugging Face
 #: injects this as a variable; the default covers a slow ZeroGPU handshake.
-PORT_WAIT_ENV = "ROUTELLM_PORT_WAIT_S"
+PORT_WAIT_ENV = "ROUTTENER_PORT_WAIT_S"  # legacy ROUTELLM_PORT_WAIT_S also accepted
+PORT_WAIT_ENV_LEGACY = "ROUTELLM_PORT_WAIT_S"
 DEFAULT_PORT_WAIT_S = 20.0
 #: Matches uvicorn's default backlog; asyncio re-listens when it adopts the socket.
 LISTEN_BACKLOG = 2048
@@ -85,9 +86,9 @@ def build_status_ui():
     """
     import gradio as gr
 
-    with gr.Blocks(title="RouteLLM API") as ui:
+    with gr.Blocks(title="Routtener API") as ui:
         gr.Markdown(
-            "# RouteLLM API is running\n"
+            "# Routtener API is running\n"
             "The routing gateway for this Space is live.\n\n"
             "- [Interactive API docs](/docs)\n"
             "- [Health & dependency status](/health)\n"
@@ -193,7 +194,8 @@ def configure_app(mode: SdkMode = "gradio", target_app: Optional[FastAPI] = None
 
 def _resolve_port_wait() -> float:
     """Grace period (seconds) to wait for the port, from the environment."""
-    raw = os.environ.get(PORT_WAIT_ENV, "").strip()
+    raw = os.environ.get(PORT_WAIT_ENV) or os.environ.get(PORT_WAIT_ENV_LEGACY, "")
+    raw = raw.strip()
     if raw:
         try:
             return max(0.0, float(raw))

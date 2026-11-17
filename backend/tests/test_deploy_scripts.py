@@ -139,7 +139,7 @@ def _git(*args, cwd):
 
 @pytest.fixture()
 def workspace(tmp_path):
-    """A minimal repo shaped like RouteLLM (backend/ + scripts/), plus a bare
+    """A minimal repo shaped like Routtener (backend/ + scripts/), plus a bare
     'Space' to push into."""
     repo = tmp_path / "repo"
     repo.mkdir()

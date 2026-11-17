@@ -1009,7 +1009,8 @@ model_catalog = ModelCatalog()
 def _capture_provider_shape(provider: str, kind: str, response, data=None) -> None:
     """Append a sanitized shape sample to data/provider_shapes/<provider>.json.
 
-    Enabled only by ROUTELLM_CAPTURE_PROVIDER_SHAPES=true. Writes FIELD NAMES
+    Enabled only by ROUTTENER_CAPTURE_PROVIDER_SHAPES=true (legacy
+    ROUTELLM_CAPTURE_PROVIDER_SHAPES also accepted). Writes FIELD NAMES
     plus a truncated, key-REDACTED sample of the body so an operator can send
     us the real wire shape without sharing a key. Every write is best-effort:
     a missing or read-only data directory simply disables the capture. Tested

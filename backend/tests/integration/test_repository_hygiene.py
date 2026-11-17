@@ -81,8 +81,8 @@ def test_upstream_disclaimer_is_stated_in_both_languages():
 def test_app_name_constant_is_the_declared_one():
     from app.identity import APP_NAME, APP_SHORT_NAME
 
-    assert APP_NAME == "RouteLLM Gateway"
-    assert APP_SHORT_NAME == "RouteLLM"
+    assert APP_NAME == "Routtener Gateway"
+    assert APP_SHORT_NAME == "Routtener"
 
 
 def test_readme_disclaims_affiliation():
@@ -97,23 +97,30 @@ def test_readme_disclaims_affiliation():
 
 
 def test_readme_does_not_claim_unmeasured_benchmark_numbers():
-    """The benchmark table is a placeholder; no percentage may be presented."""
+    """The repo ships no benchmark numbers at all: the section claims none.
+
+    Stronger than the old placeholder rule: since T3 the results folder is
+    empty and the README's Benchmarks section must not contain a single
+    percentage — every number in the repo is produced by the owner's own
+    run, never pre-written.
+    """
     readme = _read("README.md")
     benchmark_section = readme.split("## Benchmarks", 1)[1].split("## ", 1)[0]
-    assert "Placeholder" in benchmark_section
-    # A number is allowed only when it is being disowned, never presented as a
-    # result: every mention of the 0% artefact must sit next to the caveat.
-    for match in re.finditer(r"\d{1,3}(?:\.\d+)?\s?%", benchmark_section):
-        window = benchmark_section[max(0, match.start() - 400): match.end() + 400]
-        assert "must not be quoted" in window or "without" in window.lower(), (
-            f"benchmark number without its caveat: {match.group(0)!r}"
-        )
+    assert "No numbers are claimed" in benchmark_section
+    percentages = re.findall(r"\d{1,3}(?:\.\d+)?\s?%", benchmark_section)
+    assert not percentages, (
+        f"the Benchmarks section presents numbers it cannot have measured: "
+        f"{percentages}"
+    )
 
 
-def test_readme_marks_the_committed_benchmark_report_as_unusable():
-    """The committed REPORT.md is a zero-credential run; never quote it."""
+def test_readme_points_the_numbers_at_the_owners_own_run():
+    """The README must route benchmark claims to a real, local run."""
     readme = _read("README.md")
-    assert "must not be quoted" in readme
+    benchmark_section = readme.split("## Benchmarks", 1)[1].split("## ", 1)[0]
+    assert "run_benchmark.py" in benchmark_section
+    assert "your own" in benchmark_section.lower()
+    assert "benchmark/README.md" in benchmark_section
 
 
 def test_demo_assets_are_not_a_broken_image():

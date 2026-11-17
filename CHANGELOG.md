@@ -5,15 +5,42 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-> **Name:** RouteLLM Gateway is an independent project. It is not affiliated
-> with LMSYS RouteLLM, the routing-model research project of the same name.
+> **Name:** Routtener (previously RouteLLM Gateway) is an independent project.
+> It is not affiliated with LMSYS RouteLLM, the routing-model research project
+> whose name this project previously shared.
 
 ---
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed the project RouteLLM → Routtener.** Display name, dashboard title
+  and header, OpenAPI title, launcher banner, health `service` field, release
+  archive name, and docs. Compatibility surfaces deliberately unchanged so
+  existing installs keep working:
+  - the `routellm.db` SQLite filename, `encryption.key`, the `./data`
+    directory, all DB tables/columns, and the OS user-data directory name —
+    a pre-rename data directory decrypts and serves unchanged;
+  - `ROUTELLM_*` environment variables keep working as a documented fallback;
+    the new primary prefix is `ROUTTENER_*` (e.g. `ROUTTENER_DATA_DIR`,
+    `ROUTTENER_CAPTURE_PROVIDER_SHAPES`), and the new one wins if both are set;
+  - gateway API keys: the `rk_` key prefix, generation and the hash-based
+    authentication path are unchanged, so every existing key still
+    authenticates;
+  - the OpenAI-compatible `routellm-auto` model id, the
+    `x_routellm_metadata` response field, the `x-routellm-source` Worker
+    proxy header, and the browser localStorage keys.
+- Cloud CI jobs (`hf-space-boot`, `cloudflare-worker`) and `docs/deploy`
+  contents are intentionally left as they were on main.
+
 ### Added
 
+- **The benchmark report also lands in `docs/benchmark-results.md`.** The one
+  benchmark command now writes its Markdown report to
+  `benchmark/results/REPORT.md` AND the repo-root docs location the README
+  links to. Both are produced by your own run; no benchmark numbers are
+  committed to the repository.
 - **One-command local run.** `python run.py` (also `./start.sh`,
   `.\start.ps1`) creates a virtualenv, installs dependencies, builds the
   dashboard or uses a prebuilt one, creates the data directory, and serves the
@@ -48,6 +75,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   built dashboard, `/data` volume, non-root), plus a release workflow on `v*`
   tags that zips the backend with a prebuilt `frontend/dist`, smoke-tests the
   archive, and attaches it.
+- **Stale-build detection.** `/health` (and `/api/v1/health`) now report the
+  backend's git commit and commit time (`build.git_commit` /
+  `build.git_commit_time`, fail-soft where git is absent); the dashboard is
+  stamped with the commit its bundle was built from and shows both in the
+  footer. When the two commits differ, a banner names both and says to
+  restart `python run.py` — no more debugging an old bundle as if the app
+  were broken.
+- **Stale-dashboard rebuild.** `python run.py` now rebuilds the dashboard when
+  `frontend/` sources are newer than `dist/`, so an outdated bundle cannot
+  survive a restart just because a build exists.
+- **A benchmark the owner can run.** One command
+  (`backend/.venv/Scripts/python.exe benchmark/run_benchmark.py`) runs the
+  naive-single-model baseline and the full router over the same 37 prompts
+  under normal conditions AND a Chaos-Mode simulated outage, then writes
+  `benchmark/results/REPORT.md` — a Markdown results table carrying the date,
+  the models each arm used, and the naive vs router success rates. The repo
+  ships no benchmark numbers: results are produced only by the owner's own
+  run with their own provider keys.
 - `APP_NAME` / `APP_VERSION` constants (backend `app/identity.py`, frontend
   `src/appInfo.ts`) with the LMSYS name-collision disclaimer written once.
 - MIT licence, CONTRIBUTING, SECURITY (with a local-first threat model),
@@ -84,6 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - CI now tests the launcher's full support range: the backend suite runs on
   Python 3.11 and 3.12, and the frontend job type-checks, lints and builds, so a
   broken `frontend/dist` cannot reach a user's first run.
+- **CI and repo trimmed of the cloud experiments.** The `cloudflare-worker` and
+  `hf-space-boot` CI jobs are removed (the remaining jobs: secret-scan,
+  backend tests on 3.11+3.12, the slow git-history suite, an informational
+  Python 3.13 run, and the frontend job). The Worker code is archived — not
+  deleted — under `docs/deploy/cloudflare/` with the exact state of the
+  attempt tagged `cloud-deploy-attempt`; the root `wrangler` devDependency and
+  the `deploy` / `test:cloudflare` scripts are gone. Local-first
+  (`python run.py`) is the supported path.
 - The dashboard's unreachable-backend copy now tells a local user to start the
   app instead of blaming a worker proxy; the Providers page uses the error
   taxonomy instead of answering "Is the backend running?" for every failure.
@@ -94,8 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Deprecated
 
-- The Hugging Face Space / Cloudflare Worker deployment path is documented as
-  experimental under `docs/deploy/`. Local-first is the supported path.
+- The Hugging Face Space deployment path is documented as experimental under
+  `docs/deploy/`. Local-first is the supported path.
+- The Cloudflare Worker deployment attempt is **closed**: the code is archived
+  under `docs/deploy/cloudflare/` and tagged `cloud-deploy-attempt`. It is
+  kept for reference only and is not tested by CI anymore.
 
 ---
 

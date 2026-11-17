@@ -1,6 +1,6 @@
 """Per-caller provider API keys (BYOK), encrypted at rest.
 
-Each row belongs to one RouteLLM caller key (``api_keys.id``) and one upstream
+Each row belongs to one Routtener caller key (``api_keys.id``) and one upstream
 provider. Only the Fernet ciphertext and a short display hint are persisted;
 the raw provider key is never stored.
 """
@@ -15,7 +15,7 @@ from app.models.api_key import utcnow
 
 
 class ProviderKeyDB(SQLModel, table=True):
-    """An encrypted upstream provider key scoped to a RouteLLM API key."""
+    """An encrypted upstream provider key scoped to a Routtener API key."""
 
     __tablename__ = "provider_keys"
     __table_args__ = (

@@ -1,9 +1,43 @@
+import os
 from typing import Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.env_compat import NEW_PREFIX, OLD_PREFIX
+
+
+def _routtener_overrides() -> dict[str, str]:
+    """Collect ``ROUTTENER_*`` values from the process env AND the .env file.
+
+    Field names keep their legacy ``ROUTELLM_*`` spelling internally, so a
+    value set under the new prefix is mapped onto the matching legacy field.
+    Case-insensitive on both sides. The process env wins over the .env file,
+    matching how pydantic-settings orders those two sources.
+    """
+    overrides: dict[str, str] = {}
+    try:
+        from dotenv import dotenv_values
+
+        for key, value in dotenv_values(SETTINGS_ENV_FILE).items():
+            if key and key.upper().startswith(NEW_PREFIX) and value is not None:
+                overrides[OLD_PREFIX + key.upper()[len(NEW_PREFIX):]] = value
+    except Exception:  # pragma: no cover - a missing/odd .env must never break boot
+        pass
+    for key, value in os.environ.items():
+        if key.upper().startswith(NEW_PREFIX):
+            overrides[OLD_PREFIX + key.upper()[len(NEW_PREFIX):]] = value
+    return overrides
+
+
+#: The .env file name the Settings model reads (kept in sync with
+#: ``Settings.model_config["env_file"]`` below).
+SETTINGS_ENV_FILE = ".env"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=SETTINGS_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -16,6 +50,12 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = None
     # Directory for SQLite, the generated encryption key and logs.
     # Defaults to <repo>/data, falling back to the OS user-data dir.
+    # PREFIX RENAME (RouteLLM -> Routtener): every ROUTELLM_* variable below
+    # also accepts its new primary name ROUTTENER_* (e.g.
+    # ROUTTENER_DATA_DIR, ROUTTENER_CAPTURE_PROVIDER_SHAPES). The legacy
+    # ROUTELLM_* name keeps working as a documented fallback; when both are
+    # set the NEW one wins. See app/env_compat.py and the tests in
+    # tests/integration/test_rename_compat.py.
     ROUTELLM_DATA_DIR: str = ""
     # LOCAL-FIRST: when false (the default) /api/v1/route and
     # /v1/chat/completions work without X-API-Key and usage is attributed to a
@@ -123,6 +163,24 @@ class Settings(BaseSettings):
     # enable this on a shared deployment: the samples are still provider
     # response text.
     ROUTELLM_CAPTURE_PROVIDER_SHAPES: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_routtener_prefix(cls, values):
+        """Accept the new ``ROUTTENER_*`` variable prefix (new wins).
+
+        Runs before field validation: any ``ROUTTENER_*`` value (process env
+        or .env file) is mapped onto its legacy ``ROUTELLM_*`` field and
+        overwrites it, so:
+          only old set -> old used;  only new set -> new used;
+          both set -> NEW wins. Tested in test_rename_compat.py.
+        """
+        if values is None:
+            values = {}
+        if isinstance(values, dict):
+            for field, value in _routtener_overrides().items():
+                values[field] = value
+        return values
 
 
 settings = Settings()

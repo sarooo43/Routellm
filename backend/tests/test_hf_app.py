@@ -19,12 +19,15 @@ from app.main import app as real_app
 from app.main import lifespan as real_lifespan
 from app.runtime import (
     HF_SPACE_ID_ENV,
-    READ_ONLY_FLAG_ENV,
-    RUNTIME_DIR_ENV,
     app_dir_is_expected_read_only,
     running_on_huggingface,
     writable_dir,
 )
+
+# The env var names after the rename: primary ROUTTENER_* (legacy
+# ROUTELLM_* also accepted; see app/env_compat.py).
+READ_ONLY_FLAG_ENV = "ROUTTENER_READ_ONLY_APP_DIR"
+RUNTIME_DIR_ENV = "ROUTTENER_RUNTIME_DIR"
 
 
 # --------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# RouteLLM launcher (Windows PowerShell).
+# Routtener launcher (Windows PowerShell).
 #
 #   .\start.ps1                  # http://127.0.0.1:8000
 #   .\start.ps1 --dev            # backend reload + Vite dev server

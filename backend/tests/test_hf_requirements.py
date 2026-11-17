@@ -14,8 +14,9 @@ pydantic ceiling (`pydantic<=2.12.5`), which is tighter than what plain
 real Space build die with `ResolutionImpossible` before any code ran.
 
 These tests are offline/static so they always run; the live check against PyPI
-is opt-in via ROUTELLM_CHECK_PYPI=1 and is also run in CI by a dedicated step
-that actually resolves the real install command.
+is opt-in via ROUTELLM_CHECK_PYPI=1. It used to have a dedicated CI step in the
+`hf-space-boot` job, which was removed in the v0.1.0 cleanup (T2) — run it
+locally with `ROUTELLM_CHECK_PYPI=1` before touching requirements pins.
 """
 
 import re
@@ -119,8 +120,9 @@ def test_runtime_set_is_fully_pinned():
 
 
 @pytest.mark.skipif(
-    not __import__("os").environ.get("ROUTELLM_CHECK_PYPI"),
-    reason="set ROUTELLM_CHECK_PYPI=1 to query PyPI",
+    not __import__("os").environ.get("ROUTTENER_CHECK_PYPI")
+    and not __import__("os").environ.get("ROUTELLM_CHECK_PYPI"),
+    reason="set ROUTTENER_CHECK_PYPI=1 (legacy ROUTELLM_CHECK_PYPI) to query PyPI",
 )
 def test_pinned_set_satisfies_gradio_extras_on_pypi():
     """Resolve the real metadata: gradio[<extras>] must accept every pin."""
@@ -155,14 +157,24 @@ def test_pinned_set_satisfies_gradio_extras_on_pypi():
 
 
 def test_constraint_mirrors_hugging_face_extras():
-    """If HF's install line changes, this constant (and the docs) must too."""
-    import subprocess
+    """The HF install line (extras) must stay documented where it is acted on.
 
-    workflow = (BACKEND.parent / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
+    The `hf-space-boot` CI job (which actually resolved `gradio[oauth,mcp]==…`
+    on every push) was removed in the v0.1.0 cleanup (T2). This test now pins
+    the surviving contract: the deploy docs MUST still state the exact extras
+    Hugging Face enables, so anyone reviving the Space path or touching the
+    pydantic pin reads the constraint before the Space build dies with
+    ResolutionImpossible.
+    """
+    docs = (
+        BACKEND.parent
+        / "docs"
+        / "deploy"
+        / "HUGGINGFACE_AND_MANAGED.md"
+    ).read_text(encoding="utf-8")
     expected = f"gradio[{','.join(HF_GRADIO_EXTRAS)}]"
-    assert expected in workflow.replace(" ", ""), (
-        "ci.yml must install gradio with the same extras Hugging Face uses "
-        f"({HF_GRADIO_EXTRAS}); otherwise CI cannot catch this class of failure"
+    assert expected in docs.replace(" ", ""), (
+        "docs/deploy/HUGGINGFACE_AND_MANAGED.md must document the same gradio "
+        f"extras Hugging Face uses ({HF_GRADIO_EXTRAS}); the CI resolution "
+        "check is gone, so this documentation is the remaining guard"
     )

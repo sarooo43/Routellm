@@ -35,7 +35,7 @@ def _fernet() -> Fernet:
         raise ProviderKeyEncryptionError(
             "No encryption key is available for provider-key storage. Either "
             "set PROVIDER_KEY_ENCRYPTION_KEY, or make the data directory "
-            "writable so one can be generated (see ROUTELLM_DATA_DIR)."
+            "writable so one can be generated (see ROUTTENER_DATA_DIR)."
         )
     try:
         return Fernet(key.encode("utf-8") if isinstance(key, str) else key)

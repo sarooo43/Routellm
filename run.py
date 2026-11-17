@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RouteLLM launcher — clone, run one command, get the app.
+"""Routtener launcher - clone, run one command, get the app.
 
     python run.py                 # build/install what is missing, then serve
     python run.py --dev           # backend reload + Vite dev server
@@ -299,17 +299,60 @@ def dist_is_usable() -> bool:
     return (DIST_DIR / "index.html").is_file()
 
 
+#: Everything a dashboard rebuild depends on: all of src/ (recursive) plus the
+#: top-level build inputs. One new glob entry here costs one stat — cheap.
+_SOURCE_GLOBS = ("src/**/*", "index.html", "package.json", "package-lock.json",
+                 "vite.config.ts", "tsconfig*.json", "tailwind.config.js",
+                 "postcss.config.js")
+
+
+def frontend_is_stale(
+    frontend_dir: Optional[Path] = None, dist_dir: Optional[Path] = None
+) -> bool:
+    """True when any dashboard source is newer than the built bundle (T1).
+
+    The stale-build failure this guards: ``python run.py`` serves the old
+    ``frontend/dist`` while ``frontend/src`` has moved on, so the dashboard
+    runs code from a previous commit — exactly what the owner saw when an old
+    server kept running after the merge (walk + diagnostics looked broken).
+
+    Uses mtimes, not hashes: hashing every source file on every start costs
+    more than it saves. ``dist/index.html`` missing is NOT "stale" — the
+    missing-dist path above handles that. Fail-soft: any stat problem reads
+    as "not stale" so a weird filesystem can never loop the builder.
+    """
+    frontend_dir = frontend_dir or FRONTEND_DIR
+    dist_dir = dist_dir or DIST_DIR
+    dist_marker = dist_dir / "index.html"
+    try:
+        if not dist_marker.is_file():
+            return False
+        dist_mtime = dist_marker.stat().st_mtime
+        for pattern in _SOURCE_GLOBS:
+            for path in frontend_dir.glob(pattern):
+                if path.is_file() and path.stat().st_mtime > dist_mtime:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def ensure_frontend(dev: bool = False, rebuild: bool = False) -> Optional[Path]:
     """Ensure a built dashboard exists. Returns the dist dir, or None.
 
     ``None`` is a legitimate result: the backend then serves a small status
     page at ``/`` explaining how to build the frontend. That is better than
     aborting a backend that works.
+
+    T1: a usable dist that is OLDER than the sources is rebuilt too — an
+    outdated bundle must not survive a restart just because it exists.
     """
     if dev:
         return DIST_DIR if dist_is_usable() else None
     if dist_is_usable() and not rebuild:
-        return DIST_DIR
+        if not frontend_is_stale():
+            return DIST_DIR
+        print(f"  {dim('dashboard sources changed since the last build — rebuilding')}")
 
     npm = shutil.which("npm")
     version = node_version()
@@ -411,7 +454,7 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     """The one thing worth reading: where the app is and what to do next."""
     line = "─" * 58
     print()
-    print(bold("  RouteLLM is running"))
+    print(bold("  Routtener is running"))
     print(f"  {dim(line)}")
     print(f"  Dashboard   {bold(url)}")
     print(f"  API docs    {url}docs")
@@ -480,7 +523,7 @@ def open_browser(url: str) -> None:
 def backend_env(port: int, host: str, dev: bool) -> dict:
     """Environment for the backend process (never contains secrets)."""
     env = dict(os.environ)
-    env.setdefault("ROUTELLM_DATA_DIR", str(DATA_DIR))
+    env.setdefault("ROUTTENER_DATA_DIR", str(DATA_DIR))
     env.setdefault("PORT", str(port))
     env.setdefault("HOST", host)
     if dev:
@@ -541,7 +584,7 @@ def serve_dev_frontend(dev: bool) -> Optional[subprocess.Popen]:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python run.py",
-        description="Start RouteLLM locally (no Docker, no Postgres, no Redis).",
+        description="Start Routtener locally (no Docker, no Postgres, no Redis).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -579,7 +622,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
 
     print()
-    print(f"  {bold('RouteLLM')} {dim('local launcher')}  {dim(f'({platform.system()})')}")
+    print(f"  {bold('Routtener')} {dim('local launcher')}  {dim(f'({platform.system()})')}")
 
     try:
         check_python()
@@ -657,7 +700,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dev_frontend.terminate()
     except LauncherError as exc:
         print()
-        print(f"  {fail('Could not start RouteLLM')}")
+        print(f"  {fail('Could not start Routtener')}")
         for line in str(exc).splitlines():
             print(f"  {line}")
         print()

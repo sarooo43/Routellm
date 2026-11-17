@@ -1,0 +1,11 @@
+# Coverage configuration (audit follow-up T5).
+#
+# `concurrency = thread` registers threads started AFTER coverage begins
+# (aiosqlite runs every SQL statement on a worker thread; asyncio's default
+# executor is thread-based too). Without it those threads' frames are never
+# traced and route handlers that touch the database measure low.
+#
+# `parallel`/combine is intentionally NOT enabled: every run must overwrite
+# `.coverage` so a report can never merge stale data from an earlier run.
+[run]
+concurrency = thread

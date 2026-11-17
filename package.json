@@ -1,8 +1,8 @@
 {
-  "name": "routellm-monorepo",
+  "name": "routtener-monorepo",
   "private": true,
   "type": "module",
-  "description": "RouteLLM gateway monorepo. The React dashboard lives in frontend/; the FastAPI gateway lives in backend/. npm workspaces install frontend dependencies at the root so Cloudflare builds do not need a nested npm ci.",
+  "description": "Routtener gateway monorepo. The React dashboard lives in frontend/; the FastAPI gateway lives in backend/. npm workspaces install frontend dependencies at the root so Cloudflare builds do not need a nested npm ci.",
   "workspaces": [
     "frontend"
   ],

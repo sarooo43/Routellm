@@ -22,13 +22,13 @@ from collections import deque
 
 from fastapi import HTTPException
 
-#: Maximum test calls per RouteLLM key per rolling 60 seconds.
+#: Maximum test calls per Routtener key per rolling 60 seconds.
 TEST_RATE_LIMIT = 10
 
 #: Window length in seconds for the rate limit.
 TEST_RATE_WINDOW_S = 60.0
 
-#: Maximum simultaneously running tests per RouteLLM key.
+#: Maximum simultaneously running tests per Routtener key.
 TEST_MAX_IN_FLIGHT = 5
 
 _call_times: dict[int, deque[float]] = {}

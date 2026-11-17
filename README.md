@@ -1,4 +1,4 @@
-# RouteLLM Gateway
+# Routtener Gateway
 
 **An LLM router you can actually run.** Point one endpoint at several providers;
 it classifies each prompt, ranks Groq / Google AI Studio / DeepSeek, and falls
@@ -10,7 +10,13 @@ showing you exactly what it decided and why.
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
 [![Node 20+ (only to build the UI)](https://img.shields.io/badge/node-20%2B%20(optional)-339933.svg)](https://nodejs.org)
 
-> **Name:** this project is independent and **not affiliated with LMSYS RouteLLM**, the routing-model research project of the same name.
+> **Name:** this project is called **Routtener**. It was previously called
+> RouteLLM — a name it shared, entirely coincidentally, with **LMSYS RouteLLM**,
+> the routing-model research project. It is independent and not affiliated with
+> LMSYS. Compatibility surfaces kept from the old name: the `ROUTELLM_*`
+> environment-variable fallback, the `rk_` API-key prefix, the
+> `routellm-auto` OpenAI model id, and the `routellm.db` data filename — all
+> still work so existing installs keep their data.
 
 <!--
   Demo placeholder — replace with a real screen recording before announcing.
@@ -32,6 +38,10 @@ git clone https://github.com/sarooo43/Routellm.git
 cd Routellm
 python run.py
 ```
+
+(All clone/badge URLs in this README use the pre-rename repo name, which
+GitHub redirects after a rename — see the release notes for the list to
+update once the repository itself is renamed.)
 
 `run.py` creates a virtualenv, installs the backend, builds the dashboard if
 Node is available (or uses a prebuilt one), creates `./data`, and opens
@@ -90,12 +100,26 @@ The dashboard needs a build. Without Node, the launcher runs the API only and
 
 ### Then, in the app
 
-1. **Providers** → paste a free key (Groq, Google AI Studio or DeepSeek — links
+1. **Providers** — paste a free key (Groq, Google AI Studio or DeepSeek — links
    are on the page). Keys are encrypted at rest and win over environment
    variables.
-2. **Explorer** → send a prompt and watch the routing decision.
-3. Leave it alone for demo mode: with no key configured, a **labelled MOCK**
+2. **Run diagnostics** — on the Explorer page, one click per stored provider
+   key probes that provider's real model list over the wire and reports what
+   works, what is rate-limited and what is denied. Replaces all manual
+   terminal curl-ing; the report is redacted end to end.
+3. **Explorer** — send a prompt and watch the routing decision.
+4. Leave it alone for demo mode: with no key configured, a **labelled MOCK**
    provider answers so the UI is explorable without spending anything.
+
+> **Two tips worth knowing:**
+>
+> - **After a `git pull`, restart `python run.py`.** It rebuilds the dashboard
+>   when frontend sources changed. If you keep an old tab open anyway, the app
+>   itself shows a stale-build banner telling you to restart.
+> - **GitHub Codespaces work out of the box.** The forwarded
+>   `https://<codespace>-<port>.app.github.dev` URL is allow-listed via
+>   `CODESPACE_NAME`; if a proxy still rewrites the Host header, the
+>   Troubleshooting section covers `Invalid Host header`.
 
 ### Use it from code
 
@@ -163,6 +187,22 @@ flowchart LR
 
 ---
 
+## Screenshots
+
+<!-- OWNER TASK: add the four PNGs listed below to docs/images/ before
+     tagging v0.1.0. The references are slots — the image files do not exist
+     in the repository yet, so this section will render broken-image icons
+     until they are committed. Nothing here claims a measured result; the
+     numbers story lives in Benchmarks. -->
+
+| Dashboard overview | Model Explorer |
+|---|---|
+| ![Dashboard overview: KPIs, live request feed and provider health](docs/images/overview.png) | ![Model Explorer: routing decision, per-model statuses and Run diagnostics](docs/images/explorer.png) |
+| **Failover chain** | **Diagnostics response** |
+| ![Failover: the recorded attempt chain after a simulated provider outage](docs/images/failover.png) | ![Diagnostics response: the redacted wire report for one stored key](docs/images/response.png) |
+
+---
+
 ## Configuration
 
 Nothing below is required for a local run. Copy
@@ -171,7 +211,7 @@ default (the launcher creates it for you on first run).
 
 | Variable | Default | What it changes |
 |---|---|---|
-| `ROUTELLM_DATA_DIR` | `./data` | Where SQLite, the generated encryption key and logs live |
+| `ROUTTENER_DATA_DIR` (legacy `ROUTELLM_DATA_DIR` also accepted; new wins) | `./data` | Where SQLite, the generated encryption key and logs live |
 | `DATABASE_URL` | unset → SQLite | Set any Postgres DSN to use Postgres instead |
 | `REDIS_URL` | unset → in-process | Set it to share breaker/quota/chaos state across processes |
 | `REQUIRE_API_KEY` | `false` | `true` requires `X-API-Key` on `/api/v1/route` and `/v1/chat/completions` |
@@ -193,7 +233,9 @@ warning off loopback), `--dev`, `--no-browser`, `--reinstall`, `--rebuild`,
 
 ### Where your data lives
 
-`./data` (git-ignored) holds `routellm.db`, `encryption.key` and logs. It is
+`./data` (git-ignored) holds `routellm.db`, `encryption.key` and logs (the
+database filename keeps its pre-rename name so existing installs keep their
+data). It is
 never uploaded anywhere. Delete it to start clean — **deleting
 `encryption.key` makes previously stored provider keys unreadable**, so
 re-enter them on the Providers page.
@@ -202,25 +244,34 @@ re-enter them on the Providers page.
 
 ## Benchmarks
 
-**Placeholder — no numbers are claimed yet.**
+**No numbers are claimed here — the benchmark writes yours.**
 
 The repository contains a benchmark harness (`benchmark/`) that compares a
 naive single-model baseline against this router under identical conditions,
-including a deterministic simulated outage. A real run needs real provider keys
-and must be regenerated before anything is published here:
+including a deterministic Chaos-Mode simulated outage. Every number it
+produces comes from your own run on your own machine with your own provider
+keys; nothing is pre-computed or shipped in the repo.
+
+One command (backend already running, e.g. `python run.py`):
 
 ```bash
-cd benchmark
-pip install -r requirements.txt
-python run_benchmark.py --scenario normal
-python run_benchmark.py --scenario outage
-python generate_report.py
+# Windows (PowerShell, repo root)
+backend\.venv\Scripts\python.exe benchmark\run_benchmark.py
+
+# macOS / Linux (repo root)
+backend/.venv/bin/python benchmark/run_benchmark.py
 ```
 
-The currently committed `benchmark/results/REPORT.md` is from a run **without**
-provider credentials (every arm reports 0% success). It is kept only as an
-artefact of the harness and must not be quoted as a result. Demo-mode traffic is
-never included in benchmark runs.
+It runs both scenarios (normal + chaos outage), then writes the report in
+two places: `benchmark/results/REPORT.md` and
+`docs/benchmark-results.md` (the repo-root copy this section links to once
+you have run it — no benchmark numbers are committed to the repository). Each
+report is a Markdown table with the date, the models each arm used, and the
+naive vs router success rates side by side, under normal conditions and the
+Chaos-Mode simulated outage. Every number in it is produced by your run;
+nothing is sampled, estimated or copied. Details, options and prerequisites:
+[benchmark/README.md](benchmark/README.md). Demo-mode traffic is never
+included in benchmark runs.
 
 ---
 
@@ -271,9 +322,10 @@ pip install -r backend/requirements-ml.txt
 # then set ENABLE_ML_ROUTING=true once a model exists
 ```
 
-**Cloud** — the previous Hugging Face Space / Cloudflare Worker path still
-works and is still tested, but it is documented as experimental in
-[docs/deploy/](docs/deploy/) and is not the recommended way to run this.
+**Cloud** — the previous Hugging Face Space path is documented as experimental in
+[docs/deploy/](docs/deploy/). The Cloudflare Worker attempt is **archived** (tag
+`cloud-deploy-attempt`; code kept under `docs/deploy/cloudflare/`) — local-first
+`python run.py` is the supported way to run this.
 
 ---
 
@@ -304,7 +356,7 @@ Being explicit about what this is and is not:
 | Launcher reports *Port 8000 is busy* | It auto-advances and prints the port it used; pass `--port` to choose one |
 | Dashboard at `/` shows a status page instead of the app | `frontend/dist` is missing — run `npm ci && npm run build` in `frontend/`, or `python run.py --rebuild` |
 | Pages load but every number is empty | Backend not reachable: check `http://127.0.0.1:8000/health`. The pill in the top bar says which dependency is down |
-| `/health` reports `"db": "down"` | The SQLite file is missing or unwritable — check `ROUTELLM_DATA_DIR`, or your `DATABASE_URL` if you set one |
+| `/health` reports `"db": "down"` | The SQLite file is missing or unwritable - check `ROUTTENER_DATA_DIR`, or your `DATABASE_URL` if you set one |
 | Saving a provider key returns 503 | No usable encryption key: make the data directory writable (a key is generated automatically), or set `PROVIDER_KEY_ENCRYPTION_KEY` |
 | Stored provider keys stop working after you deleted `data/` | The generated key is gone, so the ciphertext cannot be decrypted — re-enter the keys |
 | Every route fails with a connection error | No provider key is configured and demo mode is off, or this machine cannot reach the provider API |
@@ -382,6 +434,20 @@ first. Nothing else from an error message is ever used. If every candidate
 fails, check the Providers page → the model list shows each model's status
 (`denied` / `rate_limited` / `works`), and a 401 is always reported as an
 auth problem, never as `model_not_found`.
+
+---
+
+## Why I built this
+
+<!-- OWNER TASK: replace this TODO with your own story, in your own voice,
+     before tagging v0.1.0. Suggested shape: the itch (a provider dying
+     mid-task, free-tier keys expiring, juggling three dashboards), what you
+     wanted instead (one local endpoint that reroutes by itself and shows
+     you why), and what surprised you while building it. Keep it honest —
+     no performance claims in this section; measured numbers, if any, live
+     in Benchmarks. -->
+
+TODO: owner's own words go here.
 
 ---
 

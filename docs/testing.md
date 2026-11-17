@@ -66,7 +66,7 @@ specific platform behaviour, never "flaky".
 - The provider wire is mocked (`respx` / `httpx.MockTransport`); no test needs a
   real provider key or outbound network.
 - Provider shapes and free-tier labels in the UI are **estimates**
-  (`tier_source: "estimated"`). `ROUTELLM_CAPTURE_PROVIDER_SHAPES=true` writes
+  (`tier_source: "estimated"`). `ROUTTENER_CAPTURE_PROVIDER_SHAPES=true` writes
   sanitized field names and truncated, redacted samples to
   `data/provider_shapes/<provider>.json` so they can be replaced with observed
   data. That directory is gitignored and never contains a key.

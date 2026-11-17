@@ -1,22 +1,42 @@
 """Benchmark report generator.
 
-Reads both scenario result files (each containing the naive and the RouteLLM
-arm = 4 datasets: {naive, routellm} × {no-chaos, chaos}), prints a markdown
-summary table to the console, writes results/REPORT.md, and renders:
+Reads both scenario result files (each containing the naive and the Routtener
+arm = 4 datasets: {naive, routellm} × {no-chaos, chaos}), writes
+results/REPORT.md — a Markdown results table with the generation date and the
+models each arm actually used — and renders:
 
   - results/success_rate_comparison.png
   - results/cost_comparison.png
 
-Run AFTER run_benchmark.py for both scenarios:
+The same Markdown report is ALSO written to ``docs/benchmark-results.md`` at
+the repository root, so the repo has one stable, linkable location for the
+result table. That file is created by YOUR run and is not shipped with the
+repository — no pre-computed numbers live in git.
 
-    python generate_report.py     (needs matplotlib)
+The charts need matplotlib; REPORT.md does not. When matplotlib is not
+installed the report is still written and the charts are skipped with a
+message, so the one-command benchmark run never dies on a plotting library.
+
+Run AFTER run_benchmark.py for both scenarios (the default --scenario all
+already calls this):
+
+    python generate_report.py
 """
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-import matplotlib
+# Charts are an extra, not a requirement: report generation must work on a
+# bare venv that has only the backend's own dependencies.
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")  # headless: no display needed
+    import matplotlib.pyplot as plt  # noqa: E402
+except ImportError:  # pragma: no cover - exercised via monkeypatched None
+    matplotlib = None
 
 # Windows consoles default to cp1252 — force UTF-8 for the unicode output.
 if hasattr(sys.stdout, "reconfigure") and (
@@ -25,17 +45,18 @@ if hasattr(sys.stdout, "reconfigure") and (
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-matplotlib.use("Agg")  # headless: no display needed
-import matplotlib.pyplot as plt  # noqa: E402
-
 BENCHMARK_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BENCHMARK_DIR.parent
 RESULTS_DIR = BENCHMARK_DIR / "results"
+#: Second copy of the report: the repo-root docs location the README links
+#: to. Written by main() on every report generation; never pre-shipped.
+DOCS_REPORT_PATH = REPO_ROOT / "docs" / "benchmark-results.md"
 
 SCENARIOS = [
     ("scenario_1_results.json", "Normal conditions"),
     ("scenario_2_results.json", "Simulated outage (chaos on baseline)"),
 ]
-ARMS = [("naive_baseline", "Naive\n(single model)"), ("routellm_full", "RouteLLM\n(full system)")]
+ARMS = [("naive_baseline", "Naive\n(single model)"), ("routellm_full", "Routtener\n(full system)")]
 
 ACCENT = "#E87722"
 GREEN = "#3DDC97"
@@ -69,7 +90,18 @@ def load_datasets() -> dict[str, dict]:
 
 
 def fmt_pct(rate: float) -> str:
-    return f"{rate:.1%}".rstrip("0").rstrip(".")
+    """0.9 → '90%', 1.0 → '100%', 0.155 → '15.5%' — no trailing '.0' noise."""
+    text = f"{rate * 100:.1f}"
+    if text.endswith(".0"):
+        text = text[: -2]
+    return f"{text}%"
+
+
+def models_line(label: str, arm_data: dict) -> str:
+    """One bullet naming the models an arm actually called."""
+    used = arm_data.get("models_used") or []
+    models = ", ".join(f"`{m}`" for m in used) if used else "_(none succeeded)_"
+    return f"- **{label}:** {models}"
 
 
 def build_table(datasets: dict[str, dict]) -> str:
@@ -79,12 +111,22 @@ def build_table(datasets: dict[str, dict]) -> str:
     c_r = datasets["chaos:routellm"]
 
     lines = [
-        "# RouteLLM Benchmark Report",
+        "# Routtener Benchmark Report",
         "",
-        f"Generated from `{SCENARIOS[0][0]}` and `{SCENARIOS[1][0]}` — "
-        f"{nc_n['total_prompts']} prompts per arm under identical conditions.",
+        f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
+        f"**Prompts per arm:** {nc_n['total_prompts']} (identical set in all four runs)  ",
+        "**Source of these numbers:** this very machine, this backend, your "
+        "provider keys. Nothing here is sampled, estimated or copied from "
+        "anywhere — re-running the benchmark produces your own table.",
         "",
-        "| Scenario | Naive (single model) | RouteLLM |",
+        "## Models used",
+        "",
+        models_line("Naive baseline (single forced model)", nc_n),
+        models_line("Routtener, normal conditions (router's own picks)", nc_r),
+        models_line("Naive baseline under the simulated outage", c_n),
+        models_line("Routtener under the simulated outage", c_r),
+        "",
+        "| Scenario | Naive (single model) | Routtener |",
         "|---|---|---|",
         f"| Normal — success rate | {fmt_pct(nc_n['success_rate'])} | {fmt_pct(nc_r['success_rate'])} |",
         f"| **Simulated outage — success rate** | **{fmt_pct(c_n['success_rate'])}** | **{fmt_pct(c_r['success_rate'])}** |",
@@ -94,7 +136,7 @@ def build_table(datasets: dict[str, dict]) -> str:
         "",
         "## Per-task-type breakdown (success rate)",
         "",
-        "| Task type | Naive (normal) | RouteLLM (normal) | Naive (outage) | RouteLLM (outage) |",
+        "| Task type | Naive (normal) | Routtener (normal) | Naive (outage) | Routtener (outage) |",
         "|---|---|---|---|---|",
     ]
     task_types = sorted(
@@ -115,9 +157,9 @@ def build_table(datasets: dict[str, dict]) -> str:
     lines += [
         "",
         f"During the simulated outage, the naive baseline's success rate "
-        f"dropped to **{fmt_pct(c_n['success_rate'])}** while RouteLLM "
+        f"dropped to **{fmt_pct(c_n['success_rate'])}** while Routtener "
         f"maintained **{fmt_pct(c_r['success_rate'])}** by rerouting to "
-        f"healthy providers; RouteLLM's spread vs the naive under-outage "
+        f"healthy providers; Routtener's spread vs the naive under-outage "
         f"baseline is {fmt_pct(c_r['success_rate'] - c_n['success_rate'])} "
         f"points, and the outage cost the naive approach "
         f"{dropped} points vs normal conditions.",
@@ -149,10 +191,18 @@ def bar_chart(values: list[float], labels: list[str], colors: list[str], title: 
     print(f"✓ saved {out_path.name}")
 
 
-def build_charts(datasets: dict[str, dict]) -> None:
+def build_charts(datasets: dict[str, dict]) -> bool:
+    """Render the two PNGs. Returns False (with a message) without matplotlib."""
+    if matplotlib is None:
+        print(
+            "⚠ matplotlib not installed — charts skipped. REPORT.md is "
+            "complete without them; for charts run: python -m pip install matplotlib"
+        )
+        return False
+
     # Grouped layout: no-chaos pair then chaos pair, per arm.
     order = ["no_chaos:naive", "no_chaos:routellm", "chaos:naive", "chaos:routellm"]
-    labels = ["No outage\nNaive", "No outage\nRouteLLM", "Outage\nNaive", "Outage\nRouteLLM"]
+    labels = ["No outage\nNaive", "No outage\nRouttener", "Outage\nNaive", "Outage\nRouttener"]
     colors = ["#9E9E9E", GREEN, "#C77878", PURPLE]
 
     rates = [datasets[k]["success_rate"] * 100 for k in order]
@@ -160,7 +210,7 @@ def build_charts(datasets: dict[str, dict]) -> None:
 
     bar_chart(
         rates, labels, colors,
-        title="Success Rate: Naive Single Model vs RouteLLM",
+        title="Success Rate: Naive Single Model vs Routtener",
         ylabel="Success rate (%)",
         out_path=RESULTS_DIR / "success_rate_comparison.png",
         pct=True,
@@ -172,6 +222,7 @@ def build_charts(datasets: dict[str, dict]) -> None:
         out_path=RESULTS_DIR / "cost_comparison.png",
         pct=False,
     )
+    return True
 
 
 def main() -> None:
@@ -179,7 +230,10 @@ def main() -> None:
     datasets = load_datasets()
     report = build_table(datasets)
     (RESULTS_DIR / "REPORT.md").write_text(report, encoding="utf-8")
-    print(f"✓ saved {RESULTS_DIR / 'REPORT.md'}\n")
+    print(f"✓ saved {RESULTS_DIR / 'REPORT.md'}")
+    DOCS_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DOCS_REPORT_PATH.write_text(report, encoding="utf-8")
+    print(f"✓ saved {DOCS_REPORT_PATH}\n")
     print(report)
     build_charts(datasets)
 

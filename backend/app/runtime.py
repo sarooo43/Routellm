@@ -8,9 +8,11 @@ directory that is guaranteed writable.
 
 Resolution order for :func:`writable_dir`:
 
-1. ``ROUTELLM_RUNTIME_DIR`` — explicit override (tests, self-host).
+1. ``ROUTTENER_RUNTIME_DIR`` (new name; legacy ``ROUTELLM_RUNTIME_DIR`` also
+   accepted) - explicit override (tests, self-host).
 2. ``/tmp`` when running on Hugging Face (``SPACE_ID`` set) or when
-   ``ROUTELLM_READ_ONLY_APP_DIR=1`` is set (used by the read-only boot test).
+   ``ROUTTENER_READ_ONLY_APP_DIR=1`` (legacy ``ROUTELLM_READ_ONLY_APP_DIR``
+   also accepted) is set (used by the read-only boot test).
 3. ``<repo>/backend/.runtime`` for local development.
 
 Detection is deliberately env-based (not "does /tmp exist"), so it is testable
@@ -22,12 +24,16 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from app.env_compat import get as env_get
+from app.env_compat import truthy as env_truthy
+
 #: Marker Hugging Face sets on every Space container.
 HF_SPACE_ID_ENV = "SPACE_ID"
-#: Explicit override used by tests and unusual hosts.
-RUNTIME_DIR_ENV = "ROUTELLM_RUNTIME_DIR"
+#: Explicit override used by tests and unusual hosts. Primary name after the
+#: rename; the legacy ``ROUTELLM_RUNTIME_DIR`` keeps working (env_compat).
+RUNTIME_DIR_ENV_SUFFIX = "RUNTIME_DIR"
 #: Force the read-only-filesystem behavior even when not on Hugging Face.
-READ_ONLY_FLAG_ENV = "ROUTELLM_READ_ONLY_APP_DIR"
+READ_ONLY_FLAG_ENV_SUFFIX = "READ_ONLY_APP_DIR"
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -39,8 +45,7 @@ def running_on_huggingface() -> bool:
 
 def app_dir_is_expected_read_only() -> bool:
     """True when app-dir writes must be avoided (HF, or forced by the env flag)."""
-    flag = os.environ.get(READ_ONLY_FLAG_ENV, "").strip().lower()
-    if flag in {"1", "true", "yes", "on"}:
+    if env_truthy(READ_ONLY_FLAG_ENV_SUFFIX):
         return True
     return running_on_huggingface()
 
@@ -59,11 +64,11 @@ def writable_dir(*parts: str, env_var: Optional[str] = None) -> Path:
     if override:
         base = Path(override).expanduser()
     else:
-        explicit = os.environ.get(RUNTIME_DIR_ENV, "").strip()
+        explicit = env_get(RUNTIME_DIR_ENV_SUFFIX).strip()
         if explicit:
             base = Path(explicit).expanduser()
         elif app_dir_is_expected_read_only():
-            base = Path(tempfile.gettempdir()) / "routellm"
+            base = Path(tempfile.gettempdir()) / "routtener"
         else:
             base = _BACKEND_ROOT / ".runtime"
 
