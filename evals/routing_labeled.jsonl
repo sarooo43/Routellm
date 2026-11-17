@@ -1,0 +1,100 @@
+{"id": 1, "prompt": "Write a Python function that reverses a linked list in place.", "expected_task_type": "code", "difficulty": "easy"}
+{"id": 2, "prompt": "Why do prices rise when the money supply expands faster than output?", "expected_task_type": "reasoning", "difficulty": "medium"}
+{"id": 3, "prompt": "Summarize the following article in three bullet points.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 4, "prompt": "What is the capital of Australia?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 5, "prompt": "Tell me about your day.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 6, "prompt": "Fix this bug: the loop skips the last element of the array.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 7, "prompt": "Explain why the sky is blue, step by step.", "expected_task_type": "reasoning", "difficulty": "easy"}
+{"id": 8, "prompt": "Give me a summary of World War II causes.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 9, "prompt": "Who wrote Pride and Prejudice?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 10, "prompt": "I had coffee this morning and the barista remembered my name.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 11, "prompt": "def merge_sort(arr): implement the missing body of this function.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 12, "prompt": "Prove that the square root of two is irrational.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 13, "prompt": "Condense this meeting transcript into key points and action items.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 14, "prompt": "When did the Berlin Wall fall?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 15, "prompt": "What should I make for dinner?", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 16, "prompt": "Write a SQL query that returns the top 5 customers by total order value.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 17, "prompt": "Analyze whether increasing the minimum wage necessarily increases unemployment.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 18, "prompt": "tl;dr this 5000-word policy paper for a busy executive.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 19, "prompt": "How does photosynthesis work?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 20, "prompt": "Random thought: do fish get thirsty?", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 21, "prompt": "Write a JavaScript function that debounces another function.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 22, "prompt": "Solve this problem: three doors, one prize, you pick one, the host opens a goat door. Should you switch?", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 23, "prompt": "In short, what did the study find?", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 24, "prompt": "Where is the Murray-Darling Basin?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 25, "prompt": "Just chatting, nothing urgent.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 26, "prompt": "I keep getting a stack trace: IndexError at line 42, can you debug it?", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 27, "prompt": "Explain the reasoning behind quickselect's average O(n) runtime.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 28, "prompt": "Summarize the plot of Hamlet in five sentences.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 29, "prompt": "Is the boiling point of water always 100 degrees Celsius?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 30, "prompt": "Nice weather we're having.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 31, "prompt": "Refactor this class to use dependency injection instead of singletons.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 32, "prompt": "Think through whether a country can have inflation and deflation in different sectors at once.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 33, "prompt": "Give me a summary of the key points in the IPCC report excerpt below.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 34, "prompt": "What is the reasoning behind Occam's razor?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 35, "prompt": "What's up?", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 36, "prompt": "Write code that parses CSV files and handles quoted commas correctly.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 37, "prompt": "Logic puzzle: five houses, five colors, five pets. Who owns the zebra?", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 38, "prompt": "Condense the user manual into a one-page quick start.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 39, "prompt": "Does the Turing test measure intelligence?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 40, "prompt": "Cool, thanks.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 41, "prompt": "Here is my compile error: undefined reference to 'main'. What do I fix?", "expected_task_type": "code", "difficulty": "easy"}
+{"id": 42, "prompt": "Explain why noise-cancelling headphones cannot cancel sudden sharp sounds well.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 43, "prompt": "Summarize this thread of 200 customer complaints into themes.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 44, "prompt": "How many bones are in the human body?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 45, "prompt": "Anyway, moving on.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 46, "prompt": "Write a Python decorator that retries a function with exponential backoff.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 47, "prompt": "Step by step, why does division by zero break most arithmetic systems?", "expected_task_type": "reasoning", "difficulty": "medium"}
+{"id": 48, "prompt": "In short, what changed in the new terms of service?", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 49, "prompt": "What year did the first iPhone launch?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 50, "prompt": "That reminds me of a story.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 51, "prompt": "Write a unit test suite for a function that parses ISO 8601 dates.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 52, "prompt": "Analyze whether correlation between two variables can ever prove causation.", "expected_task_type": "reasoning", "difficulty": "medium"}
+{"id": 53, "prompt": "Summarize the differences between TCP and UDP for a newcomer.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 54, "prompt": "Who invented the World Wide Web?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 55, "prompt": "Let's talk about the weekend plans.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 56, "prompt": "Write a regular expression that matches valid IPv4 addresses.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 57, "prompt": "Prove that there are infinitely many prime numbers.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 58, "prompt": "Give me the key points of the onboarding email chain below.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 59, "prompt": "When do we switch to daylight saving time here?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 60, "prompt": "Haha, good one.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 61, "prompt": "Implement Dijkstra's algorithm in Python with a priority queue.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 62, "prompt": "What is the reasoning that leads to the second law of thermodynamics from statistics?", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 63, "prompt": "tl;dr the changelog for version 2.0.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 64, "prompt": "What is the largest known prime number?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 65, "prompt": "I'm just typing to see how this behaves.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 66, "prompt": "Fix this bug: the payment webhook fires twice for the same order id.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 67, "prompt": "Think through the tradeoffs of append-only logs versus update-in-place storage.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 68, "prompt": "Summarize the arguments for and against nuclear energy in four bullets.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 69, "prompt": "Why is the ocean salty?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 70, "prompt": "OK let me rephrase that.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 71, "prompt": "Write a bash one-liner that finds the ten largest files under a directory.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 72, "prompt": "Explain why a monoamine oxidase inhibitor interacts dangerously with certain foods, step by step.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 73, "prompt": "Give me a summary of this 40-page rental agreement, highlighting anything unusual.", "expected_task_type": "summarization", "difficulty": "hard"}
+{"id": 74, "prompt": "Can penguins fly?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 75, "prompt": "Testing 1 2 3.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 76, "prompt": "Write code to detect a cycle in a directed graph.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 77, "prompt": "Analyze whether a democracy can durably restrict misinformation without restricting speech it dislikes.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 78, "prompt": "Condense the release notes into what affects users only.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 79, "prompt": "Does honey spoil?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 80, "prompt": "Good morning!", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 81, "prompt": "Debug why my Docker container cannot reach the host database on localhost.", "expected_task_type": "code", "difficulty": "medium"}
+{"id": 82, "prompt": "Solve this problem: a farmer must cross a river with a wolf, a goat and a cabbage.", "expected_task_type": "reasoning", "difficulty": "easy"}
+{"id": 83, "prompt": "Give me a summary of the security incident post-mortem below.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 84, "prompt": "How do vaccines produce immunity?", "expected_task_type": "qa", "difficulty": "medium"}
+{"id": 85, "prompt": "Anyway I just wanted to say hi.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 86, "prompt": "Write a Python class implementing an LRU cache with O(1) get and put.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 87, "prompt": "Explain why bidders in common-value auctions tend to overpay, step by step.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 88, "prompt": "Summarize the novel's argument in one paragraph.", "expected_task_type": "summarization", "difficulty": "medium"}
+{"id": 89, "prompt": "What causes the seasons?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 90, "prompt": "Hmm, interesting.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 91, "prompt": "Write a SQL migration that adds a unique index on (email, tenant_id) without locking writes.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 92, "prompt": "Prove or disprove: every even integer greater than 2 is a sum of two primes.", "expected_task_type": "reasoning", "difficulty": "hard"}
+{"id": 93, "prompt": "tl;dr this pull request description for the release email.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 94, "prompt": "Where do I find my tax file number?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 95, "prompt": "What a day.", "expected_task_type": "general", "difficulty": "easy"}
+{"id": 96, "prompt": "Refactor these 300 lines of nested ifs into a rule table.", "expected_task_type": "code", "difficulty": "hard"}
+{"id": 97, "prompt": "Explain why the Monty Hall answer surprises people, logically.", "expected_task_type": "reasoning", "difficulty": "medium"}
+{"id": 98, "prompt": "Key points of this design review, please.", "expected_task_type": "summarization", "difficulty": "easy"}
+{"id": 99, "prompt": "Is a tomato a fruit or a vegetable?", "expected_task_type": "qa", "difficulty": "easy"}
+{"id": 100, "prompt": "Hi there!", "expected_task_type": "general", "difficulty": "easy"}
