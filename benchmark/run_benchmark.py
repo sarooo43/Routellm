@@ -1,7 +1,12 @@
 """RouteLLM benchmark runner — naive single-model baseline vs full routing.
 
-Standalone async script (NOT part of the FastAPI app). Run it manually
-against an ALREADY-RUNNING backend:
+ONE command runs everything (both scenarios + the Markdown report):
+
+    python run_benchmark.py
+
+from ``benchmark/``, against an ALREADY-RUNNING backend (see benchmark/README.md
+for the exact copy-paste command on each OS). The two scenario runs can also be
+invoked individually:
 
     python run_benchmark.py --scenario normal
     python run_benchmark.py --scenario chaos
@@ -20,6 +25,10 @@ failures. Chaos is cleared again afterwards.
 
 Results are written to results/scenario_{1,2}_results.json, each containing
 aggregate metrics for both arms (the report generator reads both files).
+
+No numbers ship with the repo: every success rate, latency and cost in
+results/REPORT.md comes from YOUR run on YOUR machine with YOUR provider
+keys. A checkout without keys cannot produce data, and none is faked here.
 
 Sanity gates: the script fails loudly if it cannot reach the backend, if
 test_prompts.json is malformed, or if responses start hitting the API rate
@@ -247,6 +256,12 @@ def summarize(rows: list[dict], arm: str) -> dict:
     avg_latency = (
         sum(r["latency_ms"] for r in rows) / len(rows) if rows else 0.0
     )
+    # The models this arm actually called (successful requests only), so the
+    # report can say which models produced the numbers — a requirement, not a
+    # nicety: a table without the models used is not interpretable.
+    models_used = sorted(
+        {r["model_used"] for r in successes if r["model_used"]}
+    )
     breakdown: dict[str, dict] = {}
     for task_type in sorted({r["expected_task_type"] for r in rows}):
         subset = [r for r in rows if r["expected_task_type"] == task_type]
@@ -266,6 +281,7 @@ def summarize(rows: list[dict], arm: str) -> dict:
         "success_rate": round(len(successes) / len(rows), 4) if rows else 0.0,
         "avg_latency_ms": round(avg_latency, 2),
         "total_estimated_cost": round(total_cost, 8),
+        "models_used": models_used,
         "per_task_type_breakdown": breakdown,
         "per_prompt_results": rows,
     }
@@ -384,10 +400,17 @@ def main() -> None:
     )
     parser.add_argument(
         "--scenario",
-        choices=["normal", "chaos"],
-        default="normal",
-        help="normal = both arms under healthy providers; chaos = inject a "
-        "deterministic outage on the baseline provider before both arms.",
+        choices=["all", "normal", "chaos"],
+        default="all",
+        help="'all' (default) = normal + chaos scenarios + the Markdown "
+        "report in one command; 'normal' / 'chaos' run one scenario only "
+        "(then re-run with --report to rebuild the tables).",
+    )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Only (re)generate results/REPORT.md from the existing scenario "
+        "files — no requests are sent.",
     )
     parser.add_argument(
         "--base-url",
@@ -403,24 +426,41 @@ def main() -> None:
 
     prompts = load_and_validate_prompts()
 
-    scenario = asyncio.run(
-        run_scenario(args.scenario, args.base_url, prompts, args.baseline_provider)
-    )
+    if args.report:
+        generate_report_only()
+        return
 
-    RESULTS_DIR.mkdir(exist_ok=True)
-    out_file = RESULTS_DIR / SCENARIO_RESULTS_FILES[args.scenario]
-    payload = {
-        "scenario": "normal_conditions" if args.scenario == "normal" else "chaos_simulated_outage",
-        "chaos_injected": args.scenario == "chaos",
-        "baseline_provider": args.baseline_provider,
-        "run_name": out_file.stem,
-        "prompts_file": str(PROMPTS_FILE),
-        "total_prompts": len(prompts),
-        "completed_at": datetime.now(timezone.utc).isoformat(),
-        **scenario,
-    }
-    out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"\n✓ written {out_file}")
+    scenarios = ["normal", "chaos"] if args.scenario == "all" else [args.scenario]
+    for scenario in scenarios:
+        results = asyncio.run(
+            run_scenario(scenario, args.base_url, prompts, args.baseline_provider)
+        )
+
+        RESULTS_DIR.mkdir(exist_ok=True)
+        out_file = RESULTS_DIR / SCENARIO_RESULTS_FILES[scenario]
+        payload = {
+            "scenario": "normal_conditions" if scenario == "normal" else "chaos_simulated_outage",
+            "chaos_injected": scenario == "chaos",
+            "baseline_provider": args.baseline_provider,
+            "run_name": out_file.stem,
+            "prompts_file": str(PROMPTS_FILE),
+            "total_prompts": len(prompts),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            **results,
+        }
+        out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"\n✓ written {out_file}")
+
+    if args.scenario == "all":
+        generate_report_only()
+
+
+def generate_report_only() -> None:
+    """Generate results/REPORT.md from the scenario files already on disk."""
+    # Imported here so `--scenario normal` never pays for the report module.
+    import generate_report
+
+    generate_report.main()
 
 
 def _safe_json(resp: httpx.Response):

@@ -1,22 +1,37 @@
 """Benchmark report generator.
 
 Reads both scenario result files (each containing the naive and the RouteLLM
-arm = 4 datasets: {naive, routellm} × {no-chaos, chaos}), prints a markdown
-summary table to the console, writes results/REPORT.md, and renders:
+arm = 4 datasets: {naive, routellm} × {no-chaos, chaos}), writes
+results/REPORT.md — a Markdown results table with the generation date and the
+models each arm actually used — and renders:
 
   - results/success_rate_comparison.png
   - results/cost_comparison.png
 
-Run AFTER run_benchmark.py for both scenarios:
+The charts need matplotlib; REPORT.md does not. When matplotlib is not
+installed the report is still written and the charts are skipped with a
+message, so the one-command benchmark run never dies on a plotting library.
 
-    python generate_report.py     (needs matplotlib)
+Run AFTER run_benchmark.py for both scenarios (the default --scenario all
+already calls this):
+
+    python generate_report.py
 """
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-import matplotlib
+# Charts are an extra, not a requirement: report generation must work on a
+# bare venv that has only the backend's own dependencies.
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")  # headless: no display needed
+    import matplotlib.pyplot as plt  # noqa: E402
+except ImportError:  # pragma: no cover - exercised via monkeypatched None
+    matplotlib = None
 
 # Windows consoles default to cp1252 — force UTF-8 for the unicode output.
 if hasattr(sys.stdout, "reconfigure") and (
@@ -24,9 +39,6 @@ if hasattr(sys.stdout, "reconfigure") and (
 ).lower().replace("-", "") != "utf8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-
-matplotlib.use("Agg")  # headless: no display needed
-import matplotlib.pyplot as plt  # noqa: E402
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BENCHMARK_DIR / "results"
@@ -69,7 +81,18 @@ def load_datasets() -> dict[str, dict]:
 
 
 def fmt_pct(rate: float) -> str:
-    return f"{rate:.1%}".rstrip("0").rstrip(".")
+    """0.9 → '90%', 1.0 → '100%', 0.155 → '15.5%' — no trailing '.0' noise."""
+    text = f"{rate * 100:.1f}"
+    if text.endswith(".0"):
+        text = text[: -2]
+    return f"{text}%"
+
+
+def models_line(label: str, arm_data: dict) -> str:
+    """One bullet naming the models an arm actually called."""
+    used = arm_data.get("models_used") or []
+    models = ", ".join(f"`{m}`" for m in used) if used else "_(none succeeded)_"
+    return f"- **{label}:** {models}"
 
 
 def build_table(datasets: dict[str, dict]) -> str:
@@ -81,8 +104,18 @@ def build_table(datasets: dict[str, dict]) -> str:
     lines = [
         "# RouteLLM Benchmark Report",
         "",
-        f"Generated from `{SCENARIOS[0][0]}` and `{SCENARIOS[1][0]}` — "
-        f"{nc_n['total_prompts']} prompts per arm under identical conditions.",
+        f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}  ",
+        f"**Prompts per arm:** {nc_n['total_prompts']} (identical set in all four runs)  ",
+        "**Source of these numbers:** this very machine, this backend, your "
+        "provider keys. Nothing here is sampled, estimated or copied from "
+        "anywhere — re-running the benchmark produces your own table.",
+        "",
+        "## Models used",
+        "",
+        models_line("Naive baseline (single forced model)", nc_n),
+        models_line("RouteLLM, normal conditions (router's own picks)", nc_r),
+        models_line("Naive baseline under the simulated outage", c_n),
+        models_line("RouteLLM under the simulated outage", c_r),
         "",
         "| Scenario | Naive (single model) | RouteLLM |",
         "|---|---|---|",
@@ -149,7 +182,15 @@ def bar_chart(values: list[float], labels: list[str], colors: list[str], title: 
     print(f"✓ saved {out_path.name}")
 
 
-def build_charts(datasets: dict[str, dict]) -> None:
+def build_charts(datasets: dict[str, dict]) -> bool:
+    """Render the two PNGs. Returns False (with a message) without matplotlib."""
+    if matplotlib is None:
+        print(
+            "⚠ matplotlib not installed — charts skipped. REPORT.md is "
+            "complete without them; for charts run: python -m pip install matplotlib"
+        )
+        return False
+
     # Grouped layout: no-chaos pair then chaos pair, per arm.
     order = ["no_chaos:naive", "no_chaos:routellm", "chaos:naive", "chaos:routellm"]
     labels = ["No outage\nNaive", "No outage\nRouteLLM", "Outage\nNaive", "Outage\nRouteLLM"]
@@ -172,6 +213,7 @@ def build_charts(datasets: dict[str, dict]) -> None:
         out_path=RESULTS_DIR / "cost_comparison.png",
         pct=False,
     )
+    return True
 
 
 def main() -> None:
