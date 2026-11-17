@@ -33,8 +33,7 @@ HEADER = """# Eval results
 > **All numbers in this file come from a MOCKED eval run (deterministic
 > scripted providers, no network, no provider keys). They measure the
 > gateway's routing/resilience/eval machinery - NOT real model quality.
-> For real numbers, run `python evals/run_evals.py` yourself with your own
-> provider keys configured; this file regenerates each run.**
+> For real numbers, run `python evals/run_evals.py` with your own provider keys configured; this file regenerates each run.**
 """
 
 WHAT_THIS_DOES_NOT_SHOW = """## What this does not show
@@ -188,7 +187,11 @@ def main() -> None:
     else:
         DOC_PATH.parent.mkdir(parents=True, exist_ok=True)
         DOC_PATH.write_text(report, encoding="utf-8")
-        print(f"wrote {DOC_PATH.relative_to(REPO_ROOT)}")
+        try:
+            shown = DOC_PATH.relative_to(REPO_ROOT)
+        except ValueError:
+            shown = DOC_PATH
+        print(f"wrote {shown}")
         print(f"routing accuracy: {blob['routing']['accuracy'] * 100:.1f}% | "
               f"resilience router success: "
               f"{blob['resilience']['scenarios'][0]['router']['success_rate'] * 100:.0f}% "
