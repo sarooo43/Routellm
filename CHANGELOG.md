@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The benchmark report also lands in `docs/benchmark-results.md`.** The one
+  benchmark command now writes its Markdown report to
+  `benchmark/results/REPORT.md` AND the repo-root docs location the README
+  links to. Both are produced by your own run; no benchmark numbers are
+  committed to the repository.
 - **One-command local run.** `python run.py` (also `./start.sh`,
   `.\start.ps1`) creates a virtualenv, installs dependencies, builds the
   dashboard or uses a prebuilt one, creates the data directory, and serves the
