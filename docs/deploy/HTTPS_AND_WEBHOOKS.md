@@ -135,7 +135,7 @@ curl -sS -X POST "https://routellm.example.com/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $RK" \
   -d '{
-    "model": "routellm-auto",
+    "model": "routtener-auto",
     "messages": [{"role":"user","content":"Hello"}]
   }'
 ```
@@ -151,7 +151,7 @@ client = OpenAI(
     default_headers={"X-API-Key": "rk_..."},
 )
 resp = client.chat.completions.create(
-    model="routellm-auto",
+    model="routtener-auto",
     messages=[{"role": "user", "content": "Hello"}],
 )
 print(resp.choices[0].message.content)

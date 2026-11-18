@@ -15,7 +15,9 @@ showing you exactly what it decided and why.
 > the routing-model research project. It is independent and not affiliated with
 > LMSYS. Compatibility surfaces kept from the old name: the `ROUTELLM_*`
 > environment-variable fallback, the `rk_` API-key prefix, the
-> `routellm-auto` OpenAI model id, and the `routellm.db` data filename — all
+> `routellm-auto` OpenAI model id (accepted as an alias alongside the primary
+> `routtener-auto`), the `x_routellm_metadata` response field (emitted
+> alongside `x_routtener_metadata`), and the `routellm.db` data filename — all
 > still work so existing installs keep their data.
 
 <!--
@@ -131,7 +133,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed-locally")
 
 reply = client.chat.completions.create(
-    model="routellm-auto",          # or "groq" / "gemini" / "deepseek"
+    model="routtener-auto",         # or "groq" / "gemini" / "deepseek"
     messages=[{"role": "user", "content": "Explain circuit breakers in one line."}],
 )
 print(reply.choices[0].message.content)

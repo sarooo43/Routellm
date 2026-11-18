@@ -5,8 +5,9 @@
  * **LMSYS RouteLLM** (the routing-model research project). They are unrelated
  * projects, so the disclaimer lives here once and is rendered wherever the
  * name appears in full. It is now renamed **Routtener**; the `rk_` key
- * prefix, the `routellm-auto` model id and the browser-storage keys stay put
- * so existing installs keep working.
+ * prefix, the `routellm-auto` model id (accepted alias of the primary
+ * `routtener-auto`), the legacy `x_routellm_metadata` field and the
+ * browser-storage keys stay put so existing installs keep working.
  */
 
 export const APP_NAME = 'Routtener Gateway'

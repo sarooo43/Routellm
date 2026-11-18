@@ -199,8 +199,13 @@ async def test_openai_model_mock_routes_to_the_demo_provider(client):
 async def test_openai_model_list_does_not_advertise_the_demo_model(client):
     body = (await client.get("/v1/models")).json()
     model_ids = [item["id"] for item in body["data"]]
-    assert "routellm-auto" in model_ids
-    assert DEMO_PROVIDER_NAME not in model_ids
+    # The demo id label is now "routtener-demo"; it stays unadvertised either
+    # way - the demo provider is an explicit local-only action, and the model
+    # list never offers it as a pickable id (deliberate design decision,
+    # flagged for the owner in the T5 report rather than changed).
+    assert "routtener-auto" in model_ids
+    assert "routtener-demo" not in model_ids
+    assert "routellm-demo" not in model_ids
 
 
 async def test_setup_status_explains_the_first_run(client):

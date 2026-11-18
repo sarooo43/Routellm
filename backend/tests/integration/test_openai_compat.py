@@ -65,7 +65,7 @@ async def client(monkeypatch, db_session, breaker, tracker, redis_client, stubs,
         yield ac
 
 
-def chat_body(model="routellm-auto", content="Say hi", **overrides):
+def chat_body(model="routtener-auto", content="Say hi", **overrides):
     """Build a minimal request, allowing individual fields to be overridden."""
     return {
         "model": model,
@@ -83,7 +83,8 @@ async def test_auto_completion_runs_pipeline_and_matches_openai_schema(
     data = response.json()
 
     assert set(data) == {
-        "id", "object", "created", "model", "choices", "usage", "x_routellm_metadata"
+        "id", "object", "created", "model", "choices", "usage",
+        "x_routtener_metadata", "x_routellm_metadata",
     }
     assert data["id"].startswith("chatcmpl-")
     assert data["object"] == "chat.completion"
@@ -99,7 +100,11 @@ async def test_auto_completion_runs_pipeline_and_matches_openai_schema(
     assert data["usage"] == {
         "prompt_tokens": 0, "completion_tokens": 21, "total_tokens": 21
     }
-    metadata = data["x_routellm_metadata"]
+    # Rename contract: BOTH metadata keys are emitted and carry the same
+    # object - new clients read x_routtener_metadata, old clients keep
+    # reading x_routellm_metadata.
+    metadata = data["x_routtener_metadata"]
+    assert data["x_routellm_metadata"] == metadata
     assert set(metadata) == {
         "confidence_score", "fallback_chain_attempted", "routing_method"
     }
@@ -200,7 +205,7 @@ async def test_unknown_model_returns_openai_error_before_execution(client, stubs
     assert response.json() == {
         "error": {
             "message": "Unknown model 'not_a_real_model'. Valid options: "
-            "routellm-auto, groq, gemini, deepseek",
+            "routtener-auto, groq, gemini, deepseek",
             "type": "invalid_request_error",
             "code": "model_not_found",
         }
@@ -238,7 +243,7 @@ async def test_model_list_matches_openai_sdk_and_tracks_registry(client, stubs):
     assert set(data) == {"object", "data"}
     assert data["object"] == "list"
     assert data["data"] == [
-        {"id": "routellm-auto", "object": "model", "created": 0, "owned_by": "routellm"},
+        {"id": "routtener-auto", "object": "model", "created": 0, "owned_by": "routtener"},
         {"id": "groq", "object": "model", "created": 0, "owned_by": "groq"},
         {"id": "gemini", "object": "model", "created": 0, "owned_by": "google"},
         {"id": "deepseek", "object": "model", "created": 0, "owned_by": "deepseek"},
@@ -247,6 +252,25 @@ async def test_model_list_matches_openai_sdk_and_tracks_registry(client, stubs):
         item["id"] for item in data["data"]
     ]
     assert all(stub.calls == 0 for stub in stubs.values())
+
+
+async def test_pre_rename_auto_id_still_routes_as_alias(client, stubs):
+    # T3 rename contract: "routellm-auto" is demoted to an alias, never removed.
+    response = await client.post(CHAT_URL, json=chat_body(model="routellm-auto"))
+    assert response.status_code == 200
+    data = response.json()
+    assert data["model"] == "groq"
+    assert stubs["groq"].calls == 1
+    # And the old metadata field is still present, identical to the new one.
+    assert data["x_routellm_metadata"] == data["x_routtener_metadata"]
+
+
+async def test_model_list_lists_the_new_primary_id(client, stubs):
+    response = await client.get("/v1/models")
+    assert response.status_code == 200
+    ids = [entry["id"] for entry in response.json()["data"]]
+    assert "routtener-auto" in ids
+    assert "routellm-auto" not in ids  # alias is accepted, not advertised
 
 
 async def test_conversation_preserves_order_roles_and_latest_user_message(client, stubs):
@@ -286,10 +310,12 @@ async def test_task_type_override_reaches_classifier_and_persistence(
     assert log.task_type == "code"
 
 
-@pytest.mark.parametrize("model", ["routellm-auto", "deepseek"])
+@pytest.mark.parametrize("model", ["routtener-auto", "routellm-auto", "deepseek"])
 async def test_generation_options_reach_the_executor_on_both_paths(
     client, stubs, model
 ):
+    # routtener-auto = new primary id; routellm-auto = accepted alias: the
+    # old id must still ROUTE identically (rename contract, T3).
     response = await client.post(
         CHAT_URL,
         json=chat_body(model=model, temperature=0.2, max_tokens=64),
@@ -298,7 +324,7 @@ async def test_generation_options_reach_the_executor_on_both_paths(
     expected = {"temperature": 0.2, "max_tokens": 64}
     if model == "deepseek":
         expected["prefer_code_model"] = False
-    assert stubs["groq" if model == "routellm-auto" else model].kwargs_seen == [expected]
+    assert stubs["groq" if model.endswith("-auto") else model].kwargs_seen == [expected]
 
 
 async def test_generation_options_survive_fallback(client, stubs):

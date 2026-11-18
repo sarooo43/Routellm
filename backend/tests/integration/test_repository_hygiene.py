@@ -144,7 +144,7 @@ def test_quick_start_is_the_first_command_block():
 def test_readme_documents_the_openai_escape_hatch():
     readme = _read("README.md")
     assert "base_url=\"http://localhost:8000/v1\"" in readme
-    assert "routellm-auto" in readme
+    assert "routtener-auto" in readme
 
 
 # --------------------------------------------------------------------------
