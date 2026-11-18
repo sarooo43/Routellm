@@ -13,8 +13,10 @@ Pinned here:
   the resilience eval's success rate from 100% to 0%.
 """
 
+import asyncio
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -70,6 +72,59 @@ def _restore_structlog_after_each_test(evals_harness):
     CI: tests/unit/test_local.py captures structlog stdout)."""
     yield
     evals_harness.restore_structlog()
+
+
+# --------------------------------------------------------------------------
+# T4a: wilson_interval against known closed-form values
+# --------------------------------------------------------------------------
+
+
+def test_wilson_50_of_50_lower_bound_is_92_9_not_70_3(evals_harness):
+    """The observed bug: a 50/50 run printed [70.3%, 100%]. The correct
+    95% Wilson lower bound for p_hat = 1 is n / (n + z^2)."""
+    lo, hi = evals_harness.wilson_interval(50, 50)
+    assert lo == pytest.approx(50 / (50 + evals_harness.Z_95**2), abs=1e-9)
+    assert lo == pytest.approx(0.9287, abs=1e-3)
+    assert hi == pytest.approx(1.0)
+
+
+def test_wilson_0_of_50(evals_harness):
+    lo, hi = evals_harness.wilson_interval(0, 50)
+    assert lo <= 1e-12  # 0 modulo float rounding
+    # Closed form for p_hat = 0: upper = z^2 / (n + z^2).
+    assert hi == pytest.approx(
+        evals_harness.Z_95**2 / (50 + evals_harness.Z_95**2), abs=1e-9
+    )
+
+
+def test_wilson_5_of_10(evals_harness):
+    lo, hi = evals_harness.wilson_interval(5, 10)
+    assert lo == pytest.approx(0.2366, abs=1e-3)
+    assert hi == pytest.approx(0.7634, abs=1e-3)
+    assert lo < 0.5 < hi
+
+
+def test_wilson_1_of_1(evals_harness):
+    lo, hi = evals_harness.wilson_interval(1, 1)
+    # For p_hat = 1: lower = 1 / (1 + z^2) = 0.2065, upper clamped to 1.
+    assert lo == pytest.approx(1 / (1 + evals_harness.Z_95**2), abs=1e-9)
+    assert hi == pytest.approx(1.0)
+
+
+def test_wilson_0_of_0_edge_case(evals_harness):
+    assert evals_harness.wilson_interval(0, 0) == (0.0, 0.0)
+
+
+def test_wilson_interval_never_exceeds_the_point_estimate_span(evals_harness):
+    """Sanity: the interval contains p_hat and shrinks as n grows."""
+    for successes, n in ((3, 10), (37, 50), (99, 100), (12, 200)):
+        p_hat = successes / n
+        lo, hi = evals_harness.wilson_interval(successes, n)
+        assert lo <= p_hat <= hi or (successes == 0 or successes == n)
+        assert 0.0 <= lo <= hi <= 1.0
+    narrow = evals_harness.wilson_interval(45, 50)
+    wide = evals_harness.wilson_interval(9, 10)
+    assert (narrow[1] - narrow[0]) < (wide[1] - wide[0])
 
 
 # --------------------------------------------------------------------------
@@ -215,8 +270,12 @@ def test_overhead_eval_output_shape(overhead_eval):
         arm = result[arm_key]
         assert arm["n"] == 10
         assert 0 < arm["p50_ms"] <= arm["p95_ms"]
-    assert result["overhead_delta"]["p50_ms"] >= 0.0
-    assert result["overhead_delta"]["p95_ms"] >= 0.0
+    # T4a/baseline-flake fix: with n=10 the delta can legitimately be a few
+    # milliseconds negative from wall-clock jitter alone (observed -6.2ms and
+    # -0.8ms on identical code). Asserting >= 0 made this test fail randomly.
+    # The MEANINGFUL invariant: routing overhead does not add orders of
+    # magnitude - the auto p95 stays within a generous bound of the naive p95.
+    assert result["overhead_delta"]["p95_ms"] < result["naive"]["p95_ms"]
 
 
 # --------------------------------------------------------------------------
@@ -225,22 +284,216 @@ def test_overhead_eval_output_shape(overhead_eval):
 
 
 def test_run_evals_writes_honest_report(evals_runner, monkeypatch, tmp_path):
-    doc_path = tmp_path / "eval-results.md"
-    monkeypatch.setattr(evals_runner, "DOC_PATH", doc_path)
+    # T4c: a mocked run writes ONLY to the gitignored evals/results-mock/
+    # path, never to docs/. DOC_PATH is monkeypatched to a sentinel to prove
+    # a mocked run never touches it.
+    mock_dir = tmp_path / "results-mock"
+    doc_path = mock_dir / "eval-results.md"
+    docs_sentinel = tmp_path / "docs-eval-results.md"
+    monkeypatch.setattr(evals_runner, "MOCK_DIR", mock_dir)
+    monkeypatch.setattr(evals_runner, "MOCK_REPORT_PATH", doc_path)
+    monkeypatch.setattr(evals_runner, "DOC_PATH", docs_sentinel)
     test_argv = ["run_evals.py", "--n", "2", "--n-overhead", "5"]
     monkeypatch.setattr(sys, "argv", test_argv)
     evals_runner.main()
 
     assert doc_path.exists()
+    assert not docs_sentinel.exists()
     text = " ".join(doc_path.read_text(encoding="utf-8").split())
     # the report must carry the provenance + honesty contract
     for fragment in (
         "Commit:",
         "What this does not show",
-        "MOCKED eval run",
+        "MODE: MOCKED",
+        "not a measurement of any real provider",
         "Wilson 95%",
-        "your own provider keys",
+        "not measured: scripted stubs",
     ):
         assert fragment in text, f"report is missing {fragment!r}"
     # and must not pretend to be a real-provider result
     assert "NOT the real providers" in text
+
+
+def test_no_committed_results_file_has_a_mocked_header():
+    """T4c: a MOCKED results file must never be committed. The mocked suite
+    writes to the gitignored evals/results-mock/; live results (docs/) carry
+    a MODE: LIVE header, so any committed file with a MOCKED header is a
+    regression."""
+    offenders = []
+    skip = {".git", "node_modules", ".venv", "dist", "__pycache__",
+            ".pytest_cache", ".ruff_cache", "coverage"}
+    for root, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = [d for d in dirs if d not in skip]
+        for name in files:
+            if not name.endswith(".md"):
+                continue
+            path = Path(root) / name
+            try:
+                head = path.read_text(encoding="utf-8", errors="ignore")[:2000]
+            except OSError:
+                continue
+            if "MODE: MOCKED" in head:
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert offenders == []
+
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    active_rules = [
+        line.strip()
+        for line in gitignore.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    assert any("evals/results-mock" in rule for rule in active_rules)
+    assert not any("docs/eval-results.md" in rule for rule in active_rules)
+
+
+# --------------------------------------------------------------------------
+# T4b: naive-arm labelling + first-vs-steady reporting
+# --------------------------------------------------------------------------
+
+
+def test_resilience_render_labels_the_naive_arm_and_what_it_shows(resilience_eval):
+    result = resilience_eval.run_scenario_mocked("provider_down", 2, 3)
+    text = resilience_eval.render_markdown([result], 2, "mocked (test)")
+    assert "fails by construction when its only provider is down" in text
+    assert "What this comparison shows / does not show" in text
+    assert "FAILOVER WORKS" in text
+    assert "First request vs steady state" in text
+    # the naive arm must actually collapse in a provider-down scenario
+    assert result["naive"]["successes"] == 0
+    # and both arms carry first/steady breakdowns
+    for arm_key in ("router", "naive"):
+        arm = result[arm_key]
+        assert set(arm["first_request"]) == {"attempts", "latency_ms"}
+        assert set(arm["steady_state"]) == {"mean_attempts", "mean_latency_ms"}
+
+
+# --------------------------------------------------------------------------
+# T4d: E3 mocked mode reports no percentages
+# --------------------------------------------------------------------------
+
+
+def test_quality_mocked_render_prints_not_measured_and_no_percentages(quality_eval):
+    result = quality_eval.run_quality_eval()
+    assert result["mode"].startswith("mocked")
+    render = quality_eval.render_markdown(result)
+    assert "not measured: scripted stubs" in render
+    assert "%" not in render
+    # the blob keeps the numbers for machinery checks - only the RENDER hides
+    # them (a live render with mode "live ..." prints percentages + n)
+    assert 0.0 <= result["arms"][0]["accuracy"] <= 1.0
+
+
+def test_quality_live_render_shows_percentages_with_n_per_kind(quality_eval):
+    result = quality_eval.run_quality_eval()
+    result = {**result, "mode": "live (real providers)"}
+    render = quality_eval.render_markdown(result)
+    assert "%" in render
+    assert "n=" in render
+
+
+# --------------------------------------------------------------------------
+# T4h: live-mode safeguards (mocked transports - no network, no keys)
+# --------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status_code, data):
+        self.status_code = status_code
+        self._data = data
+
+    def json(self):
+        return self._data
+
+
+class _FakeClient:
+    """Minimal async client double for preflight_live: canned responses per
+    (method, path); records every call so tests can assert no request was
+    fired past the refusal point."""
+
+    def __init__(self, routes):
+        self._routes = routes
+        self.calls = []
+
+    async def get(self, path, **kwargs):
+        self.calls.append(("GET", path))
+        return self._routes[("GET", path)]
+
+    async def post(self, path, **kwargs):
+        self.calls.append(("POST", path))
+        return self._routes[("POST", path)]
+
+
+def _preflight_routes(*, configured, chaos_status):
+    return {
+        ("POST", "/api/v1/keys/generate"): _FakeResponse(200, {"api_key": "eval-key"}),
+        ("GET", "/api/v1/provider-keys"): _FakeResponse(
+            200,
+            [
+                {"provider_name": name, "configured": True}
+                for name in configured
+            ]
+            + [
+                {"provider_name": name, "configured": False}
+                for name in ("groq", "gemini", "deepseek")
+                if name not in configured
+            ],
+        ),
+        ("GET", "/api/v1/admin/chaos/status"): _FakeResponse(
+            chaos_status, {"active_chaos": []}
+        ),
+    }
+
+
+def test_live_refuses_without_yes_spend_quota(resilience_eval, monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["run_resilience_eval.py", "--live"])
+    with pytest.raises(SystemExit) as exc:
+        resilience_eval.main()
+    assert "--yes-spend-quota" in str(exc.value)
+
+
+def test_preflight_aborts_with_fewer_than_two_configured_providers(resilience_eval):
+    client = _FakeClient(_preflight_routes(configured=["groq"], chaos_status=200))
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(resilience_eval.preflight_live(client, 5))
+    assert "fewer than 2 providers" in str(exc.value)
+    # nothing past the key-status check was attempted
+    assert ("GET", "/api/v1/admin/chaos/status") not in client.calls
+
+
+def test_preflight_refuses_chaos_mode_when_backend_disables_it(resilience_eval):
+    client = _FakeClient(
+        _preflight_routes(configured=["groq", "deepseek"], chaos_status=404)
+    )
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(resilience_eval.preflight_live(client, 5))
+    assert "CHAOS_MODE_ENABLED" in str(exc.value)
+
+
+def test_preflight_passes_and_prints_budget_and_providers(resilience_eval, capsys):
+    client = _FakeClient(
+        _preflight_routes(configured=["groq", "deepseek", "gemini"], chaos_status=200)
+    )
+    key = asyncio.run(resilience_eval.preflight_live(client, 7))
+    assert key == "eval-key"
+    out = capsys.readouterr().out
+    assert "Request budget: 7 requests x 1 scenario" in out
+    assert "groq, deepseek, gemini" in out
+
+
+# --------------------------------------------------------------------------
+# T4j: eval helpers must not leave global logging state changed
+# --------------------------------------------------------------------------
+
+
+def test_silence_and_restore_leave_global_logging_unchanged(evals_harness):
+    import logging
+
+    import structlog
+
+    before_cfg = structlog.get_config()
+    before_level = logging.getLogger().getEffectiveLevel()
+    evals_harness.silence_structlog()
+    assert logging.getLogger().getEffectiveLevel() >= logging.CRITICAL
+    evals_harness.restore_structlog()
+    assert structlog.get_config() == before_cfg
+    assert logging.getLogger().getEffectiveLevel() == before_level

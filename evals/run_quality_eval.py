@@ -320,31 +320,62 @@ def run_quality_eval(tasks_path: Path = TASKS_PATH) -> dict:
 
 
 def render_markdown(result: dict) -> str:
+    # T4d: quality percentages are a LIVE-mode-only output. A mocked run's
+    # "accuracy" describes the canned scripts, not a model, so it prints
+    # "not measured: scripted stubs" instead of any percentage.
+    mocked = str(result.get("mode", "")).startswith("mocked")
     lines = [
         "## Quality (E3)",
         "",
         f"Mode: **{result['mode']}** - {result['n_tasks']} checkable tasks "
         "(8 exact-match math, 8 code with unit tests, 8 JSON schema), three "
         "arms, every reply checked mechanically. NO LLM judge anywhere.",
+    ]
+    if mocked:
+        lines += [
+            "",
+            "**Quality: not measured: scripted stubs.** No accuracy or "
+            "success percentages are reported for a mocked run - the "
+            "providers answer from canned scripts (groq scripted correct on "
+            "every task, deepseek only on JSON), so a percentage here would "
+            "describe the script, not a model. Percentages appear only in a "
+            "LIVE run with real keys, where each column also carries the "
+            "per-task-type n.",
+            "",
+            "| Arm | Accuracy | math | code | json | provider used |",
+            "|---|---|---|---|---|---|",
+        ]
+        for arm in result["arms"]:
+            used = ", ".join(
+                f"{p} x{n}" for p, n in sorted(arm["providers_used"].items(), reverse=True)
+            )
+            lines.append(
+                f"| {arm['arm']} | not measured (scripted stubs) "
+                f"| not measured | not measured | not measured | {used} |"
+            )
+        return "\n".join(lines)
+    lines += [
         "",
-        "**What these numbers mean:** the providers are deterministic stubs "
-        "with canned answers (groq scripted correct on every task, deepseek "
-        "only on JSON). This run validates the eval machinery and the "
-        "routing-accuracy link, NOT real model quality - real numbers need "
-        "the owner's keys.",
+        "**What these numbers mean:** this is a LIVE run against real "
+        "providers - the percentages below are measured, and each column "
+        "carries the n per task type.",
         "",
-        "| Arm | Accuracy | Wilson 95% | math | code | json | provider used |",
+        "| Arm | Accuracy | Wilson 95% | math (n, acc) | code (n, acc) | json (n, acc) | provider used |",
         "|---|---|---|---|---|---|---|",
     ]
     for arm in result["arms"]:
         pk = arm["per_kind"]
-        fmt = lambda v: f"{v * 100:.1f}%" if v is not None else "n/a"  # noqa: E731
+        fmt = lambda kind: (  # noqa: E731
+            f"n={pk[kind]['n']}, {pk[kind]['accuracy'] * 100:.1f}%"
+            if pk[kind]["accuracy"] is not None
+            else "n=0, n/a"
+        )
         lo, hi = arm["wilson_95"]
         used = ", ".join(f"{p} x{n}" for p, n in sorted(arm["providers_used"].items(), reverse=True))
         lines.append(
             f"| {arm['arm']} | {arm['accuracy'] * 100:.1f}% ({arm['correct']}/{arm['n']}) "
-            f"| [{lo * 100:.1f}%, {hi * 100:.1f}%] | {fmt(pk['math']['accuracy'])} "
-            f"| {fmt(pk['code']['accuracy'])} | {fmt(pk['json']['accuracy'])} | {used} |"
+            f"| [{lo * 100:.1f}%, {hi * 100:.1f}%] | {fmt('math')} "
+            f"| {fmt('code')} | {fmt('json')} | {used} |"
         )
     return "\n".join(lines)
 
