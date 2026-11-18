@@ -37,7 +37,7 @@ No Docker. No Postgres. No Redis. No account.
 
 ```bash
 git clone https://github.com/sarooo43/Routtener.git
-cd Routellm
+cd Routtener
 python run.py
 ```
 
@@ -54,7 +54,7 @@ Node is available (or uses a prebuilt one), creates `./data`, and opens
 
 ```powershell
 git clone https://github.com/sarooo43/Routtener.git
-cd Routellm
+cd Routtener
 .\start.ps1
 ```
 
@@ -75,7 +75,7 @@ nothing needs to be made permanent.
 
 ```bash
 git clone https://github.com/sarooo43/Routtener.git
-cd Routellm
+cd Routtener
 ./start.sh
 ```
 

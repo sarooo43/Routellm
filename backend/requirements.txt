@@ -1,4 +1,4 @@
-# RouteLLM backend — RUNTIME dependencies only.
+# Routtener backend — RUNTIME dependencies only.
 #
 # This file is what gets installed on a deployment host (Hugging Face Space,
 # Docker image, Railway/Render). Keep it free of dev/test tooling: the Space is
