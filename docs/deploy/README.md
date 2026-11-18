@@ -64,8 +64,7 @@ putting it on the internet:
 
 | Path | Status |
 |---|---|
-| `.github/workflows/deploy-hf.yml` | Kept, gated on the `HF_TOKEN` secret; skipped when unset |
-| `.github/workflows/keepalive.yml` | Kept; no-ops when no Space URL is configured |
+| `scripts/deploy_hf.ps1` / `scripts/deploy_hf.sh` | Kept; manual deploy entry points, tested in CI |
 | `cloudflare/worker.js` + `wrangler.jsonc` | Kept and tested (`npm run test:cloudflare`) |
 | `Caddyfile`, `docker-compose.yml` (previous multi-service version) | Replaced by the single-service compose file; the Caddy path is documented in [HTTPS_AND_WEBHOOKS.md](HTTPS_AND_WEBHOOKS.md) |
 

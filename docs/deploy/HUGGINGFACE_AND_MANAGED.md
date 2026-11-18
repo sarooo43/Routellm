@@ -147,12 +147,11 @@ git push hf <sha>:main --force        # what the script ultimately runs
 - Git will prompt for the HF **username** and a **WRITE token** as the password.
   No credentials are stored in the remote URL or in the scripts.
 
-Optional automation: `.github/workflows/deploy-hf.yml` does the same on every
-push to `main` that touches `backend/**` — but only after you add the repository
-secret `HF_TOKEN` (it is skipped, not failed, without it).
-
-Optional keep-alive: `.github/workflows/keepalive.yml` pings `/health` every 30
-minutes using the repository **variable** `API_BASE_URL`. See the caveat below.
+Automation: this repository intentionally ships **no** GitHub Actions deploy or
+keep-alive workflows. Run `scripts/deploy_hf.ps1` (Windows) or
+`scripts/deploy_hf.sh` (Linux/macOS) manually when you want to deploy. That
+keeps the token in your own environment and avoids a scheduled job that cannot
+guarantee a free Space stays awake.
 
 ---
 
