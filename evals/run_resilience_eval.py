@@ -61,6 +61,7 @@ from harness import (  # noqa: E402
     count_real_attempts,
     mean,
     make_scripted_response,
+    restore_structlog,
     silence_structlog,
     wilson_interval,
 )
@@ -502,59 +503,68 @@ def main() -> None:
     # ("forced_provider_failed_no_fallback", ...) - silence the app's logging
     # so the report is the only thing on stdout.
     silence_structlog()
-
-    parser = argparse.ArgumentParser(
-        description="E2: resilience eval - router vs naive single-provider baseline."
-    )
-    parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
-    parser.add_argument("--max-fallbacks", type=int, default=3)
-    parser.add_argument("--json", action="store_true", help="print the raw result blob")
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="run provider_down against a RUNNING backend with Chaos Mode (off by default)",
-    )
-    parser.add_argument(
-        "--yes-spend-quota",
-        action="store_true",
-        help="REQUIRED with --live: explicit consent that real provider "
-        "quota will be spent. --live without this flag refuses to run.",
-    )
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
-    args = parser.parse_args()
-
-    if args.live and not args.yes_spend_quota:
-        raise SystemExit(
-            "Refusing to run --live without --yes-spend-quota: live mode "
-            "calls real providers and spends real quota. If that is intended, "
-            "re-run with: --live --yes-spend-quota"
+    # T4j/CI-regression fix: EVERY exit path must restore the app's logging,
+    # including the early SystemExit refusals below (--live without
+    # --yes-spend-quota, preflight failures). A leaked silence broke later
+    # stdout-capturing tests under pytest (test_generated_key_is_never_logged
+    # captured nothing). This also matters because pytest loads this script
+    # via importlib under a different module name than harness.py itself, so
+    # the test suite's restore fixture cannot see this module's globals.
+    try:
+        parser = argparse.ArgumentParser(
+            description="E2: resilience eval - router vs naive single-provider baseline."
         )
+        parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
+        parser.add_argument("--max-fallbacks", type=int, default=3)
+        parser.add_argument("--json", action="store_true", help="print the raw result blob")
+        parser.add_argument(
+            "--live",
+            action="store_true",
+            help="run provider_down against a RUNNING backend with Chaos Mode (off by default)",
+        )
+        parser.add_argument(
+            "--yes-spend-quota",
+            action="store_true",
+            help="REQUIRED with --live: explicit consent that real provider "
+            "quota will be spent. --live without this flag refuses to run.",
+        )
+        parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
+        args = parser.parse_args()
 
-    if args.live:
-        import httpx
+        if args.live and not args.yes_spend_quota:
+            raise SystemExit(
+                "Refusing to run --live without --yes-spend-quota: live mode "
+                "calls real providers and spends real quota. If that is intended, "
+                "re-run with: --live --yes-spend-quota"
+            )
 
-        async def _live() -> dict:
-            async with httpx.AsyncClient(
-                base_url=args.base_url, timeout=30.0
-            ) as client:
-                api_key = await preflight_live(client, args.n)
-                return await run_scenario_live(client, api_key, args.n)
+        if args.live:
+            import httpx
 
-        result = asyncio.run(_live())
-        results = [result]
-        mode = "live (real backend, chaos-injected outage)"
-        write_live_doc(result, args.n, args.base_url)
-    else:
-        results = []
-        for scenario in SCENARIOS:
-            results.append(run_scenario_mocked(scenario, args.n, args.max_fallbacks))
-        mode = "mocked (deterministic, no network)"
+            async def _live() -> dict:
+                async with httpx.AsyncClient(
+                    base_url=args.base_url, timeout=30.0
+                ) as client:
+                    api_key = await preflight_live(client, args.n)
+                    return await run_scenario_live(client, api_key, args.n)
 
-    blob = {"eval": "resilience", "mode": mode, "n_per_scenario": args.n, "scenarios": results}
-    if args.json:
-        print(json.dumps(blob, indent=2))
-    else:
-        print(render_markdown(results, args.n, mode))
+            result = asyncio.run(_live())
+            results = [result]
+            mode = "live (real backend, chaos-injected outage)"
+            write_live_doc(result, args.n, args.base_url)
+        else:
+            results = []
+            for scenario in SCENARIOS:
+                results.append(run_scenario_mocked(scenario, args.n, args.max_fallbacks))
+            mode = "mocked (deterministic, no network)"
+
+        blob = {"eval": "resilience", "mode": mode, "n_per_scenario": args.n, "scenarios": results}
+        if args.json:
+            print(json.dumps(blob, indent=2))
+        else:
+            print(render_markdown(results, args.n, mode))
+    finally:
+        restore_structlog()
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ from harness import (  # noqa: E402
     ScriptedProvider,
     build_eval_stack,
     make_scripted_response,
+    restore_structlog,
     silence_structlog,
     wilson_interval,
 )
@@ -382,18 +383,23 @@ def render_markdown(result: dict) -> str:
 
 def main() -> None:
     silence_structlog()
-    parser = argparse.ArgumentParser(
-        description="E3: quality eval - Auto vs pinned models on checkable tasks."
-    )
-    parser.add_argument("--json", action="store_true", help="print the raw result blob")
-    parser.add_argument("--tasks", default=str(TASKS_PATH), help="path to the task JSONL")
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(
+            description="E3: quality eval - Auto vs pinned models on checkable tasks."
+        )
+        parser.add_argument("--json", action="store_true", help="print the raw result blob")
+        parser.add_argument("--tasks", default=str(TASKS_PATH), help="path to the task JSONL")
+        args = parser.parse_args()
 
-    result = run_quality_eval(Path(args.tasks))
-    if args.json:
-        print(json.dumps(result, indent=2))
-    else:
-        print(render_markdown(result))
+        result = run_quality_eval(Path(args.tasks))
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(render_markdown(result))
+    finally:
+        # Same T4j contract as the resilience eval: never leave the app's
+        # logging silenced on any exit path.
+        restore_structlog()
 
 
 if __name__ == "__main__":

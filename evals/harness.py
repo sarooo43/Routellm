@@ -272,6 +272,7 @@ def count_real_attempts(fallback_chain: list) -> int:
 
 _SAVED_STRUCTLOG_CONFIG = None
 _SAVED_ROOT_LEVEL: Optional[int] = None
+_SILENCE_FILE = None
 
 
 def silence_structlog() -> None:
@@ -286,24 +287,24 @@ def silence_structlog() -> None:
     this runs inside the pytest process, where later tests capture structlog
     output on stdout.
     """
-    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL
+    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL, _SILENCE_FILE
     import os
     import structlog
 
     if _SAVED_STRUCTLOG_CONFIG is None:
         _SAVED_STRUCTLOG_CONFIG = structlog.get_config()
         _SAVED_ROOT_LEVEL = logging.getLogger().getEffectiveLevel()
+    if _SILENCE_FILE is None:
+        _SILENCE_FILE = open(os.devnull, "w", encoding="utf-8")
     structlog.configure(
-        logger_factory=structlog.PrintLoggerFactory(
-            file=open(os.devnull, "w", encoding="utf-8")
-        )
+        logger_factory=structlog.PrintLoggerFactory(file=_SILENCE_FILE)
     )
     logging.getLogger().setLevel(logging.CRITICAL)
 
 
 def restore_structlog() -> None:
     """Undo :func:`silence_structlog` (no-op if it was never called)."""
-    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL
+    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL, _SILENCE_FILE
     if _SAVED_STRUCTLOG_CONFIG is None:
         return
     import structlog
@@ -313,3 +314,6 @@ def restore_structlog() -> None:
     if _SAVED_ROOT_LEVEL is not None:
         logging.getLogger().setLevel(_SAVED_ROOT_LEVEL)
         _SAVED_ROOT_LEVEL = None
+    if _SILENCE_FILE is not None:
+        _SILENCE_FILE.close()
+        _SILENCE_FILE = None

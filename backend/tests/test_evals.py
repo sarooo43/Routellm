@@ -72,6 +72,15 @@ def _restore_structlog_after_each_test(evals_harness):
     CI: tests/unit/test_local.py captures structlog stdout)."""
     yield
     evals_harness.restore_structlog()
+    # Belt and braces: the eval SCRIPTS import harness.py under the plain
+    # module name "harness" (run_evals.py / run_resilience_eval.py do
+    # `from harness import ...`), which is a DIFFERENT module object from
+    # the spec-loaded "evals_harness" above, with separate globals. If one
+    # of them silenced without restoring, restore that copy too. Both
+    # restore calls are idempotent (no-op when not silenced).
+    other = sys.modules.get("harness")
+    if other is not None and other is not evals_harness:
+        other.restore_structlog()
 
 
 # --------------------------------------------------------------------------
@@ -321,7 +330,11 @@ def test_no_committed_results_file_has_a_mocked_header():
     regression."""
     offenders = []
     skip = {".git", "node_modules", ".venv", "dist", "__pycache__",
-            ".pytest_cache", ".ruff_cache", "coverage"}
+            ".pytest_cache", ".ruff_cache", "coverage",
+            # results-mock is the DESIGNED (gitignored) home of mocked eval
+            # reports - a local run legitimately creates it with a MOCKED
+            # header, which this check must not treat as a regression.
+            "results-mock"}
     for root, dirs, files in os.walk(REPO_ROOT):
         dirs[:] = [d for d in dirs if d not in skip]
         for name in files:
@@ -449,6 +462,28 @@ def test_live_refuses_without_yes_spend_quota(resilience_eval, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         resilience_eval.main()
     assert "--yes-spend-quota" in str(exc.value)
+
+
+def test_live_refusal_restores_global_logging_inline(resilience_eval, monkeypatch):
+    """Regression for the CI backend failure (run 44217057108): main()
+    silences structlog FIRST and exits early via SystemExit - it must
+    restore global logging state ITSELF, in the same module instance that
+    silenced. (The autouse fixture only covers the spec-loaded
+    evals_harness copy; the scripts' plain-"harness" copy is a different
+    module object with separate globals.)"""
+    import logging
+    import structlog
+
+    before_cfg = structlog.get_config()
+    before_level = logging.getLogger().getEffectiveLevel()
+    monkeypatch.setattr(sys, "argv", ["run_resilience_eval.py", "--live"])
+    with pytest.raises(SystemExit) as exc:
+        resilience_eval.main()
+    assert "--yes-spend-quota" in str(exc.value)
+    # These asserts run BEFORE the autouse fixture's restore, so they can
+    # only pass if main() restored on its own early-exit path.
+    assert structlog.get_config() == before_cfg
+    assert logging.getLogger().getEffectiveLevel() == before_level
 
 
 def test_preflight_aborts_with_fewer_than_two_configured_providers(resilience_eval):

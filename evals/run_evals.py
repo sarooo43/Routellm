@@ -198,13 +198,15 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="also print the raw result blob")
     args = parser.parse_args()
 
-    blob = run_all(args.n, args.n_overhead)
-    report = render_report(blob)
-    # Undo the log silencing so an embedded caller (tests) keeps a working
-    # logger; harmless in CLI use where the process exits anyway.
     from harness import restore_structlog
 
-    restore_structlog()
+    try:
+        blob = run_all(args.n, args.n_overhead)
+        report = render_report(blob)
+    finally:
+        # Undo the log silencing on EVERY exit path (run_all can raise
+        # mid-run); harmless in CLI use where the process exits anyway.
+        restore_structlog()
 
     if args.json:
         print(json.dumps(blob, indent=2))

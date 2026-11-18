@@ -38,6 +38,7 @@ from harness import (  # noqa: E402
     build_eval_stack,
     make_scripted_response,
     percentile,
+    restore_structlog,
     silence_structlog,
     count_real_attempts,
 )
@@ -152,18 +153,23 @@ def render_markdown(result: dict) -> str:
 
 def main() -> None:
     silence_structlog()
-    parser = argparse.ArgumentParser(
-        description="E4: overhead eval - router p50/p95 latency vs the mock provider."
-    )
-    parser.add_argument("--n", type=int, default=200, help="requests per arm (default 200)")
-    parser.add_argument("--json", action="store_true", help="print the raw result blob")
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser(
+            description="E4: overhead eval - router p50/p95 latency vs the mock provider."
+        )
+        parser.add_argument("--n", type=int, default=200, help="requests per arm (default 200)")
+        parser.add_argument("--json", action="store_true", help="print the raw result blob")
+        args = parser.parse_args()
 
-    result = run_overhead_eval(args.n)
-    if args.json:
-        print(json.dumps(result, indent=2))
-    else:
-        print(render_markdown(result))
+        result = run_overhead_eval(args.n)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(render_markdown(result))
+    finally:
+        # Same T4j contract as the resilience eval: never leave the app's
+        # logging silenced on any exit path.
+        restore_structlog()
 
 
 if __name__ == "__main__":
