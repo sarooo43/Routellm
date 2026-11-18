@@ -63,6 +63,14 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core.scorer import COST_PER_1K_TOKENS  # noqa: E402
 
+# Shared live-HTTP rules (2xx = success, redacted failure bodies). Imported
+# from evals/ rather than duplicated: two copies of "is this a success?" is
+# how the eval and the benchmark drifted apart in the first place.
+EVALS_DIR = Path(__file__).resolve().parents[1] / "evals"
+if str(EVALS_DIR) not in sys.path:
+    sys.path.insert(0, str(EVALS_DIR))
+from harness import response_detail, require_success  # noqa: E402
+
 RESULTS_DIR = BENCHMARK_DIR / "results"
 PROMPTS_FILE = BENCHMARK_DIR / "test_prompts.json"
 
@@ -137,7 +145,7 @@ async def assert_backend_reachable(client: httpx.AsyncClient, base_url: str) -> 
             "Start it first, e.g. from backend/: uvicorn app.main:app --reload\n"
             "(or: docker compose up). See benchmark/README.md."
         )
-    if resp.status_code != 200:
+    if not (200 <= resp.status_code < 300):
         body = _safe_json(resp)
         raise SystemExit(
             f"FATAL: backend health check failed (HTTP {resp.status_code}).\n"
@@ -167,11 +175,8 @@ async def chaos_inject(
             "CHAOS_MODE_ENABLED=false. For the chaos scenario, set "
             "CHAOS_MODE_ENABLED=true in backend/.env and restart the backend."
         )
-    if resp.status_code != 200:
-        raise SystemExit(
-            f"FATAL: chaos inject failed (HTTP {resp.status_code}): "
-            f"{_safe_json(resp)}"
-        )
+    if not (200 <= resp.status_code < 300):
+        raise SystemExit(f"FATAL: chaos inject failed ({response_detail(resp)}).")
     body = resp.json()
     print(
         f"⚡ chaos injected on '{body['provider_name']}' "
@@ -184,7 +189,7 @@ async def chaos_clear(client: httpx.AsyncClient, base_url: str, provider: str) -
     resp = await client.post(
         f"{base_url}/api/v1/admin/chaos/clear", json={"provider_name": provider}
     )
-    if resp.status_code == 200:
+    if 200 <= resp.status_code < 300:
         print(f"⚡ chaos cleared on '{provider}' (clean state restored)")
     else:
         print(
@@ -294,9 +299,12 @@ async def generate_demo_key(client: httpx.AsyncClient, base_url: str) -> str:
         json={"label": "Routtener benchmark"},
         timeout=30.0,
     )
-    if resp.status_code != 201:
+    # 201 Created is what the endpoint declares, but the rule is "any 2xx":
+    # a hardcoded 201 is the mirror image of the eval's hardcoded 200, and
+    # would break the day the endpoint's declaration changes.
+    if not (200 <= resp.status_code < 300):
         raise BenchmarkAbort(
-            f"Could not generate a benchmark API key: HTTP {resp.status_code} {resp.text[:120]}"
+            f"Could not generate a benchmark API key: {response_detail(resp)}"
         )
     return resp.json()["api_key"]
 
@@ -323,7 +331,7 @@ async def run_arm(
             )
             wall_ms = (time.perf_counter() - started) * 1000.0
 
-            if resp.status_code == 200:
+            if 200 <= resp.status_code < 300:
                 rows.append(record_to_row(prompt, wall_ms, resp.json()))
             elif resp.status_code == 429:
                 # Rate limiting poisons the sample AND skews latency — abort

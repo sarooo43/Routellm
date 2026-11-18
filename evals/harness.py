@@ -317,3 +317,101 @@ def restore_structlog() -> None:
     if _SILENCE_FILE is not None:
         _SILENCE_FILE.close()
         _SILENCE_FILE = None
+
+
+# ---------------------------------------------------------------------------
+# Live-backend HTTP helpers (shared by the eval AND benchmark scripts)
+# ---------------------------------------------------------------------------
+#
+# Why this exists: the live scripts used to compare against a hardcoded 200.
+# `POST /api/v1/keys/generate` answers 201 (it creates a resource), so a
+# perfectly good run died with "FATAL: key generation failed (HTTP 201)".
+# The mocked tests missed it because their fake client returned 200 for that
+# path — a fake that is more permissive than the real endpoint hides exactly
+# this class of bug.
+#
+# Rules encoded here, so no script can drift again:
+#   * success is ANY 2xx, unless a caller genuinely needs one specific code;
+#   * a failure names the status AND carries a redacted, truncated body;
+#   * a credential is NEVER printed, echoed, or included in an error string.
+
+#: Longest provider/server text we keep in an error message.
+MAX_ERROR_BODY_CHARS = 500
+
+#: Patterns that look like credentials, scrubbed before anything is printed.
+_SECRETISH = (
+    # Routtener/RouteLLM keys, provider keys, bearer tokens, and the JSON
+    # field the key-generate endpoint returns.
+    (r"rk_[A-Za-z0-9_\-]{6,}", "rk_***"),
+    (r"gsk_[A-Za-z0-9_\-]{6,}", "gsk_***"),
+    (r"sk-[A-Za-z0-9_\-]{6,}", "sk-***"),
+    (r"AIza[A-Za-z0-9_\-]{6,}", "AIza***"),
+    (r"(?i)bearer\s+[A-Za-z0-9._\-]{6,}", "Bearer ***"),
+    (r'"(api_key|provider_api_key|encrypted_key)"\s*:\s*"[^"]*"', r'"\1": "***"'),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Remove anything credential-shaped from ``text``.
+
+    Deliberately aggressive: a log line is a public artifact (CI, a pasted
+    issue, a screenshot), so a false positive is much cheaper than a leak.
+    """
+    import re
+
+    cleaned = text or ""
+    for pattern, replacement in _SECRETISH:
+        cleaned = re.sub(pattern, replacement, cleaned)
+    return cleaned
+
+
+def is_success(status_code: int) -> bool:
+    """2xx = success. The whole point of this module; see the block comment."""
+    return 200 <= int(status_code) < 300
+
+
+def response_detail(response) -> str:
+    """A redacted, truncated description of a failed response.
+
+    ``HTTP 500: {"detail":"boom"}`` — enough to act on, never enough to leak.
+    Handles non-JSON bodies and a response with no ``.text`` at all.
+    """
+    status = getattr(response, "status_code", "?")
+    body = ""
+    try:
+        body = response.text or ""
+    except Exception:  # noqa: BLE001 - a fake response may not carry text
+        body = ""
+    body = redact_secrets(body).strip().replace("\n", " ")
+    if len(body) > MAX_ERROR_BODY_CHARS:
+        body = body[:MAX_ERROR_BODY_CHARS] + "…"
+    return f"HTTP {status}" + (f": {body}" if body else "")
+
+
+def require_success(response, what: str, *, status: int | None = None) -> None:
+    """Assert a live call succeeded, or exit with an actionable message.
+
+    Parameters
+    ----------
+    what:
+        Short description used in the message ("key generation").
+    status:
+        Set only when ONE specific code is genuinely required. Almost never.
+    """
+    code = getattr(response, "status_code", 0)
+    ok = (code == status) if status is not None else is_success(code)
+    if ok:
+        return
+    expected = f"HTTP {status}" if status is not None else "2xx"
+    raise SystemExit(
+        f"FATAL: {what} failed ({response_detail(response)}; expected {expected})."
+    )
+
+
+def print_key_lines(api_key: str | None) -> None:
+    """Print a key's PREFIX only. Never the value, never a suffix."""
+    if not api_key:
+        print("API key: (none)")
+        return
+    prefix = api_key[:11] if len(api_key) > 11 else api_key[:4] + "…"
+    print(f"API key: {prefix}… (prefix only; the full value is never printed)")
