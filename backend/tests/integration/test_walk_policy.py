@@ -424,7 +424,10 @@ def test_rate_limited_ttl_honors_retry_after_and_denied_uses_24h():
     md.mark_status(GEMINI_SECRET, "gemini", "gemini-2.5-flash", "denied")
     entries = md._status_cache[(md.key_fingerprint(GEMINI_SECRET), "gemini")]
     ttl = entries["gemini-2.5-flash"][1] - md._now()
-    assert 86000 < ttl <= 86400
+    # The contract is "24h, not meaningfully more": ttl is (stored_expiry -
+    # a second _now() read), which can sit a float-epsilon ABOVE 86400
+    # (observed 86400.00000000001 in CI). Bound it with that epsilon.
+    assert 86000 < ttl <= 86400 + 1e-6
 
 
 # --------------------------------------------------------------------------

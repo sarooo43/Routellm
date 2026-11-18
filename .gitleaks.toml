@@ -10,7 +10,7 @@
 # `backend/scripts/check_secrets.py` is the dependency-free equivalent CI runs;
 # keep the two exception lists aligned when adding an entry.
 
-title = "RouteLLM Gateway"
+title = "Routtener Gateway"
 
 [extend]
 useDefault = true

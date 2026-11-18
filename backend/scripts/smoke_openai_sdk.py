@@ -45,11 +45,11 @@ def main() -> None:
 
     models = client.models.list()
     model_ids = [model.id for model in models.data]
-    assert "routellm-auto" in model_ids
+    assert "routtener-auto" in model_ids
     print(f"models.list(): {model_ids}")
 
     response = client.chat.completions.create(
-        model="routellm-auto",
+        model="routtener-auto",
         messages=[{"role": "user", "content": "Say hello in one short sentence."}],
     )
     assert response.object == "chat.completion"
@@ -73,7 +73,7 @@ def main() -> None:
 
     try:
         client.chat.completions.create(
-            model="routellm-auto",
+            model="routtener-auto",
             messages=[{"role": "user", "content": "Hello"}],
             stream=True,
         )

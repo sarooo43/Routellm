@@ -227,14 +227,23 @@ Z_95 = 1.959963984540054
 
 def wilson_interval(successes: int, n: int, z: float = Z_95) -> tuple[float, float]:
     """Wilson score interval for a binomial proportion - never returns a
-    degenerate [0, 1] span for n > 0 and is well-behaved at the extremes."""
+    degenerate [0, 1] span for n > 0 and is well-behaved at the extremes.
+
+    T4a fix: the first version of this function mis-derived the spread
+    twice - it used ``p(1-p) + z^2/(4n)`` inside the square root (the
+    observed-variance term must be divided by n and the z^2 term by n^2)
+    and it divided the sqrt argument by ``(1 + z^2/n)`` instead of dividing
+    the sqrt RESULT. The two errors compounded: a 50/50 run reported
+    [70.3%, 100%] instead of the correct [92.9%, 100%]. Verified against
+    the closed form for p_hat = 1: lower = n / (n + z^2).
+    """
     if n <= 0:
         return (0.0, 0.0)
     p_hat = successes / n
     z2 = z * z
     denominator = 1 + z2 / n
     centre = (p_hat + z2 / (2 * n)) / denominator
-    spread = z * math.sqrt((p_hat * (1 - p_hat) + z2 / (4 * n)) / denominator)
+    spread = z * math.sqrt(p_hat * (1 - p_hat) / n + z2 / (4 * n * n)) / denominator
     return (max(0.0, centre - spread), min(1.0, centre + spread))
 
 
@@ -262,6 +271,8 @@ def count_real_attempts(fallback_chain: list) -> int:
 
 
 _SAVED_STRUCTLOG_CONFIG = None
+_SAVED_ROOT_LEVEL: Optional[int] = None
+_SILENCE_FILE = None
 
 
 def silence_structlog() -> None:
@@ -271,31 +282,38 @@ def silence_structlog() -> None:
     app/utils/logger.py). The eval scenarios intentionally produce hundreds
     of expected failure events; without this the report drowns in them.
 
-    Saves the previous configuration so :func:`restore_structlog` can undo
-    it - required when this runs inside the pytest process, where later
-    tests capture structlog output on stdout.
+    Saves the previous configuration (structlog config AND the root logging
+    level) so :func:`restore_structlog` can undo it exactly - required when
+    this runs inside the pytest process, where later tests capture structlog
+    output on stdout.
     """
-    global _SAVED_STRUCTLOG_CONFIG
+    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL, _SILENCE_FILE
     import os
     import structlog
 
     if _SAVED_STRUCTLOG_CONFIG is None:
         _SAVED_STRUCTLOG_CONFIG = structlog.get_config()
+        _SAVED_ROOT_LEVEL = logging.getLogger().getEffectiveLevel()
+    if _SILENCE_FILE is None:
+        _SILENCE_FILE = open(os.devnull, "w", encoding="utf-8")
     structlog.configure(
-        logger_factory=structlog.PrintLoggerFactory(
-            file=open(os.devnull, "w", encoding="utf-8")
-        )
+        logger_factory=structlog.PrintLoggerFactory(file=_SILENCE_FILE)
     )
     logging.getLogger().setLevel(logging.CRITICAL)
 
 
 def restore_structlog() -> None:
     """Undo :func:`silence_structlog` (no-op if it was never called)."""
-    global _SAVED_STRUCTLOG_CONFIG
+    global _SAVED_STRUCTLOG_CONFIG, _SAVED_ROOT_LEVEL, _SILENCE_FILE
     if _SAVED_STRUCTLOG_CONFIG is None:
         return
     import structlog
 
     structlog.configure(**_SAVED_STRUCTLOG_CONFIG)
     _SAVED_STRUCTLOG_CONFIG = None
-    logging.getLogger().setLevel(logging.INFO)
+    if _SAVED_ROOT_LEVEL is not None:
+        logging.getLogger().setLevel(_SAVED_ROOT_LEVEL)
+        _SAVED_ROOT_LEVEL = None
+    if _SILENCE_FILE is not None:
+        _SILENCE_FILE.close()
+        _SILENCE_FILE = None

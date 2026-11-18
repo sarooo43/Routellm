@@ -359,8 +359,15 @@ def test_one_command_end_to_end_over_a_mocked_transport(
     assert "# Routtener Benchmark Report" in written
     assert "**Generated:**" in written
     assert datetime.now(timezone.utc).strftime("%Y-%m-%d") in written
-    # The documented table shape: header + the outage comparison row.
-    assert "| Scenario | Naive (single model) | Routtener |" in written
+    # The documented table shape: header (naive column carries the T4b
+    # "fails by construction" label) + the outage comparison row, plus the
+    # shows/does-not-show honesty line.
+    assert (
+        "| Scenario | Naive (single model — fails by construction when "
+        "its only provider is down) | Routtener |" in written
+    )
+    assert "fails by construction when its only provider is down" in written
+    assert "What this shows / does not show" in written
     assert "| Normal — success rate | 100% | 100% |" in written
     assert "| **Simulated outage — success rate** | **0%** | **100%** |" in written
     # Models each arm actually used, as produced by the mocked transport.

@@ -119,6 +119,18 @@ def build_table(datasets: dict[str, dict]) -> str:
         "provider keys. Nothing here is sampled, estimated or copied from "
         "anywhere — re-running the benchmark produces your own table.",
         "",
+        "**The naive arm fails by construction when its only provider is "
+        "down** — it hardcodes one provider and sets `max_fallbacks=1`, so "
+        "its collapse under the simulated outage is a property of the arm's "
+        "definition, not a measured property of that provider.",
+        "",
+        "**What this shows / does not show:** it demonstrates that the "
+        "router's failover works — under an injected outage the full system "
+        "keeps serving by rerouting. It does NOT show how often real "
+        "providers fail or how often you would need failover in production; "
+        "the outage here is injected by Chaos Mode, not observed in the "
+        "wild.",
+        "",
         "## Models used",
         "",
         models_line("Naive baseline (single forced model)", nc_n),
@@ -126,7 +138,7 @@ def build_table(datasets: dict[str, dict]) -> str:
         models_line("Naive baseline under the simulated outage", c_n),
         models_line("Routtener under the simulated outage", c_r),
         "",
-        "| Scenario | Naive (single model) | Routtener |",
+        "| Scenario | Naive (single model — fails by construction when its only provider is down) | Routtener |",
         "|---|---|---|",
         f"| Normal — success rate | {fmt_pct(nc_n['success_rate'])} | {fmt_pct(nc_r['success_rate'])} |",
         f"| **Simulated outage — success rate** | **{fmt_pct(c_n['success_rate'])}** | **{fmt_pct(c_r['success_rate'])}** |",

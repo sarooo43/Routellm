@@ -14,20 +14,29 @@ Scenarios (primary = scripted-failing provider, secondary = healthy):
     slow_response      - primary stalls 2500ms then errors (simulated timeout)
 
 Reported per scenario/arm: success rate with Wilson 95% interval, mean real
-provider attempts, mean latency, and added latency (router minus naive).
+provider attempts, mean latency, and added latency (router minus naive), plus
+FIRST-request vs steady-state attempts/latency per arm (T4g).
 
 Modes:
-    mocked (default) - deterministic, zero network, runs in CI.
+    mocked (default) - deterministic, zero network, runs in CI. NEVER writes
+                       to docs/: mocked output goes to the console only.
     --live           - fires the same N requests at a RUNNING backend over
                        HTTP and injects a real Chaos Mode outage. Off by
                        default; provider_down is the only scenario it runs
                        (the other failure classes need provider-side fault
-                       injection that would burn real quota/keys).
+                       injection that would burn real quota/keys). Requires
+                       an explicit --yes-spend-quota, aborts if fewer than
+                       2 providers have saved keys or the backend does not
+                       report CHAOS_MODE_ENABLED, and prints the request
+                       budget + providers first (T4h). A live run (and only
+                       a live run) writes docs/eval-results.md with a
+                       "MODE: LIVE" header (T4c).
 
 Run:
     python evals/run_resilience_eval.py            # mocked, tables
     python evals/run_resilience_eval.py --json     # mocked, machine blob
-    python evals/run_resilience_eval.py --live --base-url http://127.0.0.1:8000
+    python evals/run_resilience_eval.py --live --yes-spend-quota \
+        --base-url http://127.0.0.1:8000           # LIVE (spends quota)
 """
 
 from __future__ import annotations
@@ -52,6 +61,7 @@ from harness import (  # noqa: E402
     count_real_attempts,
     mean,
     make_scripted_response,
+    restore_structlog,
     silence_structlog,
     wilson_interval,
 )
@@ -190,6 +200,15 @@ async def run_arm(
             latencies.append(result.total_latency_ms)
             attempts.append(count_real_attempts(chain))
     lo, hi = wilson_interval(successes, n)
+    # T4g: FIRST request vs STEADY STATE. The first request pays one-shot
+    # costs the rest of the run does not: the circuit breaker has no failure
+    # history yet (so it cannot short-circuit to the secondary) and the
+    # denied-model memory is empty. Reporting a single run mean (e.g.
+    # "1.02 attempts") mixes those two regimes and hides both.
+    first_attempts = attempts[0] if attempts else 0
+    first_latency = latencies[0] if latencies else 0.0
+    steady_attempts = attempts[1:]
+    steady_latencies = latencies[1:]
     return {
         "arm": arm,
         "n": n,
@@ -198,6 +217,14 @@ async def run_arm(
         "wilson_95": [round(lo, 4), round(hi, 4)],
         "mean_attempts": round(mean(attempts), 3),
         "mean_latency_ms": round(mean(latencies), 1),
+        "first_request": {
+            "attempts": first_attempts,
+            "latency_ms": round(first_latency, 1),
+        },
+        "steady_state": {
+            "mean_attempts": round(mean(steady_attempts), 3),
+            "mean_latency_ms": round(mean(steady_latencies), 1),
+        },
     }
 
 
@@ -219,58 +246,126 @@ def run_scenario_mocked(scenario_name: str, n: int, max_fallbacks: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Live mode (off by default): a RUNNING backend + Chaos Mode
+# Live mode (off by default): a RUNNING backend + Chaos Mode + explicit consent
 # ---------------------------------------------------------------------------
 
+DOC_PATH = (
+    EVALS_DIR.parent / "docs" / "eval-results.md"
+)  # LIVE runs only; mocked runs never write here (T4c)
 
-async def run_scenario_live(base_url: str, n: int) -> dict:
+
+def git_commit_hash() -> str:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(EVALS_DIR.parent),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return out.stdout.strip()[:12]
+    except Exception:
+        return "unknown"
+
+
+async def preflight_live(client, n: int) -> str:
+    """Every gate a live run must pass BEFORE any real request is sent.
+
+    Each refusal exits with a clear, actionable message (T4h). The gates:
+      1. fewer than 2 providers have saved keys -> abort (the scenario needs
+         a failing primary AND a healthy fallback);
+      2. the backend does not report Chaos Mode enabled -> abort;
+      3. otherwise: print the total request budget and which providers may
+         be called, and hand back the freshly generated eval API key.
+    """
+    resp = await client.post("/api/v1/keys/generate", json={"label": "eval-resilience"})
+    if resp.status_code != 200:
+        raise SystemExit(f"FATAL: key generation failed (HTTP {resp.status_code}).")
+    api_key = resp.json()["api_key"]
+
+    resp = await client.get("/api/v1/provider-keys", headers={"X-API-Key": api_key})
+    if resp.status_code != 200:
+        raise SystemExit(
+            f"FATAL: provider-key status check failed (HTTP {resp.status_code})."
+        )
+    configured = [
+        row["provider_name"] for row in resp.json() if row.get("configured")
+    ]
+    if len(configured) < 2:
+        raise SystemExit(
+            "FATAL: refusing to run --live: fewer than 2 providers have saved "
+            f"keys (configured: {configured or 'none'}). The provider_down "
+            "scenario needs a failing primary AND a healthy fallback - save "
+            "provider keys in the dashboard first."
+        )
+
+    resp = await client.get("/api/v1/admin/chaos/status")
+    if resp.status_code == 404:
+        raise SystemExit(
+            "FATAL: refusing to run Chaos Mode: the backend reports it is NOT "
+            "enabled (the /api/v1/admin/chaos/* endpoints answer 404 when "
+            "CHAOS_MODE_ENABLED is false). Set CHAOS_MODE_ENABLED=true in "
+            "backend/.env and restart the backend."
+        )
+    if resp.status_code != 200:
+        raise SystemExit(
+            f"FATAL: chaos status check failed (HTTP {resp.status_code})."
+        )
+
+    budget = n * 1  # live mode fires exactly ONE scenario (provider_down)
+    print("MODE: LIVE - this run calls REAL providers and spends REAL quota.")
+    print(
+        f"Request budget: {n} requests x 1 scenario (provider_down) "
+        f"= {budget} /api/v1/route calls total."
+    )
+    print(f"Providers that may be called: {', '.join(configured)}")
+    return api_key
+
+
+async def run_scenario_live(client, api_key: str, n: int) -> dict:
     """provider_down against a real backend: chaos-inject an outage on the
     primary provider, fire n route requests through the router arm, clear
-    chaos. Uses httpx only; prints nothing sensitive."""
-    import httpx
-
+    chaos. Uses the httpx client passed by the caller; prints nothing
+    sensitive."""
     spec = SCENARIOS["provider_down"]
-    async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
-        # 1. a real API key for the route endpoint
-        resp = await client.post("/api/v1/keys/generate", json={"label": "eval-resilience"})
-        if resp.status_code != 200:
-            raise SystemExit(f"FATAL: key generation failed (HTTP {resp.status_code}).")
-        api_key = resp.json()["api_key"]
+    # 1. chaos inject on the primary (CHAOS_MODE_ENABLED verified in preflight)
+    resp = await client.post(
+        "/api/v1/admin/chaos/inject",
+        json={"provider_name": PRIMARY, "duration_seconds": 120},
+    )
+    if resp.status_code != 200:
+        raise SystemExit(f"FATAL: chaos inject failed (HTTP {resp.status_code}).")
 
-        # 2. chaos inject on the primary (CHAOS_MODE_ENABLED must be on server-side)
-        resp = await client.post(
-            "/api/v1/admin/chaos/inject",
-            json={"provider_name": PRIMARY, "duration_seconds": 120},
+    successes = 0
+    latencies: list[float] = []
+    attempts: list[int] = []
+    models_called: set[str] = set()
+    try:
+        for _ in range(n):
+            route = await client.post(
+                "/api/v1/route",
+                headers={"X-API-Key": api_key},
+                json={"prompt": PROBE_PROMPT, "task_type": TASK_TYPE, "max_fallbacks": 3},
+            )
+            if route.status_code == 429:
+                raise SystemExit("FATAL: backend rate-limited the eval; raise its limit.")
+            route.raise_for_status()
+            body = route.json()
+            successes += 1 if body.get("success") else 0
+            latencies.append(float(body.get("total_latency_ms") or 0.0))
+            chain = body.get("fallback_chain_attempted") or []
+            attempts.append(len(chain))
+            if body.get("model_used"):
+                models_called.add(str(body["model_used"]))
+            for attempt in chain:
+                if isinstance(attempt, dict) and attempt.get("provider_name"):
+                    models_called.add(str(attempt["provider_name"]))
+    finally:
+        await client.post(
+            "/api/v1/admin/chaos/clear", json={"provider_name": PRIMARY}
         )
-        if resp.status_code == 404:
-            raise SystemExit(
-                "FATAL: chaos endpoints 404 - start the backend with "
-                "CHAOS_MODE_ENABLED=true to run --live."
-            )
-        if resp.status_code != 200:
-            raise SystemExit(f"FATAL: chaos inject failed (HTTP {resp.status_code}).")
-
-        successes = 0
-        latencies: list[float] = []
-        attempts: list[int] = []
-        try:
-            for _ in range(n):
-                route = await client.post(
-                    "/api/v1/route",
-                    headers={"X-API-Key": api_key},
-                    json={"prompt": PROBE_PROMPT, "task_type": TASK_TYPE, "max_fallbacks": 3},
-                )
-                if route.status_code == 429:
-                    raise SystemExit("FATAL: backend rate-limited the eval; raise its limit.")
-                route.raise_for_status()
-                body = route.json()
-                successes += 1 if body.get("success") else 0
-                latencies.append(float(body.get("total_latency_ms") or 0.0))
-                attempts.append(len(body.get("fallback_chain_attempted") or []))
-        finally:
-            await client.post(
-                "/api/v1/admin/chaos/clear", json={"provider_name": PRIMARY}
-            )
 
     lo, hi = wilson_interval(successes, n)
     return {
@@ -287,8 +382,41 @@ async def run_scenario_live(base_url: str, n: int) -> dict:
         },
         "naive": None,
         "added_latency_ms": None,
+        "models_called": sorted(models_called),
         "note": "live mode runs the router arm only; no naive baseline is fired at a real backend",
     }
+
+
+def write_live_doc(result: dict, n: int, base_url: str) -> None:
+    """A live run (and only a live run) writes docs/eval-results.md (T4c)."""
+    from datetime import datetime, timezone
+
+    header = "\n".join(
+        [
+            "# Eval results (LIVE)",
+            "",
+            "> **MODE: LIVE — the resilience section below was measured against "
+            "> REAL providers with real keys. Everything else in this repo's "
+            "> docs stays unmeasured until you run it for real.**",
+            "",
+            f"- Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            f"- Commit: `{git_commit_hash()}`",
+            f"- Backend: {base_url}",
+            f"- Requests: {n} (provider_down scenario, router arm only)",
+            f"- Providers/models actually called: "
+            f"{', '.join(result.get('models_called') or []) or '(none recorded)'}",
+            "",
+            "---",
+            "",
+        ]
+    )
+    DOC_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DOC_PATH.write_text(
+        header + render_markdown([result], n, "live (real backend, chaos-injected outage)")
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {DOC_PATH.relative_to(DOC_PATH.parents[2])}")
 
 
 def render_markdown(results: list[dict], n: int, mode: str) -> str:
@@ -298,6 +426,20 @@ def render_markdown(results: list[dict], n: int, mode: str) -> str:
         f"Mode: **{mode}**. {n} requests per scenario/arm through the real "
         "fallback router vs a naive single-provider baseline "
         f"(`force_provider={PRIMARY}`). Success rates carry Wilson 95% intervals.",
+        "",
+        "**The naive arm fails by construction when its only provider is "
+        "down** — it hardcodes exactly one provider and has no fallback, so "
+        "in every provider-down scenario its failure is a property of the "
+        "arm's definition, not an observation about real provider "
+        "reliability.",
+        "",
+        "**What this comparison shows / does not show:** it demonstrates "
+        "that FAILOVER WORKS — that the router's fallback chain, circuit "
+        "breaker and chaos controller recover a request when the primary "
+        "fails. It does NOT show how often real providers fail, how often "
+        "you would need that failover in production, or anything about real "
+        "provider error semantics; the failures here are scripted at the "
+        "transport boundary.",
         "",
         "| Scenario | Arm | Success rate | Wilson 95% | Mean attempts | Mean latency (ms) |",
         "|---|---|---|---|---|---|",
@@ -309,15 +451,41 @@ def render_markdown(results: list[dict], n: int, mode: str) -> str:
                 lines.append(f"| {r['scenario']} | {label} | (live mode: not run) | - | - | - |")
                 continue
             lo, hi = arm["wilson_95"]
+            suffix = " ¹" if arm_key == "naive" else ""
             lines.append(
-                f"| {r['scenario']} | {label} | {arm['success_rate'] * 100:.1f}% "
+                f"| {r['scenario']} | {label}{suffix} | {arm['success_rate'] * 100:.1f}% "
                 f"({arm['successes']}/{arm['n']}) | [{lo * 100:.1f}%, {hi * 100:.1f}%] "
                 f"| {arm['mean_attempts']:.2f} | {arm['mean_latency_ms']:.0f} |"
             )
-    lines += ["", "Added latency (router minus naive, mean ms per request):", ""]
+    lines += [
+        "",
+        "¹ naive: fails by construction when its only provider is down "
+        f"(`force_provider={PRIMARY}`, `max_fallbacks=1`).",
+        "",
+        "Added latency (router minus naive, mean ms per request):",
+        "",
+    ]
     for r in results:
         if r.get("added_latency_ms") is not None:
             lines.append(f"- `{r['scenario']}`: {r['added_latency_ms']:.0f} ms")
+    lines += [
+        "",
+        "### First request vs steady state (T4g)",
+        "",
+        "| Scenario | Arm | First req attempts | First req latency (ms) | Steady mean attempts | Steady mean latency (ms) |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in results:
+        for arm_key, label in (("router", "router"), ("naive", "naive")):
+            arm = r.get(arm_key)
+            if arm is None:
+                continue
+            first, steady = arm["first_request"], arm["steady_state"]
+            lines.append(
+                f"| {r['scenario']} | {label} | {first['attempts']:.2f} "
+                f"| {first['latency_ms']:.0f} | {steady['mean_attempts']:.2f} "
+                f"| {steady['mean_latency_ms']:.0f} |"
+            )
     lines += [
         "",
         "Notes: attempts count REAL provider calls only - pre-flight skips "
@@ -335,36 +503,68 @@ def main() -> None:
     # ("forced_provider_failed_no_fallback", ...) - silence the app's logging
     # so the report is the only thing on stdout.
     silence_structlog()
+    # T4j/CI-regression fix: EVERY exit path must restore the app's logging,
+    # including the early SystemExit refusals below (--live without
+    # --yes-spend-quota, preflight failures). A leaked silence broke later
+    # stdout-capturing tests under pytest (test_generated_key_is_never_logged
+    # captured nothing). This also matters because pytest loads this script
+    # via importlib under a different module name than harness.py itself, so
+    # the test suite's restore fixture cannot see this module's globals.
+    try:
+        parser = argparse.ArgumentParser(
+            description="E2: resilience eval - router vs naive single-provider baseline."
+        )
+        parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
+        parser.add_argument("--max-fallbacks", type=int, default=3)
+        parser.add_argument("--json", action="store_true", help="print the raw result blob")
+        parser.add_argument(
+            "--live",
+            action="store_true",
+            help="run provider_down against a RUNNING backend with Chaos Mode (off by default)",
+        )
+        parser.add_argument(
+            "--yes-spend-quota",
+            action="store_true",
+            help="REQUIRED with --live: explicit consent that real provider "
+            "quota will be spent. --live without this flag refuses to run.",
+        )
+        parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
+        args = parser.parse_args()
 
-    parser = argparse.ArgumentParser(
-        description="E2: resilience eval - router vs naive single-provider baseline."
-    )
-    parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
-    parser.add_argument("--max-fallbacks", type=int, default=3)
-    parser.add_argument("--json", action="store_true", help="print the raw result blob")
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="run provider_down against a RUNNING backend with Chaos Mode (off by default)",
-    )
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
-    args = parser.parse_args()
+        if args.live and not args.yes_spend_quota:
+            raise SystemExit(
+                "Refusing to run --live without --yes-spend-quota: live mode "
+                "calls real providers and spends real quota. If that is intended, "
+                "re-run with: --live --yes-spend-quota"
+            )
 
-    if args.live:
-        result = asyncio.run(run_scenario_live(args.base_url, args.n))
-        results = [result]
-        mode = "live (real backend, chaos-injected outage)"
-    else:
-        results = []
-        for scenario in SCENARIOS:
-            results.append(run_scenario_mocked(scenario, args.n, args.max_fallbacks))
-        mode = "mocked (deterministic, no network)"
+        if args.live:
+            import httpx
 
-    blob = {"eval": "resilience", "mode": mode, "n_per_scenario": args.n, "scenarios": results}
-    if args.json:
-        print(json.dumps(blob, indent=2))
-    else:
-        print(render_markdown(results, args.n, mode))
+            async def _live() -> dict:
+                async with httpx.AsyncClient(
+                    base_url=args.base_url, timeout=30.0
+                ) as client:
+                    api_key = await preflight_live(client, args.n)
+                    return await run_scenario_live(client, api_key, args.n)
+
+            result = asyncio.run(_live())
+            results = [result]
+            mode = "live (real backend, chaos-injected outage)"
+            write_live_doc(result, args.n, args.base_url)
+        else:
+            results = []
+            for scenario in SCENARIOS:
+                results.append(run_scenario_mocked(scenario, args.n, args.max_fallbacks))
+            mode = "mocked (deterministic, no network)"
+
+        blob = {"eval": "resilience", "mode": mode, "n_per_scenario": args.n, "scenarios": results}
+        if args.json:
+            print(json.dumps(blob, indent=2))
+        else:
+            print(render_markdown(results, args.n, mode))
+    finally:
+        restore_structlog()
 
 
 if __name__ == "__main__":

@@ -31,13 +31,20 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-AUTO_MODEL = "routellm-auto"
+AUTO_MODEL = "routtener-auto"
+#: Pre-rename ids stay accepted: an existing client that sends "routellm-auto"
+#: keeps working (rename contract - aliases are never removed, only demoted).
+AUTO_MODEL_ALIASES = frozenset({"routellm-auto"})
+AUTO_MODEL_IDS = frozenset({AUTO_MODEL, *AUTO_MODEL_ALIASES})
+#: The demo id is the LABEL for the mock provider (setup-status / reports).
+#: The mock provider stays deliberately unadvertised in /v1/models.
+DEMO_MODEL = "routtener-demo"
 MODEL_OWNERS = {
     "groq": "groq",
     "gemini": "google",
     "deepseek": "deepseek",
     # Demo provider: named so a client never mistakes it for a vendor.
-    "mock": "routellm-demo",
+    "mock": DEMO_MODEL,
 }
 
 #: Models a client may pass. The demo provider is deliberately absent from the
@@ -114,7 +121,13 @@ class RouteLLMMetadata(BaseModel):
 
 
 class OpenAIChatResponse(BaseModel):
-    """OpenAI's chat.completion shape plus x_routellm_metadata."""
+    """OpenAI's chat.completion shape plus routing metadata.
+
+    ``x_routtener_metadata`` is the primary field; ``x_routellm_metadata``
+    carries the SAME object under the pre-rename name so existing clients
+    that read the old key keep working (rename contract - both are emitted,
+    forever).
+    """
 
     id: str
     object: Literal["chat.completion"] = "chat.completion"
@@ -122,6 +135,7 @@ class OpenAIChatResponse(BaseModel):
     model: str
     choices: list[OpenAIChatChoice]
     usage: OpenAIUsage
+    x_routtener_metadata: RouteLLMMetadata
     x_routellm_metadata: RouteLLMMetadata
 
 
@@ -239,6 +253,13 @@ def _chat_response(result: ExecutionResult) -> OpenAIChatResponse:
         usage=OpenAIUsage(
             prompt_tokens=0, completion_tokens=tokens, total_tokens=tokens
         ),
+        x_routtener_metadata=RouteLLMMetadata(
+            confidence_score=result.confidence_score,
+            fallback_chain_attempted=[
+                attempt.model_dump() for attempt in result.fallback_chain_attempted
+            ],
+            routing_method=result.routing_method,
+        ),
         x_routellm_metadata=RouteLLMMetadata(
             confidence_score=result.confidence_score,
             fallback_chain_attempted=[
@@ -274,7 +295,7 @@ async def chat_completions(
             "streaming_not_supported",
         )
 
-    if body.model != AUTO_MODEL and body.model not in PROVIDER_REGISTRY:
+    if body.model not in AUTO_MODEL_IDS and body.model not in PROVIDER_REGISTRY:
         valid_models = ", ".join([AUTO_MODEL, *ADVERTISED_PROVIDERS])
         return _error_response(
             400,
@@ -287,7 +308,7 @@ async def chat_completions(
         _messages_to_prompt(body.messages),
         db_session,
         task_type=body.task_type,
-        force_provider=None if body.model == AUTO_MODEL else body.model,
+        force_provider=None if body.model in AUTO_MODEL_IDS else body.model,
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         provider_api_keys=provider_api_keys,
@@ -318,7 +339,7 @@ async def chat_completions(
 @router.get("/models", response_model=OpenAIModelList)
 async def list_models() -> OpenAIModelList:
     """List the automatic router and every currently registered provider."""
-    models = [OpenAIModel(id=AUTO_MODEL, owned_by="routellm")]
+    models = [OpenAIModel(id=AUTO_MODEL, owned_by="routtener")]
     for name in PROVIDER_REGISTRY:
         if name not in ADVERTISED_PROVIDERS:
             continue

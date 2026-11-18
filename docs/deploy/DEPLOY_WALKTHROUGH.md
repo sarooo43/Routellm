@@ -1,5 +1,9 @@
 # Deploying the Cloudflare Worker — absolute beginner walkthrough
 
+> **ARCHIVED AND UNMAINTAINED (2026-11).** See the note at the top of
+> [docs/deploy/README.md](README.md). This walkthrough is kept for reference;
+> the CI job that exercised it has been removed.
+
 No prior terminal experience assumed. If a command fails, stop and read the
 error line before continuing.
 
@@ -44,7 +48,7 @@ terminal.
 ## Step 1 — Get the code and its dependencies
 
 ```powershell
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 git pull
 npm ci

@@ -1,5 +1,18 @@
 # Optional cloud deployment (experimental)
 
+> **ARCHIVED AND UNMAINTAINED (2026-11).** The cloud paths in this folder —
+> Cloudflare Workers and Hugging Face Spaces — are kept for reference only.
+> The project is local-first: the supported way to run it is `python run.py`.
+> The CI jobs that exercised these paths (`hf-space-boot`,
+> `cloudflare-worker`) were removed from `.github/workflows/ci.yml`.
+>
+> **Also outside the repo's control:** if your GitHub PRs show a failing
+> "Workers Builds: routellm" check, that is the Cloudflare GitHub App's own
+> build integration, not this workflow. Disconnect it in the Cloudflare
+> dashboard (Workers & Pages → your Worker → Settings → Git integration, or
+> the GitHub Apps settings); no change in this repository can remove that
+> check.
+>
 > **You probably do not need any of this.**
 > The supported way to run RouteLLM Gateway is local:
 >

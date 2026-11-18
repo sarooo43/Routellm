@@ -346,7 +346,11 @@ async def run_arm(
         except BenchmarkAbort:
             raise
 
-    label = "naive (single model, no fallback)" if arm == "naive_baseline" else "routellm (full system)"
+    label = (
+        "naive (single model, no fallback - fails by construction when its only provider is down)"
+        if arm == "naive_baseline"
+        else "Routtener (full system)"
+    )
     summary = summarize(rows, arm)
     print(
         f"  {label}: {summary['success_count']}/{summary['total_prompts']} "

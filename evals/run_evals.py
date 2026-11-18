@@ -1,13 +1,18 @@
 """Run the whole eval suite (E1-E4) with ONE command and write the report.
 
-    python evals/run_evals.py                 # runs E1-E4, writes docs/eval-results.md
+    python evals/run_evals.py                 # runs E1-E4, writes evals/results-mock/eval-results.md
     python evals/run_evals.py --no-docs       # print the report to stdout only
     python evals/run_evals.py --n 25          # smaller N for a quick smoke run
 
-Everything runs in MOCKED mode: deterministic scripted providers, no
-network, no provider keys, no Redis. The report is written with the real
-commit hash and date and states plainly what these numbers do NOT show -
-all "real" numbers come from the owner's own run with real keys.
+This suite is MOCKED-ONLY: deterministic scripted providers, no network, no
+provider keys, no Redis. T4c contract: a mocked run must NEVER write to a
+committed docs path - its report goes to ``evals/results-mock/`` (gitignored)
+under a "MODE: MOCKED — scripted providers, not a measurement of any real
+provider" header. A LIVE run (``python evals/run_resilience_eval.py --live
+--yes-spend-quota``) is the only thing that writes ``docs/eval-results.md``
+(and it writes a "MODE: LIVE" header with the date, commit and the models
+actually called). The report is written with the real commit hash and date
+and states plainly what these numbers do NOT show.
 """
 
 from __future__ import annotations
@@ -26,14 +31,25 @@ for p in (str(EVALS_DIR), str(BACKEND_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+#: Mocked runs write HERE (gitignored) - never to docs/ (T4c).
+MOCK_DIR = EVALS_DIR / "results-mock"
+MOCK_REPORT_PATH = MOCK_DIR / "eval-results.md"
+#: docs/eval-results.md is written ONLY by live runs (run_resilience_eval.py
+#: --live); kept as a constant so tests can assert mocked runs never touch it.
 DOC_PATH = REPO_ROOT / "docs" / "eval-results.md"
+MOCKED_HEADER_LINE = (
+    "MODE: MOCKED — scripted providers, not a measurement of any real provider"
+)
 
-HEADER = """# Eval results
+HEADER = f"""# Eval results
 
-> **All numbers in this file come from a MOCKED eval run (deterministic
+> **{MOCKED_HEADER_LINE}**
+> All numbers in this file come from a MOCKED eval run (deterministic
 > scripted providers, no network, no provider keys). They measure the
 > gateway's routing/resilience/eval machinery - NOT real model quality.
-> For real numbers, run `python evals/run_evals.py` with your own provider keys configured; this file regenerates each run.**
+> For real numbers, run `python evals/run_resilience_eval.py --live
+> --yes-spend-quota` with your own provider keys configured; that writes
+> docs/eval-results.md with a MODE: LIVE header instead.
 """
 
 WHAT_THIS_DOES_NOT_SHOW = """## What this does not show
@@ -121,7 +137,8 @@ def render_report(blob: dict) -> str:
         "NOT the real providers)",
         f"- n: routing {blob['routing']['n']} labeled prompts; resilience "
         f"{blob['resilience']['n_per_scenario']} requests x 5 scenarios x 2 arms; "
-        f"quality {blob['quality']['n_tasks']} tasks x 3 arms; overhead "
+        f"quality {blob['quality']['n_tasks']} tasks x 3 arms "
+        "(not measured: scripted stubs); overhead "
         f"{blob['overhead']['auto']['n']} requests x 2 arms",
         "- Intervals: Wilson 95% on every success rate below",
         "",
@@ -152,16 +169,20 @@ def render_report(blob: dict) -> str:
         "## Reproduce / go real",
         "",
         "```bash",
-        "python evals/run_evals.py            # mocked suite -> this file",
-        "python evals/run_routing_eval.py     # E1 only (no provider calls at all)",
-        "python evals/run_resilience_eval.py --live --base-url http://127.0.0.1:8000",
+        "python evals/run_evals.py                          # mocked suite -> evals/results-mock/eval-results.md (gitignored)",
+        "python evals/run_routing_eval.py                   # E1 only (no provider calls at all)",
+        "python evals/run_resilience_eval.py --live --yes-spend-quota --base-url http://127.0.0.1:8000   # LIVE -> docs/eval-results.md",
         "python evals/run_quality_eval.py --json",
         "python evals/run_overhead_eval.py --json",
         "```",
         "",
-        "`--live` fires the provider-down scenario at a RUNNING backend with "
-        "Chaos Mode enabled and your saved keys; every other scenario stays "
-        "mocked-only by design so a misfire cannot burn real quota.",
+        "Mocked runs never write to `docs/` (T4c): this report lives in the "
+        "gitignored `evals/results-mock/`. A LIVE resilience run — which "
+        "refuses to start without `--yes-spend-quota`, at least 2 saved "
+        "provider keys and `CHAOS_MODE_ENABLED` — writes "
+        "`docs/eval-results.md` with a `MODE: LIVE` header, the date, the "
+        "commit and the models actually called; THAT is the file to commit "
+        "after a real run.",
         "",
     ]
     return "\n".join(parts)
@@ -169,39 +190,44 @@ def render_report(blob: dict) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the full mocked eval suite and write docs/eval-results.md."
+        description="Run the full mocked eval suite and write evals/results-mock/eval-results.md."
     )
     parser.add_argument("--n", type=int, default=50, help="requests per resilience scenario")
     parser.add_argument("--n-overhead", type=int, default=200, help="requests per overhead arm")
-    parser.add_argument("--no-docs", action="store_true", help="print the report, do not write docs/")
+    parser.add_argument("--no-docs", action="store_true", help="print the report, do not write it")
     parser.add_argument("--json", action="store_true", help="also print the raw result blob")
     args = parser.parse_args()
 
-    blob = run_all(args.n, args.n_overhead)
-    report = render_report(blob)
-    # Undo the log silencing so an embedded caller (tests) keeps a working
-    # logger; harmless in CLI use where the process exits anyway.
     from harness import restore_structlog
 
-    restore_structlog()
+    try:
+        blob = run_all(args.n, args.n_overhead)
+        report = render_report(blob)
+    finally:
+        # Undo the log silencing on EVERY exit path (run_all can raise
+        # mid-run); harmless in CLI use where the process exits anyway.
+        restore_structlog()
 
     if args.json:
         print(json.dumps(blob, indent=2))
     if args.no_docs:
         print(report)
     else:
-        DOC_PATH.parent.mkdir(parents=True, exist_ok=True)
-        DOC_PATH.write_text(report, encoding="utf-8")
+        # T4c: a mocked run NEVER writes to a committed docs path. It writes
+        # to the gitignored evals/results-mock/ under a MOCKED header; only a
+        # live run (run_resilience_eval.py --live --yes-spend-quota) writes
+        # docs/eval-results.md, with a MODE: LIVE header.
+        MOCK_DIR.mkdir(parents=True, exist_ok=True)
+        MOCK_REPORT_PATH.write_text(report, encoding="utf-8")
         try:
-            shown = DOC_PATH.relative_to(REPO_ROOT)
+            shown = MOCK_REPORT_PATH.relative_to(REPO_ROOT)
         except ValueError:
-            shown = DOC_PATH
-        print(f"wrote {shown}")
+            shown = MOCK_REPORT_PATH
+        print(f"wrote {shown} (gitignored: mocked results are never committed)")
         print(f"routing accuracy: {blob['routing']['accuracy'] * 100:.1f}% | "
               f"resilience router success: "
               f"{blob['resilience']['scenarios'][0]['router']['success_rate'] * 100:.0f}% "
-              f"(first scenario) | quality auto: "
-              f"{blob['quality']['arms'][0]['accuracy'] * 100:.1f}% | "
+              f"(first scenario) | quality: not measured (mocked stubs) | "
               f"overhead delta p50: {blob['overhead']['overhead_delta']['p50_ms']} ms")
 
 

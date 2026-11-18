@@ -14,7 +14,7 @@ Redis.
 ## The 60-second setup
 
 ```bash
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 python run.py
 ```

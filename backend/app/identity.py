@@ -9,9 +9,10 @@ fallbacks, the ``rk_`` key prefix, the ``routellm-auto`` OpenAI model id and
 the on-disk data filenames, all kept for existing installs).
 
 Renaming is deliberately NOT done here: package names, module paths, the
-``rk_`` key prefix, the ``routellm-auto``/``x_routellm_metadata`` API
-contract and the database filename stay as they are, so existing installs
-keep working.
+``rk_`` key prefix, the old ``routellm-auto`` id (now an accepted alias of
+the primary ``routtener-auto``), the legacy ``x_routellm_metadata`` response
+field (emitted alongside ``x_routtener_metadata``) and the database filename
+stay as they are, so existing installs keep working.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ UPSTREAM_DISCLAIMER = (
 )
 
 #: Canonical project URL (used in the OpenAPI docs and the landing page).
-PROJECT_URL = "https://github.com/sarooo43/Routellm"
+PROJECT_URL = "https://github.com/sarooo43/Routtener"
 
 
 def user_agent(suffix: str = "") -> str:
