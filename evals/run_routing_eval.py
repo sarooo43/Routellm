@@ -39,11 +39,22 @@ KNOWN_DIFFICULTY = {"easy", "medium", "hard"}
 BIN_EDGES = (0.0, 0.4, 0.6, 0.8, 1.0001)
 
 
+#: Provenance header (T4e). The first line of the dataset JSONL carries the
+#: label provenance; the eval reports it verbatim so an unreviewed dataset
+#: can never be mistaken for a human-audited one.
+HEADER_KEY = "_dataset_header"
+
+
 def load_labeled_prompts(path: Path = DATASET_PATH) -> list[dict]:
-    """Load and validate the labeled dataset; fail loudly on a bad file."""
+    """Load and validate the labeled dataset; fail loudly on a bad file.
+
+    An optional FIRST line ``{"_dataset_header": {...}}`` carries the label
+    provenance (T4e) and is returned separately from the prompt rows.
+    """
     if not path.exists():
         raise SystemExit(f"FATAL: dataset {path} not found (run from the repo).")
     rows: list[dict] = []
+    header: dict | None = None
     seen_prompts: set[str] = set()
     seen_ids: set[int] = set()
     with path.open(encoding="utf-8") as fh:
@@ -55,6 +66,13 @@ def load_labeled_prompts(path: Path = DATASET_PATH) -> list[dict]:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise SystemExit(f"FATAL: line {line_no} is not valid JSON: {exc}")
+            if HEADER_KEY in row:
+                if line_no != 1:
+                    raise SystemExit(
+                        f"FATAL: line {line_no}: {HEADER_KEY} may only appear on line 1"
+                    )
+                header = row[HEADER_KEY]
+                continue
             missing = [k for k in ("id", "prompt", "expected_task_type", "difficulty") if k not in row]
             if missing:
                 raise SystemExit(f"FATAL: line {line_no} missing fields: {missing}")
@@ -72,6 +90,49 @@ def load_labeled_prompts(path: Path = DATASET_PATH) -> list[dict]:
     if len(rows) < 100:
         raise SystemExit(f"FATAL: dataset has {len(rows)} prompts; the eval contract requires >= 100.")
     return rows
+
+
+def dataset_provenance(rows: list[dict], path: Path = DATASET_PATH) -> dict:
+    """Label provenance + keyword-leakage indicator (T4e).
+
+    Leakage: the fraction of prompts containing at least one keyword from
+    the rule-based classifier's OWN keyword lists. When the eval's prompts
+    share vocabulary with the classifier, accuracy is likely INFLATED - the
+    number is reported so nobody mistakes it for an independent sample.
+    """
+    header: dict | None = None
+    if path.exists():
+        first = path.open(encoding="utf-8").readline().strip()
+        try:
+            parsed = json.loads(first)
+            if HEADER_KEY in parsed:
+                header = parsed[HEADER_KEY]
+        except json.JSONDecodeError:
+            pass
+
+    keyword_lists = [
+        getattr(local_classifier, name)
+        for name in ("CODE_KEYWORDS", "REASONING_KEYWORDS", "SUMMARIZATION_KEYWORDS")
+        if hasattr(local_classifier, name)
+    ]
+    leaked = 0
+    for row in rows:
+        text = row["prompt"].lower()
+        if any(kw.lower() in text for kws in keyword_lists for kw in kws):
+            leaked += 1
+    fraction = round(leaked / len(rows), 4) if rows else 0.0
+    return {
+        "authored_by": (header or {}).get("authored_by", "unknown"),
+        "reviewed_by_owner": bool((header or {}).get("reviewed_by_owner", False)),
+        "review_procedure": "evals/REVIEW.md",
+        "keyword_leakage_fraction": fraction,
+        "keyword_leakage_note": (
+            f"{leaked}/{len(rows)} prompts contain a keyword from the "
+            "classifier's own keyword lists - accuracy on this dataset is "
+            "likely INFLATED relative to unseen prompts; treat it as an "
+            "in-distribution self-check, not an independent measurement."
+        ),
+    }
 
 
 def predict_with_confidence(prompt: str) -> tuple[str, float]:
@@ -157,6 +218,7 @@ def run_routing_eval(dataset_path: Path = DATASET_PATH) -> dict:
     n = len(rows)
     correct_total = sum(confusion[t].get(t, 0) for t in confusion)
     accuracy = correct_total / n
+    provenance = dataset_provenance(rows, dataset_path)
 
     per_class = {}
     for label in sorted(KNOWN_LABELS):
@@ -185,6 +247,7 @@ def run_routing_eval(dataset_path: Path = DATASET_PATH) -> dict:
         "dataset": str(dataset_path.relative_to(EVALS_DIR.parent)),
         "n": n,
         "accuracy": round(accuracy, 4),
+        "provenance": provenance,
         "per_difficulty": {
             d: {
                 "n": per_difficulty_total[d],
@@ -211,6 +274,18 @@ def render_markdown(result: dict) -> str:
         f"mixed difficulty, no duplicates. **No provider calls made** "
         f"(`provider_calls: {result['provider_calls']}`): this measures the "
         f"local rule-based classifier only.",
+        "",
+        "**Label provenance (T4e):** authored_by="
+        f"{result['provenance']['authored_by']}, reviewed_by_owner="
+        f"{str(result['provenance']['reviewed_by_owner']).lower()} "
+        f"(review procedure: {result['provenance']['review_procedure']}).",
+        "",
+        f"**Keyword leakage indicator:** "
+        f"{result['provenance']['keyword_leakage_fraction'] * 100:.0f}% of "
+        "the prompts contain a keyword from the classifier's own keyword "
+        "lists. **Accuracy on this dataset may be inflated** - it is an "
+        "in-distribution self-check against the classifier's own "
+        "vocabulary, not an independent measurement.",
         "",
         f"**Accuracy: {result['accuracy'] * 100:.1f}%**",
         "",
@@ -249,6 +324,16 @@ def render_markdown(result: dict) -> str:
         mean_c = f"{b['mean_confidence']:.2f}" if b["mean_confidence"] is not None else "n/a"
         acc = f"{b['accuracy'] * 100:.1f}%" if b["accuracy"] is not None else "n/a"
         lines.append(f"| [{lo:.1f}, {hi:.1f}) | {b['n']} | {mean_c} | {acc} |")
+    lines += [
+        "",
+        "Note (T4f): the confidence column is a DERIVED estimate computed in "
+        "`predict_with_confidence` (0.2 base + 0.2 per extra keyword hit, "
+        "capped), not a probability from the classifier itself - a prompt "
+        "with a single keyword match scores 0.2 by construction, so most "
+        "predictions land in the low bins regardless of correctness. No "
+        "routing decision thresholds on this number (the ML router has its "
+        "own separate `CONFIDENCE_FLOOR = 0.45` on model probabilities).",
+    ]
     if result["misclassified"]:
         lines += [
             "",

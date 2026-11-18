@@ -481,6 +481,37 @@ def test_preflight_passes_and_prints_budget_and_providers(resilience_eval, capsy
 
 
 # --------------------------------------------------------------------------
+# T4e: label provenance + keyword-leakage indicator
+# --------------------------------------------------------------------------
+
+
+def test_routing_eval_reports_provenance_and_leakage(routing_eval):
+    result = routing_eval.run_routing_eval()
+    prov = result["provenance"]
+    assert prov["authored_by"] == "AI"
+    assert prov["reviewed_by_owner"] is False
+    assert prov["review_procedure"] == "evals/REVIEW.md"
+    fraction = prov["keyword_leakage_fraction"]
+    assert 0.0 <= fraction <= 1.0
+    render = routing_eval.render_markdown(result)
+    assert "authored_by=AI" in render
+    assert "reviewed_by_owner=false" in render
+    assert "may be inflated" in render
+    assert (REPO_ROOT / "evals" / "REVIEW.md").exists()
+
+
+def test_dataset_header_is_skipped_not_counted_as_a_prompt(routing_eval):
+    rows = routing_eval.load_labeled_prompts()
+    assert len(rows) == 100
+    assert all(routing_eval.HEADER_KEY not in row for row in rows)
+    # the header line itself carries the provenance
+    first = (routing_eval.DATASET_PATH).open(encoding="utf-8").readline()
+    header = json.loads(first)[routing_eval.HEADER_KEY]
+    assert header["authored_by"] == "AI"
+    assert header["reviewed_by_owner"] is False
+
+
+# --------------------------------------------------------------------------
 # T4j: eval helpers must not leave global logging state changed
 # --------------------------------------------------------------------------
 

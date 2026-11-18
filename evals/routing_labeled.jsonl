@@ -1,3 +1,4 @@
+{"_dataset_header": {"authored_by": "AI", "reviewed_by_owner": false, "n_prompts": 100, "review_procedure": "see evals/REVIEW.md"}}
 {"id": 1, "prompt": "Write a Python function that reverses a linked list in place.", "expected_task_type": "code", "difficulty": "easy"}
 {"id": 2, "prompt": "Why do prices rise when the money supply expands faster than output?", "expected_task_type": "reasoning", "difficulty": "medium"}
 {"id": 3, "prompt": "Summarize the following article in three bullet points.", "expected_task_type": "summarization", "difficulty": "easy"}
