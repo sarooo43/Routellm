@@ -248,13 +248,13 @@ re-enter them on the Providers page.
 
 **No numbers are claimed here — the benchmark writes yours.**
 
-The repository contains a benchmark harness (`benchmark/`) that compares a
-naive single-model baseline against this router under identical conditions,
-including a deterministic Chaos-Mode simulated outage. Every number it
-produces comes from your own run on your own machine with your own provider
-keys; nothing is pre-computed or shipped in the repo.
-
-One command (backend already running, e.g. `python run.py`):
+**This is the headline-numbers command.** `benchmark/run_benchmark.py`
+compares a naive single-model baseline against this router under identical
+conditions on a RUNNING backend with YOUR real provider keys, including a
+deterministic Chaos-Mode simulated outage. It is the one number set to quote
+when someone asks "does the router actually help?". Every number it produces
+comes from your own run on your own machine; nothing is pre-computed or
+shipped in the repo. One command (backend already running, e.g. `python run.py`):
 
 ```bash
 # Windows (PowerShell, repo root)
@@ -267,36 +267,65 @@ backend/.venv/bin/python benchmark/run_benchmark.py
 It runs both scenarios (normal + chaos outage), then writes the report in
 two places: `benchmark/results/REPORT.md` and
 `docs/benchmark-results.md` (the repo-root copy this section links to once
-you have run it — no benchmark numbers are committed to the repository). Each
-report is a Markdown table with the date, the models each arm used, and the
-naive vs router success rates side by side, under normal conditions and the
-Chaos-Mode simulated outage. Every number in it is produced by your run;
-nothing is sampled, estimated or copied. Details, options and prerequisites:
+you have run it). Each report is a Markdown table with the date, the models
+each arm used, and the naive vs router success rates side by side, under
+normal conditions and the Chaos-Mode simulated outage. The naive column is
+labelled plainly: **fails by construction when its only provider is down**
+— the comparison demonstrates that failover works, not how often real
+providers fail. Every number in it is produced by your run; nothing is
+sampled, estimated or copied. Details, options and prerequisites:
 [benchmark/README.md](benchmark/README.md). Demo-mode traffic is never
 included in benchmark runs.
+
+**After a live run, commit `docs/benchmark-results.md`** — that is the one
+benchmark file meant for the repo (`benchmark/results/` is local scratch).
+
+How the other runners relate (all kept; none is deleted):
+
+- `evals/run_evals.py` — the mocked machinery suite (routing accuracy,
+  resilience, quality checkers, overhead). Deterministic, no keys, runs in
+  CI; its output goes to the gitignored `evals/results-mock/` and measures
+  the routing MACHINERY, not real models.
+- `evals/run_resilience_eval.py --live` — a narrower real-traffic probe
+  (the provider_down failover scenario only, via Chaos Mode on your running
+  backend). Use it to sanity-check failover on real providers between
+  benchmark runs.
 
 ---
 
 ## Evals
 
 The repository also ships an eval suite (`evals/`) that checks routing
-accuracy (100 human-labeled prompts, confusion matrix, calibration bins),
-resilience (5 scripted failure scenarios vs a naive single-provider baseline,
-Wilson 95% intervals), quality (exact-match math / unit-tested code / JSON
-schema — no LLM judge) and routing overhead (p50/p95). One command runs all
-of it and writes `docs/eval-results.md`:
+accuracy (labeled prompts, confusion matrix, calibration bins), resilience
+(5 scripted failure scenarios vs a naive single-provider baseline, Wilson
+95% intervals), quality (exact-match math / unit-tested code / JSON schema —
+no LLM judge) and routing overhead (p50/p95). One command runs all of it:
 
 ```bash
 python evals/run_evals.py
 ```
 
-**All numbers come from the owner's own run.** By default the whole suite
-runs in mocked mode — deterministic scripted providers, no network, no keys —
-and its output measures the routing machinery, not real model quality. The
-generated `docs/eval-results.md` is deliberately not committed; run the suite
-yourself (optionally with `--live` and your own keys for the resilience
-scenario) and read your own file. Every success rate it prints carries a
-Wilson 95% interval, and each report states what the numbers do not show.
+**All numbers come from the owner's own run.** The suite runs in mocked
+mode — deterministic scripted providers, no network, no keys — and its
+output measures the routing machinery, not real model quality. **A mocked
+run never writes to `docs/`** (T4c): its report lands in the gitignored
+`evals/results-mock/` under a `MODE: MOCKED — scripted providers, not a
+measurement of any real provider` header, and the quality section prints
+"not measured: scripted stubs" instead of percentages. A LIVE run is a
+separate, explicit action:
+
+```bash
+python evals/run_resilience_eval.py --live --yes-spend-quota --base-url http://127.0.0.1:8000
+```
+
+`--live` refuses to start without `--yes-spend-quota`, without at least 2
+saved provider keys, and unless the backend reports `CHAOS_MODE_ENABLED`;
+it prints the request budget and the providers it will call first, then
+writes **`docs/eval-results.md`** with a `MODE: LIVE` header (date, commit,
+providers actually called) — **commit that file after a live resilience
+run**. Every success rate the suite prints carries a Wilson 95% interval,
+and each report states what the numbers do not show. See
+[evals/REVIEW.md](evals/REVIEW.md) for how to review the label dataset.
 
 ---
 
