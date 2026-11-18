@@ -11,18 +11,41 @@ container) must still serve /health — with None fields, never an error.
 
 import subprocess
 
+import pytest
+
 from app.build_info import build_info, git_commit, git_commit_time
 
 
 def test_the_commit_is_the_real_head_commit():
-    """In a git checkout the reported commit IS HEAD (OBSERVED, not stubbed)."""
-    expected = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert git_commit() == expected
+    """In a git checkout the reported commit IS HEAD (OBSERVED, not stubbed).
+
+    ``git_commit`` is lru_cached on purpose: the commit of a running process
+    cannot change under it. That cache is the source of the mid-run-commit
+    race - if a commit lands AFTER an earlier test populated the cache (or
+    between the cache fill and this test's own ``git rev-parse``), the two
+    values legitimately disagree for a moment. Clear the cache first, and if
+    HEAD moves while this test is looking, skip with the reason instead of
+    reporting a false build-info failure.
+    """
+
+    def head() -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    before = head()
+    git_commit.cache_clear()
+    actual = git_commit()
+    after = head()
+    if before != after:
+        pytest.skip(
+            f"HEAD moved during this test ({before} -> {after}): a commit "
+            "landed mid-run, which is not a build-info bug"
+        )
+    assert actual == after
 
 
 def test_the_commit_time_is_iso8601():

@@ -234,8 +234,22 @@ def wilson_interval(successes: int, n: int, z: float = Z_95) -> tuple[float, flo
     observed-variance term must be divided by n and the z^2 term by n^2)
     and it divided the sqrt argument by ``(1 + z^2/n)`` instead of dividing
     the sqrt RESULT. The two errors compounded: a 50/50 run reported
-    [70.3%, 100%] instead of the correct [92.9%, 100%]. Verified against
-    the closed form for p_hat = 1: lower = n / (n + z^2).
+    [70.3%, 100%] instead of the correct [92.9%, 100%]. Fixed in commit
+    6a6977f (PR #20, squashed to main as e3f55f7).
+
+    Evidence against closed forms (z = 1.96 by hand; the function uses
+    Z_95 = 1.959964, hence the ~1e-5 agreement)::
+
+        50/50  fn [0.928652, 1.000000]  hand [0.928650, 1.000000]
+               closed form lower = n/(n+z^2) = 50/53.8416 = 0.928650
+        0/50   fn [0.000000, 0.071348]  hand [0.000000, 0.071350]
+               closed form upper = z^2/(n+z^2) = 3.8416/53.8416 = 0.071350
+        5/10   fn [0.236593, 0.763407]  hand [0.236590, 0.763410]
+               centre (0.5+3.8416/20)/1.38416 = 0.5;
+               half 1.96*sqrt(0.034604)/1.38416 = 0.263410
+        1/1    fn [0.206549, 1.000000]  hand [0.206543, 1.000000]
+               closed form lower = 1/(1+z^2) = 1/4.8416 = 0.206543
+        0/0    fn [0.000000, 0.000000]  (explicit n<=0 guard)
     """
     if n <= 0:
         return (0.0, 0.0)
@@ -317,3 +331,101 @@ def restore_structlog() -> None:
     if _SILENCE_FILE is not None:
         _SILENCE_FILE.close()
         _SILENCE_FILE = None
+
+
+# ---------------------------------------------------------------------------
+# Live-backend HTTP helpers (shared by the eval AND benchmark scripts)
+# ---------------------------------------------------------------------------
+#
+# Why this exists: the live scripts used to compare against a hardcoded 200.
+# `POST /api/v1/keys/generate` answers 201 (it creates a resource), so a
+# perfectly good run died with "FATAL: key generation failed (HTTP 201)".
+# The mocked tests missed it because their fake client returned 200 for that
+# path — a fake that is more permissive than the real endpoint hides exactly
+# this class of bug.
+#
+# Rules encoded here, so no script can drift again:
+#   * success is ANY 2xx, unless a caller genuinely needs one specific code;
+#   * a failure names the status AND carries a redacted, truncated body;
+#   * a credential is NEVER printed, echoed, or included in an error string.
+
+#: Longest provider/server text we keep in an error message.
+MAX_ERROR_BODY_CHARS = 500
+
+#: Patterns that look like credentials, scrubbed before anything is printed.
+_SECRETISH = (
+    # Routtener/RouteLLM keys, provider keys, bearer tokens, and the JSON
+    # field the key-generate endpoint returns.
+    (r"rk_[A-Za-z0-9_\-]{6,}", "rk_***"),
+    (r"gsk_[A-Za-z0-9_\-]{6,}", "gsk_***"),
+    (r"sk-[A-Za-z0-9_\-]{6,}", "sk-***"),
+    (r"AIza[A-Za-z0-9_\-]{6,}", "AIza***"),
+    (r"(?i)bearer\s+[A-Za-z0-9._\-]{6,}", "Bearer ***"),
+    (r'"(api_key|provider_api_key|encrypted_key)"\s*:\s*"[^"]*"', r'"\1": "***"'),
+)
+
+
+def redact_secrets(text: str) -> str:
+    """Remove anything credential-shaped from ``text``.
+
+    Deliberately aggressive: a log line is a public artifact (CI, a pasted
+    issue, a screenshot), so a false positive is much cheaper than a leak.
+    """
+    import re
+
+    cleaned = text or ""
+    for pattern, replacement in _SECRETISH:
+        cleaned = re.sub(pattern, replacement, cleaned)
+    return cleaned
+
+
+def is_success(status_code: int) -> bool:
+    """2xx = success. The whole point of this module; see the block comment."""
+    return 200 <= int(status_code) < 300
+
+
+def response_detail(response) -> str:
+    """A redacted, truncated description of a failed response.
+
+    ``HTTP 500: {"detail":"boom"}`` — enough to act on, never enough to leak.
+    Handles non-JSON bodies and a response with no ``.text`` at all.
+    """
+    status = getattr(response, "status_code", "?")
+    body = ""
+    try:
+        body = response.text or ""
+    except Exception:  # noqa: BLE001 - a fake response may not carry text
+        body = ""
+    body = redact_secrets(body).strip().replace("\n", " ")
+    if len(body) > MAX_ERROR_BODY_CHARS:
+        body = body[:MAX_ERROR_BODY_CHARS] + "…"
+    return f"HTTP {status}" + (f": {body}" if body else "")
+
+
+def require_success(response, what: str, *, status: int | None = None) -> None:
+    """Assert a live call succeeded, or exit with an actionable message.
+
+    Parameters
+    ----------
+    what:
+        Short description used in the message ("key generation").
+    status:
+        Set only when ONE specific code is genuinely required. Almost never.
+    """
+    code = getattr(response, "status_code", 0)
+    ok = (code == status) if status is not None else is_success(code)
+    if ok:
+        return
+    expected = f"HTTP {status}" if status is not None else "2xx"
+    raise SystemExit(
+        f"FATAL: {what} failed ({response_detail(response)}; expected {expected})."
+    )
+
+
+def print_key_lines(api_key: str | None) -> None:
+    """Print a key's PREFIX only. Never the value, never a suffix."""
+    if not api_key:
+        print("API key: (none)")
+        return
+    prefix = api_key[:11] if len(api_key) > 11 else api_key[:4] + "…"
+    print(f"API key: {prefix}… (prefix only; the full value is never printed)")

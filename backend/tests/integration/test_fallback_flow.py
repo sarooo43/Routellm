@@ -317,6 +317,45 @@ async def test_max_fallbacks_zero_treated_as_one(
     assert gemini.calls == 0
 
 
+async def test_production_default_fallback_depth_and_outcome(
+    install_stubs, breaker, tracker, db_session
+):
+    """T2: no max_fallbacks argument - the PRODUCTION default must apply.
+
+    Every other scenario here passes max_fallbacks explicitly, so a
+    regression in ``execute_with_fallback``'s default (3 -> 1) would go
+    unnoticed. Primary and secondary fail, the third provider must save the
+    request: this pins BOTH the default depth (3 real attempts) and the
+    outcome (success via the last provider).
+    """
+    order = expected_ranking("code")
+    stubs = {
+        order[0]: StubProvider(order[0], [fail(order[0])]),
+        order[1]: StubProvider(order[1], [fail(order[1])]),
+        order[2]: StubProvider(order[2], [ok(order[2])]),
+    }
+    install_stubs(**stubs)
+
+    result = await execute_with_fallback(
+        "Say hi",
+        db_session=db_session,
+        task_type="code",
+        circuit_breaker=breaker,
+        quota_tracker=tracker,
+    )
+
+    assert result.success is True
+    assert result.model_used == order[2]
+    assert [a.provider_name for a in result.fallback_chain_attempted] == order
+    assert [a.success for a in result.fallback_chain_attempted] == [
+        False,
+        False,
+        True,
+    ]
+    assert len(result.fallback_chain_attempted) == 3  # production default
+    assert stubs[order[2]].calls == 1
+
+
 # ------------------ DeepSeek code-model preference dispatch ------------------
 
 

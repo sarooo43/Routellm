@@ -46,18 +46,40 @@ history, not by the absolute number.
 
 ## Skips
 
-Every skip in the default run, with the reason it is legitimate rather than a
-hidden failure. These are environmental: each test imports an optional
-dependency that a local-first install does not have.
+Skip counts differ by platform. OBSERVED in the CI `backend-tests` job log
+(run `44221303211`, Python 3.11 and 3.12): **11 skipped** on the Linux host
+before this branch. The Windows-local run reports **15**, because five skips
+are OS-specific and cannot reproduce on Linux.
+
+### Linux CI (10 after this branch)
 
 | Test | Skip reason | Why it is correct |
 |---|---|---|
-| `tests/test_hf_app.py` (6 tests) | `could not import 'gradio'` | Gradio is only installed in the Hugging Face Space image, not in `requirements-dev.txt`. The `hf-space-boot` CI job installs it exactly as the Space does. |
+| `tests/test_hf_app.py` (5 tests) | `could not import 'gradio'` | Gradio is only installed in the Hugging Face Space image, not in `requirements-dev.txt`; no CI job installs it. |
 | `tests/test_hf_app.py` (4 tests) | `could not import 'spaces'` | `huggingface_hub`'s ZeroGPU `spaces` package only exists on the Space runtime. |
-| `tests/unit/test_ml_classifier.py::…` | `could not import 'joblib'` | The trained router model is optional; `joblib` ships with the `ml` extra. |
-| `tests/test_hf_requirements.py::…` | `set ROUTELLM_CHECK_PYPI=1 to query PyPI` | Makes real network calls to PyPI. Opt-in so the suite stays offline and deterministic. |
+| `tests/test_hf_requirements.py::…` | `set ROUTTENER_CHECK_PYPI=1 (legacy ROUTELLM_CHECK_PYPI) to query PyPI` | Makes real network calls to PyPI. Opt-in so the suite stays offline and deterministic. |
 
-No skip uses a blanket platform condition. If a test ever needs
+The former `tests/unit/test_ml_classifier.py::test_corrupt_pickle_is_graceful`
+skip (`could not import 'joblib'`) is **fixed**: `joblib>=1.3` is now a
+development dependency. It is a small pure-Python package; sklearn and
+sentence-transformers stay out of CI on purpose. The sibling test that
+simulates joblib being absent still covers the fail-soft path.
+
+### Windows-local only (5, never in Linux CI)
+
+| Test | Skip reason |
+|---|---|
+| `tests/test_deploy_scripts.py` | `bash` is the WSL stub with no distro, so it cannot produce a syntax verdict; the check runs on Linux CI. |
+| `tests/test_hf_app.py` (2 tests) | Windows `SO_REUSEADDR` lets a probe bind a port an active listener holds; the conflict contract targets the Linux deploy host. |
+| `tests/test_run_launcher.py` | Same Windows `SO_REUSEADDR` behaviour for the occupied-port probe. |
+| `tests/unit/test_local.py` | POSIX permission bits only. |
+
+**New since PR #16?** None. Every skip site above (`importorskip` calls and
+platform conditions) already existed at PR #16's merge commit `35898f9`;
+that run also reported 11 skipped on Linux. The 15-vs-11 difference is the
+five Windows-only skips minus the one joblib skip that this branch fixes.
+
+No skip uses a blanket "flaky" condition. If a test ever needs
 `skipif(sys.platform == "win32", reason=...)`, the reason string must name the
 specific platform behaviour, never "flaky".
 

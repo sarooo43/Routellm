@@ -410,9 +410,10 @@ def test_quality_live_render_shows_percentages_with_n_per_kind(quality_eval):
 
 
 class _FakeResponse:
-    def __init__(self, status_code, data):
+    def __init__(self, status_code, data, text=""):
         self.status_code = status_code
         self._data = data
+        self.text = text
 
     def json(self):
         return self._data
@@ -438,7 +439,13 @@ class _FakeClient:
 
 def _preflight_routes(*, configured, chaos_status):
     return {
-        ("POST", "/api/v1/keys/generate"): _FakeResponse(200, {"api_key": "eval-key"}),
+        # 201, not 200: this fake used to answer 200 where the real endpoint
+        # answers 201, and that single lie is why the mocked suite stayed
+        # green while every live run died with "HTTP 201". Keep it honest;
+        # test_key_generation_contract_matches_real_app pins it to reality.
+        ("POST", "/api/v1/keys/generate"): _FakeResponse(
+            201, {"api_key": "eval-key"}
+        ),
         ("GET", "/api/v1/provider-keys"): _FakeResponse(
             200,
             [
@@ -508,11 +515,117 @@ def test_preflight_passes_and_prints_budget_and_providers(resilience_eval, capsy
     client = _FakeClient(
         _preflight_routes(configured=["groq", "deepseek", "gemini"], chaos_status=200)
     )
-    key = asyncio.run(resilience_eval.preflight_live(client, 7))
+    key, minted = asyncio.run(resilience_eval.preflight_live(client, 7))
     assert key == "eval-key"
+    # The key was minted here, so this run owns it and must revoke it (T3).
+    assert minted is True
     out = capsys.readouterr().out
     assert "Request budget: 7 requests x 1 scenario" in out
     assert "groq, deepseek, gemini" in out
+
+
+def test_preflight_reuses_an_env_key_instead_of_minting_one(
+    resilience_eval, monkeypatch, capsys
+):
+    """Every live run used to mint a fresh key, so the key table grew one eval
+    key per run, forever. A supplied ROUTELLM_EVAL_API_KEY is used as-is and
+    never revoked (it is not ours)."""
+    monkeypatch.setenv("ROUTELLM_EVAL_API_KEY", "reused-key-from-env")
+    client = _FakeClient(
+        _preflight_routes(configured=["groq", "deepseek"], chaos_status=200)
+    )
+    key, minted = asyncio.run(resilience_eval.preflight_live(client, 5))
+
+    assert key == "reused-key-from-env"
+    assert minted is False
+    assert ("POST", "/api/v1/keys/generate") not in client.calls
+    out = capsys.readouterr().out
+    assert "reused from $ROUTELLM_EVAL_API_KEY" in out
+    assert "reused-key-from-env" not in out  # never echo the value
+
+
+def test_revoke_transient_key_deletes_only_a_minted_key(resilience_eval):
+    class _Client:
+        def __init__(self):
+            self.calls = []
+
+        async def delete(self, path, **kwargs):
+            self.calls.append(("DELETE", path))
+            return _FakeResponse(200, {"status": "revoked"})
+
+    minted_client, reused_client = _Client(), _Client()
+    asyncio.run(
+        resilience_eval.revoke_transient_key(minted_client, "k", minted=True)
+    )
+    asyncio.run(
+        resilience_eval.revoke_transient_key(reused_client, "k", minted=False)
+    )
+
+    assert minted_client.calls == [("DELETE", "/api/v1/keys/me")]
+    assert reused_client.calls == []
+
+
+def test_revoke_transient_key_never_fails_the_run(resilience_eval):
+    """Cleanup lives on an exit path; a dead backend must not mask a good run."""
+
+    class _BrokenClient:
+        async def delete(self, path, **kwargs):
+            raise OSError("connection reset")
+
+    asyncio.run(
+        resilience_eval.revoke_transient_key(_BrokenClient(), "k", minted=True)
+    )
+
+
+def test_live_cli_has_a_dry_run_that_sends_no_route_calls(resilience_eval, monkeypatch):
+    """--dry-run must pass every gate and stop BEFORE the first real call."""
+    sent: list[str] = []
+
+    class _DryClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, path, **kwargs):
+            return _preflight_routes(
+                configured=["groq", "deepseek"], chaos_status=200
+            )[("GET", path)]
+
+        async def post(self, path, **kwargs):
+            sent.append(path)
+            return _preflight_routes(
+                configured=["groq", "deepseek"], chaos_status=200
+            )[("POST", path)]
+
+        async def delete(self, path, **kwargs):
+            return _FakeResponse(200, {"status": "revoked"})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _DryClient)
+    monkeypatch.setattr(resilience_eval, "write_live_doc", lambda *a, **k: sent.append("DOC"))
+    monkeypatch.setattr(
+        resilience_eval, "run_scenario_live", _forbid_route_calls()
+    )
+    monkeypatch.setattr("sys.argv", ["eval", "--live", "--yes-spend-quota", "--dry-run"])
+
+    asyncio.run(asyncio.to_thread(resilience_eval.main))
+
+    assert "/api/v1/route" not in sent
+    assert "DOC" not in sent, "a dry run measured nothing; it must not overwrite the report"
+    assert "/api/v1/keys/generate" in sent  # the gate it was proving
+
+
+def _forbid_route_calls():
+    async def _boom(*args, **kwargs):
+        raise AssertionError("--dry-run must not send /api/v1/route")
+
+    return _boom
 
 
 # --------------------------------------------------------------------------
