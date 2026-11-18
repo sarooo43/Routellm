@@ -234,8 +234,22 @@ def wilson_interval(successes: int, n: int, z: float = Z_95) -> tuple[float, flo
     observed-variance term must be divided by n and the z^2 term by n^2)
     and it divided the sqrt argument by ``(1 + z^2/n)`` instead of dividing
     the sqrt RESULT. The two errors compounded: a 50/50 run reported
-    [70.3%, 100%] instead of the correct [92.9%, 100%]. Verified against
-    the closed form for p_hat = 1: lower = n / (n + z^2).
+    [70.3%, 100%] instead of the correct [92.9%, 100%]. Fixed in commit
+    6a6977f (PR #20, squashed to main as e3f55f7).
+
+    Evidence against closed forms (z = 1.96 by hand; the function uses
+    Z_95 = 1.959964, hence the ~1e-5 agreement)::
+
+        50/50  fn [0.928652, 1.000000]  hand [0.928650, 1.000000]
+               closed form lower = n/(n+z^2) = 50/53.8416 = 0.928650
+        0/50   fn [0.000000, 0.071348]  hand [0.000000, 0.071350]
+               closed form upper = z^2/(n+z^2) = 3.8416/53.8416 = 0.071350
+        5/10   fn [0.236593, 0.763407]  hand [0.236590, 0.763410]
+               centre (0.5+3.8416/20)/1.38416 = 0.5;
+               half 1.96*sqrt(0.034604)/1.38416 = 0.263410
+        1/1    fn [0.206549, 1.000000]  hand [0.206543, 1.000000]
+               closed form lower = 1/(1+z^2) = 1/4.8416 = 0.206543
+        0/0    fn [0.000000, 0.000000]  (explicit n<=0 guard)
     """
     if n <= 0:
         return (0.0, 0.0)
