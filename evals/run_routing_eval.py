@@ -138,12 +138,20 @@ def dataset_provenance(rows: list[dict], path: Path = DATASET_PATH) -> dict:
 def predict_with_confidence(prompt: str) -> tuple[str, float]:
     """The real classifier's decision plus a transparent confidence estimate.
 
-    ``classify_task()`` returns only the label, so confidence is derived from
-    the same public keyword/pattern constants the rule-based tiers match on.
-    The estimate is deliberately simple and monotone in matched-signal
-    strength: more (and multi-kind) evidence for the winning tier means a
-    higher number. It is a ranking signal for calibration purposes, not a
-    probability claim.
+    T3 finding (OBSERVED, code-level): the rule-based classifier
+    ``classify_task()`` returns ONLY a label - it has no native confidence.
+    This helper therefore DERIVES an estimate from the same public
+    keyword/pattern constants the rule-based tiers match on; it is a ranking
+    signal for calibration, not a probability claim, and the eval report
+    labels it as such.
+
+    The only native probability in the codebase is
+    ``MLRouterClassifier.predict_best_provider`` (``predict_proba``), but it
+    predicts a distribution over PROVIDERS (not task labels) and needs a
+    trained artifact plus ENABLE_ML_ROUTING, so it cannot calibrate
+    task-label correctness. The router's per-provider ``confidence_score``
+    (scorer.py) is a ranking score (success_rate * capability_match), not a
+    classification confidence. Both are therefore unusable here.
     """
     text = prompt.strip().lower()
 
@@ -260,6 +268,10 @@ def run_routing_eval(dataset_path: Path = DATASET_PATH) -> dict:
         "confusion_matrix": {t: dict(sorted(preds.items())) for t, preds in sorted(confusion.items())},
         "per_class": per_class,
         "calibration_bins": calibration,
+        # T3: no native task-classification confidence exists in the
+        # rule-based classifier; the calibration column is derived.
+        "confidence_source": "derived_keyword_estimate",
+        "native_confidence_available": False,
         "misclassified": misclassified,
         "provider_calls": 0,
     }
@@ -326,13 +338,20 @@ def render_markdown(result: dict) -> str:
         lines.append(f"| [{lo:.1f}, {hi:.1f}) | {b['n']} | {mean_c} | {acc} |")
     lines += [
         "",
-        "Note (T4f): the confidence column is a DERIVED estimate computed in "
+        "Note (T3/T4f): **the rule-based classifier returns only a label - it has "
+        "no native confidence.** This column is a DERIVED estimate computed in "
         "`predict_with_confidence` (0.2 base + 0.2 per extra keyword hit, "
-        "capped), not a probability from the classifier itself - a prompt "
-        "with a single keyword match scores 0.2 by construction, so most "
-        "predictions land in the low bins regardless of correctness. No "
-        "routing decision thresholds on this number (the ML router has its "
-        "own separate `CONFIDENCE_FLOOR = 0.45` on model probabilities).",
+        "capped), kept only as a clearly labelled fallback. A prompt with a "
+        "single keyword match scores 0.2 by construction, so most predictions "
+        "land in the low bins regardless of correctness. The only native "
+        "probability in the codebase is `MLRouterClassifier.predict_proba`, but "
+        "it predicts PROVIDERS (not task labels) and needs a trained artifact "
+        "plus ENABLE_ML_ROUTING, so it cannot calibrate label correctness. The "
+        "router's per-provider `confidence_score` (success_rate * "
+        "capability_match) is a standalone ranking score used by the UI, not a "
+        "classification confidence. No routing decision thresholds on the "
+        "derived number (the ML router has its own separate "
+        "`CONFIDENCE_FLOOR = 0.45` on model probabilities).",
     ]
     if result["misclassified"]:
         lines += [

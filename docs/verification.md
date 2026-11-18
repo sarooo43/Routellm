@@ -442,18 +442,17 @@ ac48020 T2: remove cloud leftovers from CI, archive the worker code
 **NOT merged into main.** Its commit `ac48020` is exactly the "remove cloud
 leftovers from CI" change, which is why main still carries them.
 
-Still ACTIVE on main (reported, nothing removed):
+Still ACTIVE on main at audit time (historical snapshot; later changes noted):
 
 - `.github/workflows/ci.yml`: job `hf-space-boot` (lines 165–280; boots
   `hf_app.py`, probes public paths), job `cloudflare-worker` (289–304;
   `npm run test:cloudflare`), step "Verify the Hugging Face entrypoint
-  imports" (91–92), step "Validate Wrangler deploy config" (309).
-- `.github/workflows/deploy-hf.yml`: full HF Space deploy pipeline
-  (inert without the `HF_TOKEN` secret; pushes to
-  `huggingface.co/spaces/saboornotgonna/routellm`).
-- `.github/workflows/keepalive.yml`: "Keep the Space awake"
-  (targets `https://saboornotgonna-routellm.hf.space`).
+  imports" (91–92), step "Validate Wrangler deploy config" (309). The two
+  cloud jobs were removed in PR #20.
+- The two optional Actions workflows (HF Space deploy on `push: main`, and the
+  scheduled Space keep-alive ping) were **REMOVED** in `chore/evals-followup`
+  (T6). Manual deploy scripts under `scripts/` remain the supported path.
 - `docs/testing.md`: documents the gradio/spaces skips as Space-runtime
-  only; `docs/deploy/HUGGINGFACE_AND_MANAGED.md` referenced by the deploy
-  workflow. A `cloudflare/` directory exists at the repo root (archived on
-  the cleanup branch).
+  only. The skip inventory was reconciled against the real CI job log in
+  `chore/evals-followup` (T5). A `cloudflare/` directory exists at the repo
+  root (archived on the cleanup branch).

@@ -19,7 +19,12 @@ from app.config import settings
 from app.core import quota_tracker as quota_module
 from app.main import app
 from app.models import TaskLog
-from tests.integration.conftest import StubProvider, fail, ok
+from tests.integration.conftest import (
+    StubProvider,
+    expected_ranking,
+    fail,
+    ok,
+)
 
 
 @pytest.fixture
@@ -155,6 +160,44 @@ async def test_post_route_all_providers_fail_still_200(client, install_stubs):
     assert len(data["fallback_chain_attempted"]) == 3
     # Every attempt is explained in the chain the Explorer renders.
     assert all(a["error"] for a in data["fallback_chain_attempted"])
+
+
+async def test_post_route_production_default_depth_saves_request(
+    client, install_stubs
+):
+    """T2: the API production default (max_fallbacks=3) must save the request.
+
+    The request body omits ``max_fallbacks``, so ``RouteRequest.max_fallbacks``
+    supplies the production default. The first two ranked providers fail and
+    the third succeeds: this pins both the default DEPTH (three real attempts)
+    and the OUTCOME (success via the third provider). Changing the default in
+    ``app/api/routes.py`` to 1 makes this test fail.
+    """
+    order = expected_ranking("code")
+    install_stubs(
+        **{
+            order[0]: StubProvider(order[0], [fail(order[0])]),
+            order[1]: StubProvider(order[1], [fail(order[1])]),
+            order[2]: StubProvider(order[2], [ok(order[2])]),
+        }
+    )
+
+    resp = await client.post(
+        "/api/v1/route", json={"prompt": "hi", "task_type": "code"}
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["model_used"] == order[2]
+    # NOTE (observed behaviour): the response keeps the FIRST failure's
+    # explanation in "error" even when a later provider saves the request,
+    # so a successful fallback route still carries a non-null error summary.
+    assert data["error"] and order[0] in data["error"]
+    chain = data["fallback_chain_attempted"]
+    assert [a["provider_name"] for a in chain] == order
+    assert [a["success"] for a in chain] == [False, False, True]
+    assert len(chain) == 3  # production default, not an explicit override
 
 
 # --------------------------------------------------------------------------

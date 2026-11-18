@@ -27,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "scripts"
 PS1 = SCRIPTS / "deploy_hf.ps1"
 SH = SCRIPTS / "deploy_hf.sh"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "deploy-hf.yml"
 
 #: Any push refspec in the deploy tooling must use the qualified branch form.
 BAD_REFSPEC = re.compile(r":main\b(?!\s*$)")
@@ -39,11 +38,11 @@ def _read(path: Path) -> str:
 
 
 # --------------------------------------------------------------------------
-# Static contract for all three deploy entry points
+# Static contract for both deploy entry points
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", [PS1, SH, WORKFLOW], ids=["powershell", "shell", "workflow"])
+@pytest.mark.parametrize("path", [PS1, SH], ids=["powershell", "shell"])
 def test_push_uses_a_fully_qualified_destination(path):
     text = _read(path)
     assert GOOD_REFSPEC in text, f"{path.name} does not push to {GOOD_REFSPEC}"
@@ -60,7 +59,7 @@ def test_push_uses_a_fully_qualified_destination(path):
         )
 
 
-@pytest.mark.parametrize("path", [PS1, SH, WORKFLOW], ids=["powershell", "shell", "workflow"])
+@pytest.mark.parametrize("path", [PS1, SH], ids=["powershell", "shell"])
 def test_push_is_forced(path):
     """The Space history is rebuilt on every deploy, so the push must force."""
     text = _read(path)
