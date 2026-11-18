@@ -48,7 +48,7 @@ terminal.
 ## Step 1 — Get the code and its dependencies
 
 ```powershell
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 git pull
 npm ci

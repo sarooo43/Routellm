@@ -180,5 +180,5 @@ The first state worth running: routing, fallback, observability.
 - Test suite covering the executor, scoring, breaker, quota, auth matrix,
   OpenAI compatibility, deployment resilience and the dashboard components.
 
-[Unreleased]: https://github.com/sarooo43/Routellm/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/sarooo43/Routellm/releases/tag/v0.1.0
+[Unreleased]: https://github.com/sarooo43/Routtener/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sarooo43/Routtener/releases/tag/v0.1.0

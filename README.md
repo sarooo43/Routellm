@@ -5,7 +5,7 @@ it classifies each prompt, ranks Groq / Google AI Studio / DeepSeek, and falls
 back automatically when one is down, rate-limited or circuit-broken — while
 showing you exactly what it decided and why.
 
-[![CI](https://github.com/sarooo43/Routellm/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo43/Routellm/actions/workflows/ci.yml)
+[![CI](https://github.com/sarooo43/Routtener/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo43/Routtener/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
 [![Node 20+ (only to build the UI)](https://img.shields.io/badge/node-20%2B%20(optional)-339933.svg)](https://nodejs.org)
@@ -34,7 +34,7 @@ showing you exactly what it decided and why.
 No Docker. No Postgres. No Redis. No account.
 
 ```bash
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 python run.py
 ```
@@ -51,7 +51,7 @@ Node is available (or uses a prebuilt one), creates `./data`, and opens
 <summary><strong>Windows</strong> (PowerShell)</summary>
 
 ```powershell
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 .\start.ps1
 ```
@@ -72,7 +72,7 @@ nothing needs to be made permanent.
 <summary><strong>macOS / Linux</strong></summary>
 
 ```bash
-git clone https://github.com/sarooo43/Routellm.git
+git clone https://github.com/sarooo43/Routtener.git
 cd Routellm
 ./start.sh
 ```

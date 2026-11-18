@@ -30,7 +30,7 @@ UPSTREAM_DISCLAIMER = (
 )
 
 #: Canonical project URL (used in the OpenAPI docs and the landing page).
-PROJECT_URL = "https://github.com/sarooo43/Routellm"
+PROJECT_URL = "https://github.com/sarooo43/Routtener"
 
 
 def user_agent(suffix: str = "") -> str:

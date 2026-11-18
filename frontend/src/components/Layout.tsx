@@ -71,7 +71,7 @@ export function Layout() {
           <BuildVersionChips />
           <span className="mx-1.5 text-text-secondary/30">·</span>
           <a
-            href="https://github.com/sarooo43/Routellm"
+            href="https://github.com/sarooo43/Routtener"
             target="_blank"
             rel="noopener noreferrer"
             className="underline-offset-2 hover:text-text-secondary hover:underline"

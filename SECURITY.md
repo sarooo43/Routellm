@@ -5,7 +5,7 @@
 Please **do not open a public issue** for a security problem.
 
 - Use GitHub's private reporting: **Security → Report a vulnerability** on
-  [github.com/sarooo43/Routellm](https://github.com/sarooo43/Routellm), or
+  [github.com/sarooo43/Routtener](https://github.com/sarooo43/Routtener), or
 - email the maintainer listed on that profile.
 
 Include what you need to make the problem reproducible, and mask every

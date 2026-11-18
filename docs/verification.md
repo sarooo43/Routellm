@@ -232,7 +232,7 @@ Nothing was missing → no new A6 tests needed.
 
 ## A8. Fresh clone, no env vars
 
-**OBSERVED**: `git clone --depth 1 https://github.com/sarooo43/Routellm.git`
+**OBSERVED**: `git clone --depth 1 https://github.com/sarooo43/Routtener.git`
 → `CLONE EXIT: 0`, `35898f9 Model Explorer: retire-by-default Gemini ranking…`.
 No `ROUTELLM*`/`DATABASE_URL`/`REDIS_URL` env vars present (script printed none).
 `python run.py` (Python 3.13): installed 257 packages, built the frontend
@@ -268,7 +268,7 @@ INFO:     127.0.0.1:56710 - "GET /v1/models HTTP/1.1" 200 OK
 | API keys / auth | 8+18 | 26 P | local | — |
 | UI (frontend) | 112 | 112 P | local | Analytics/ModelHealth/Overview pages + 7 components (no test files) |
 | Deploy scripts / HF | — | 10 S (platform) | local | Linux-side behaviour |
-| CI (GitHub Actions) | — | — | https://github.com/sarooo43/Routellm/actions | see "CI" below |
+| CI (GitHub Actions) | — | — | https://github.com/sarooo43/Routtener/actions | see "CI" below |
 
 **CI**: no Actions run exists for branch `audit/verification` — CI triggers on
 push/PR targeting `main`, and this audit pushed a branch only. Baseline evidence
