@@ -62,8 +62,34 @@ def encryption_key(monkeypatch):
 
 
 @pytest.fixture
-async def client(monkeypatch, db_session):
+async def client(monkeypatch, db_session, breaker, tracker, redis_client):
     """Real app over ASGITransport, real SQLite session, no sockets."""
+
+    # The app caches ONE global ChaosController/breaker/tracker bound to
+    # whichever event loop first created them (executor._ensure_shared_clients).
+    # Under pytest every test gets a fresh loop, so a cached Redis client from
+    # an earlier test raises "Event loop is closed" - and it only shows up with
+    # a REAL Redis (CI), which is why SQLite+fakeredis runs looked clean.
+    # Every other integration test installs this override; this one now does
+    # too, instead of reaching the process-global client.
+    from app.core import executor as executor_module
+    from app.core.chaos import ChaosController
+
+    monkeypatch.setattr(
+        executor_module,
+        "_ensure_shared_clients",
+        lambda: (breaker, tracker, ChaosController(redis_client)),
+    )
+    # chaos_routes did `from app.core.executor import _ensure_shared_clients`,
+    # so patching the executor module alone does not reach it - the chaos
+    # endpoints kept using the stale, loop-bound client.
+    import app.api.chaos_routes as chaos_routes_module
+
+    monkeypatch.setattr(
+        chaos_routes_module,
+        "_ensure_shared_clients",
+        lambda: (breaker, tracker, ChaosController(redis_client)),
+    )
     from app.db.session import get_session
 
     async def override_session():
