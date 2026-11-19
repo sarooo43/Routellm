@@ -5,11 +5,10 @@ import httpx
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
 from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
-from app.core.provider_key_format import describe_unusable
 from app.providers.outcomes import (
     error_for_exception,
-    error_for_invalid_key,
     error_for_status,
+    key_problem_response,
 )
 
 SPEC = PROVIDER_SPECS["deepseek"]
@@ -90,14 +89,16 @@ class DeepSeekProvider(ModelProvider):
         # (or written straight into the DB) must never crash the request. No
         # socket is opened for a value that cannot be sent, and the failure is
         # reported as a key problem rather than as a network problem.
-        key_problem = describe_unusable(api_key or "")
-        if key_problem and "whitespace at the start or end" not in key_problem:
-            return error_for_invalid_key(
-                provider=self.provider_name,
-                model=model,
-                reason=key_problem,
-                latency_ms=elapsed_ms(start),
-            )
+        # One shared rule for all three adapters: no key and an unsendable
+        # key are different, truthful errors, and neither opens a socket.
+        unusable = key_problem_response(
+            provider=self.provider_name,
+            model=model,
+            api_key=api_key,
+            latency_ms=elapsed_ms(start),
+        )
+        if unusable is not None:
+            return unusable
 
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:

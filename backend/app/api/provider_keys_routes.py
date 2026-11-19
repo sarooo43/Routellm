@@ -89,11 +89,37 @@ def _require_supported(provider_name: str) -> None:
         raise HTTPException(status_code=404, detail="Unknown provider")
 
 
+def _stored_key_is_usable(record: ProviderKeyDB) -> bool:
+    """True when the saved ciphertext decrypts to a sendable key.
+
+    A row is not a key. A truncated token, a row written under a different
+    ``encryption.key``, or a ciphertext that decrypts to an empty string all
+    decrypt to nothing usable - and reporting those as "configured" is what
+    makes a green badge sit next to every request failing (OBSERVED). Cheap
+    enough to check per row: at most three providers, one Fernet open each.
+    """
+    from app.core.provider_key_crypto import ProviderKeyEncryptionError, decrypt_provider_key
+    from app.core.provider_key_format import describe_unusable
+
+    try:
+        raw = decrypt_provider_key(record.encrypted_key)
+    except (ProviderKeyEncryptionError, ValueError, TypeError, AttributeError):
+        return False
+    return describe_unusable(raw) is None
+
+
 def _status(
     provider_name: str, record: Optional[ProviderKeyDB]
 ) -> ProviderKeyStatusResponse:
     if record is None:
         return ProviderKeyStatusResponse(provider_name=provider_name, configured=False)
+    if not _stored_key_is_usable(record):
+        # Deliberately reported as NOT configured, and without the old hint: a
+        # hint invites the user to trust a key that cannot be used, and the
+        # only fix is to re-save it.
+        return ProviderKeyStatusResponse(
+            provider_name=provider_name, configured=False
+        )
     return ProviderKeyStatusResponse(
         provider_name=provider_name,
         configured=True,

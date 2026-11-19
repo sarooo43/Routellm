@@ -397,3 +397,49 @@ def success_from(response, *, provider: str, model: str, text: str, tokens: int,
 
 def elapsed(start: float) -> float:
     return elapsed_ms(start)
+
+
+def error_for_missing_key(*, provider: str, model: str, latency_ms: float = 0.0):
+    """No usable credential: say so, and say the request was never sent.
+
+    Distinct from ``error_for_invalid_key`` (a key that exists but cannot be
+    serialised). Both mean "nothing left this process", so neither may be
+    reported as a network problem -- and neither may be retried as though the
+    provider had answered.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"missing_provider_key: no {provider} key is saved for this "
+            "Routtener key and no operator key is configured, so the request "
+            "was never sent. Save one on the Providers page."
+        ),
+        latency_ms,
+        outcome="missing_provider_key",
+    )
+
+
+def key_problem_response(*, provider: str, model: str, api_key, latency_ms: float = 0.0):
+    """``None`` when the key can be sent, else the error to return instead.
+
+    The one place the three adapters ask "is this credential usable?". Before
+    this, Groq and DeepSeek shared a hand-copied two-line check and Gemini had
+    none at all, so the same empty key produced three different behaviours.
+
+    Two outcomes, both truthful and both "nothing was sent":
+      * no key at all  -> ``missing_provider_key`` (a setup problem, not a bug);
+      * an unsendable key -> ``invalid_key_format`` (a stored value to re-save).
+    """
+    from app.core.provider_key_format import EMPTY_REASON, describe_unusable
+
+    reason = describe_unusable(api_key)
+    if reason is None or "whitespace at the start or end" in reason:
+        return None
+    if reason == EMPTY_REASON:
+        return error_for_missing_key(
+            provider=provider, model=model, latency_ms=latency_ms
+        )
+    return error_for_invalid_key(
+        provider=provider, model=model, reason=reason, latency_ms=latency_ms
+    )

@@ -5,7 +5,11 @@ import httpx
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
 from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
-from app.providers.outcomes import error_for_exception, error_for_status
+from app.providers.outcomes import (
+    error_for_exception,
+    error_for_status,
+    key_problem_response,
+)
 
 SPEC = PROVIDER_SPECS["gemini"]
 
@@ -58,6 +62,17 @@ class GeminiProvider(ModelProvider):
 
         url = SPEC.chat_url(model)
         start = time.perf_counter()
+        # Gemini had NO request-time key guard: an empty stored key sent a
+        # request with no x-goog-api-key and the provider's 401 was then
+        # reported as a key problem. Same rule as the other two adapters.
+        unusable = key_problem_response(
+            provider=self.provider_name,
+            model=model,
+            api_key=api_key,
+            latency_ms=elapsed_ms(start),
+        )
+        if unusable is not None:
+            return unusable
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 response = await client.post(url, json=payload, headers=headers)

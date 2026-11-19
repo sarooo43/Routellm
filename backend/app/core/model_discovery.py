@@ -700,6 +700,10 @@ def _is_rate_limited(response: ProviderResponse) -> bool:
     return bool((response.error or "") == "rate_limit_exceeded")
 
 
+#: Outcomes that no amount of model-walking can fix.
+_KEY_WIDE_OUTCOMES = frozenset({"missing_provider_key", "invalid_key_format"})
+
+
 def _is_auth_failed(response: ProviderResponse) -> bool:
     """403-shaped: the key AUTHENTICATED but was refused for this call.
 
@@ -1082,6 +1086,13 @@ async def generate_with_walking(
         return walk.response, walk.steps, walk.model_used
 
     response = await provider_obj.generate(prompt, **call_kwargs)
+    # A key problem is provider-wide. Walking every discovered model would
+    # retry the same missing/unsendable credential once per model and turn one
+    # clear failure into a burst of identical ones (OBSERVED: an empty key
+    # walked the whole catalog before reporting). Nothing was sent, so no
+    # model can behave differently.
+    if response.outcome in _KEY_WIDE_OUTCOMES:
+        return response, [], initial_model
     walkable = _is_model_not_found(response) or _is_auth_failed(response)
     if response.success or not walkable:
         if response.success and initial_model:

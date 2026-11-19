@@ -227,30 +227,29 @@ async def test_server_garbage_does_not_become_a_catalog(upstream):
     assert models == []
 
 
-async def test_an_empty_key_yields_a_credential_less_list_call(upstream):
-    """OBSERVED split in behaviour between the two paths.
+async def test_an_empty_key_sends_nothing_at_all(upstream):
+    """OBSERVED split, now CLOSED (Phase 1).
 
-    Discovery (``_auth_headers``) sends NO Authorization header when the key is
-    empty; the chat adapter builds ``Bearer {key}`` unconditionally, i.e.
-    ``Bearer `` / ``Bearer None``. Neither is a LocalProtocolError - that is
-    why PR #25's "different HTTP stacks" story was retracted - but a stored
-    value the app never validated is sent by both paths, and the two send
-    DIFFERENT things. This pins both halves.
+    This test used to pin the old behaviour: discovery omitted the
+    Authorization header for an empty key (so the provider answered 401) while
+    the chat adapter built ``Bearer `` (so h11 refused locally). That split is
+    exactly the owner's log. Discovery now refuses an empty key outright, so
+    both paths report the same missing-key condition and neither touches the
+    wire.
     """
     await ModelCatalog()._fetch(upstream["spec"], "")
 
-    headers = [s[2] for s in _Upstream.seen]
-    assert headers, "no request reached the stub"
-    assert all(h is None for h in headers)
+    gets = [s for s in _Upstream.seen if s[0] == "GET"]
+    assert gets == [], f"discovery sent a credential-less request: {gets}"
 
-    # The chat half, from the adapter source, not from a fake response.
-    import inspect
+    # The chat half: every adapter reports the same outcome for a blank key.
+    import asyncio
 
-    from app.providers import groq_provider
+    from app.providers.groq_provider import GroqProvider
 
-    source = inspect.getsource(groq_provider.GroqProvider.generate)
-    assert 'f"Bearer {api_key}"' in source
-    assert 'if api_key' not in source.split('f"Bearer {api_key}"')[0].split("\n")[-2]
+    result = await GroqProvider().generate("hi", model="llama-3.1-8b-instant",
+                                           provider_api_key="")
+    assert result.outcome == "missing_provider_key"
 
 
 # ---------------------------------------------------------------------------

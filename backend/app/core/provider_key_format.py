@@ -65,13 +65,27 @@ class ProviderKeyFormatError(ValueError):
         self.reason = reason
 
 
-def describe_unusable(value: str) -> str | None:
+#: Returned by :func:`describe_unusable` for an empty/blank value. Callers
+#: check for it to produce a "no key" message instead of a format complaint.
+EMPTY_REASON = "is empty or only whitespace"
+
+
+def describe_unusable(value: str | None) -> str | None:
     """Why ``value`` cannot be sent, or ``None`` when it is fine.
 
     Whitespace at the EDGES is not an error - it is trimmed on save and again
     on use, because copying a key out of a dashboard very often catches a
     trailing space. Only what survives trimming can break a request.
+
+    EMPTY IS AN ERROR. This used to return ``None`` for ``""``, which meant
+    "sendable", so every request-time guard let it through and the chat
+    adapters serialised ``Authorization: Bearer `` - a header h11 refuses to
+    write, which surfaced as ``LocalProtocolError`` blamed on the network
+    (OBSERVED on a real uvicorn server). An empty key is not a format problem
+    to fix and retry; it is a missing key, and callers say so.
     """
+    if value is None or not value.strip():
+        return EMPTY_REASON
     if any(ch in _FORBIDDEN_CONTROLS for ch in value):
         for index, ch in enumerate(value):
             if ch in _FORBIDDEN_CONTROLS:
@@ -105,7 +119,7 @@ def normalize(value: str | None) -> str:
     """
     trimmed = (value or "").strip()
     if not trimmed:
-        raise ProviderKeyFormatError("is empty")
+        raise ProviderKeyFormatError(EMPTY_REASON)
     reason = describe_unusable(trimmed)
     if reason is not None and "whitespace at the start or end" not in reason:
         raise ProviderKeyFormatError(reason)
