@@ -298,67 +298,206 @@ async def revoke_transient_key(client, api_key: str, *, minted: bool) -> None:
         print(f"note: could not revoke the transient eval key ({response_detail(resp)})")
 
 
-async def preflight_live(client, n: int) -> str:
-    """Every gate a live run must pass BEFORE any real request is sent.
+class PreflightReport:
+    """What preflight found, and what (if anything) blocks a real run.
 
-    Each refusal exits with a clear, actionable message (T4h). The gates:
-      1. fewer than 2 providers have saved keys -> abort (the scenario needs
-         a failing primary AND a healthy fallback);
-      2. the backend does not report Chaos Mode enabled -> abort;
-      3. otherwise: print the total request budget and which providers may
-         be called, and hand back the freshly generated eval API key.
+    Split from the exit decision on purpose: the T0 bug was a *reporting* bug.
+    The owner had 3 keys saved and saw "configured: none" with no explanation,
+    so a script that dies at the first failed gate is a script that hides its
+    own reasoning. --dry-run prints the whole picture and THEN exits nonzero.
+
+    A plain class, not a dataclass: this module is loaded via
+    importlib.exec_module without being registered in sys.modules (that is how
+    backend/tests/test_evals.py imports it), and @dataclass resolves its own
+    module there and raises AttributeError.
     """
-    # Prefer a key the caller already has (ROUTELLM_EVAL_API_KEY): every live
-    # run used to mint a NEW key, so a year of CI runs would litter the key
-    # table with hundreds of live eval keys. Reuse is the default; minting is
-    # the fallback, and minted keys are revoked on the way out (T3).
-    api_key = (os.environ.get(EVAL_KEY_ENV_VAR) or "").strip()
-    reused = bool(api_key)
-    if reused:
-        print("API key: reused from $ROUTELLM_EVAL_API_KEY (no new key minted)")
-    else:
-        # 201 Created is the CORRECT answer here (the endpoint is declared
-        # status_code=201). The old `!= 200` check killed every live run with
-        # "FATAL: key generation failed (HTTP 201)" - a success reported as a
-        # failure. Any 2xx passes now; the message carries a redacted body.
-        resp = await client.post("/api/v1/keys/generate", json={"label": "eval-resilience"})
-        require_success(resp, "key generation")
-        api_key = resp.json()["api_key"]
-        print_key_lines(api_key)
-        print("API key: minted for this run, and revoked when the run ends")
-        print(f"  hint: export {EVAL_KEY_ENV_VAR}=<key> to reuse a key instead")
 
+    def __init__(
+        self,
+        api_key: str,
+        minted: bool,
+        configured: list[str],
+        chaos_enabled: bool,
+        chaos_detail: str,
+        budget: int,
+        blocker: str = "",
+    ) -> None:
+        self.api_key = api_key
+        self.minted = minted
+        self.configured = configured
+        self.chaos_enabled = chaos_enabled
+        self.chaos_detail = chaos_detail
+        self.budget = budget
+        #: Human-readable blocker, or "" when every gate passed.
+        self.blocker = blocker
+
+    @property
+    def ok(self) -> bool:
+        return not self.blocker
+
+
+def credential_label(api_key: str) -> str:
+    """The credential in a form that is safe to print: prefix only."""
+    if not api_key:
+        return "(none)"
+    return f"{api_key[:7]}…"
+
+
+def _providers_hint(api_key: str, minted: bool) -> str:
+    """What to do when the caller has keys saved but detection sees none.
+
+    This is the owner-facing half of the T0 fix. Provider keys are scoped to
+    the Routtener key that saved them (``ProviderKeyDB.api_key_id``), so a
+    freshly minted key sees an empty list no matter how many keys are saved
+    under another one. The old message said "save provider keys in the
+    dashboard first" - which the owner had already done, three times.
+    """
+    lines = [
+        "How this was detected:",
+        "  GET /api/v1/provider-keys  with header  X-API-Key: "
+        f"{credential_label(api_key)}",
+        "  The endpoint returns one row per provider; a row counts as",
+        "  configured when its \"configured\" field is true.",
+        "",
+        "If you DO have provider keys saved in the dashboard:",
+        "  Provider keys belong to the Routtener API key that saved them.",
+        "  Keys saved under a different API key are not visible to this key.",
+    ]
+    if minted:
+        lines += [
+            "  This run minted a brand-new key, and a new key owns no",
+            "  provider keys - so it sees none, however many you have saved.",
+            "",
+            "  Do this (all clicks, then one copy-paste):",
+            "   1. Dashboard -> API Keys -> Generate demo key. Copy it: that",
+            "      is the only time it is shown.",
+            "   2. Dashboard -> Provider Keys: with that key active, save your",
+            "      Gemini, Groq and DeepSeek keys again.",
+            "   3. Run the eval with that key (this is the step printed here):",
+            f"        export {EVAL_KEY_ENV_VAR}=<the key you just copied>",
+            "        python evals/run_resilience_eval.py --live --dry-run "
+            "--yes-spend-quota",
+            "  The eval then reuses your key instead of minting a new one,",
+            "  and detection sees the providers you saved.",
+        ]
+    else:
+        lines += [
+            f"  This run used ${EVAL_KEY_ENV_VAR}, and that key owns no",
+            "  provider keys.",
+            "",
+            "  Do this: open Dashboard -> Provider Keys with THIS key active,",
+            "  save your provider keys, and re-run. To use the key that",
+            f"  already owns them instead, point {EVAL_KEY_ENV_VAR} at it.",
+        ]
+    return "\n".join(lines)
+
+
+async def detect_providers(client, api_key: str) -> list[str]:
+    """Which providers the backend says this credential has keys for.
+
+    One endpoint, one credential, one parse - named so a test can call exactly
+    what the script calls. Returns [] when the credential simply has none.
+    """
     resp = await client.get("/api/v1/provider-keys", headers={"X-API-Key": api_key})
     require_success(resp, "provider-key status check")
-    configured = [
-        row["provider_name"] for row in resp.json() if row.get("configured")
-    ]
-    if len(configured) < 2:
-        raise SystemExit(
-            "FATAL: refusing to run --live: fewer than 2 providers have saved "
-            f"keys (configured: {configured or 'none'}). The provider_down "
-            "scenario needs a failing primary AND a healthy fallback - save "
-            "provider keys in the dashboard first."
-        )
+    rows = resp.json()
+    # Real shape (OBSERVED, ASGITransport + uvicorn): a JSON list of
+    # {"provider_name": str, "configured": bool, "key_hint": str|None, ...}
+    # covering EVERY registered provider, configured or not.
+    return [row["provider_name"] for row in rows if row.get("configured")]
 
+
+async def collect_preflight(client, n: int) -> PreflightReport:
+    """Gather every gate's result WITHOUT deciding to exit.
+
+    Never raises for a gate failure; the caller inspects ``blocker``. Raises
+    only when a live call itself fails (a dead backend is not a gate result).
+    """
+    api_key = (os.environ.get(EVAL_KEY_ENV_VAR) or "").strip()
+    minted = not api_key
+
+    if minted:
+        resp = await client.post(
+            "/api/v1/keys/generate", json={"label": "eval-resilience"}
+        )
+        require_success(resp, "key generation")
+        api_key = resp.json()["api_key"]
+
+    configured = await detect_providers(client, api_key)
+
+    chaos_enabled, chaos_detail = True, ""
     resp = await client.get("/api/v1/admin/chaos/status")
     if resp.status_code == 404:
-        raise SystemExit(
-            "FATAL: refusing to run Chaos Mode: the backend reports it is NOT "
-            "enabled (the /api/v1/admin/chaos/* endpoints answer 404 when "
-            "CHAOS_MODE_ENABLED is false). Set CHAOS_MODE_ENABLED=true in "
-            "backend/.env and restart the backend."
+        chaos_enabled = False
+        chaos_detail = (
+            "the /api/v1/admin/chaos/* endpoints answer 404 when "
+            "CHAOS_MODE_ENABLED is false"
         )
-    require_success(resp, "chaos status check")
+    else:
+        require_success(resp, "chaos status check")
 
-    budget = n * 1  # live mode fires exactly ONE scenario (provider_down)
-    print("MODE: LIVE - this run calls REAL providers and spends REAL quota.")
-    print(
-        f"Request budget: {n} requests x 1 scenario (provider_down) "
-        f"= {budget} /api/v1/route calls total."
+    report = PreflightReport(
+        api_key=api_key,
+        minted=minted,
+        configured=configured,
+        chaos_enabled=chaos_enabled,
+        chaos_detail=chaos_detail,
+        budget=n,
     )
-    print(f"Providers that may be called: {', '.join(configured)}")
-    return api_key, not reused
+
+    if len(configured) < 2:
+        report.blocker = (
+            "fewer than 2 providers have saved keys "
+            f"(configured: {configured or 'none'}). The provider_down scenario "
+            "needs a failing primary AND a healthy fallback."
+        )
+    elif not chaos_enabled:
+        report.blocker = f"Chaos Mode is NOT enabled ({chaos_detail})."
+
+    return report
+
+
+def print_preflight(report: PreflightReport, base_url: str) -> None:
+    """Everything the owner needs to understand the run, pass or fail."""
+    if report.minted:
+        print_key_lines(report.api_key)
+        print("API key: minted for this run, and revoked when the run ends")
+        print(f"  hint: export {EVAL_KEY_ENV_VAR}=<key> to reuse a key instead")
+    else:
+        print(
+            f"API key: reused from ${EVAL_KEY_ENV_VAR} "
+            f"({credential_label(report.api_key)})"
+        )
+
+    print(
+        "Providers detected: "
+        f"{', '.join(report.configured) if report.configured else 'none'}"
+        f" ({len(report.configured)} with saved keys)"
+    )
+    print(
+        "Chaos check: "
+        + ("enabled" if report.chaos_enabled else f"NOT enabled - {report.chaos_detail}")
+    )
+    print(
+        f"Request budget: {report.budget} requests x 1 scenario (provider_down) "
+        f"= {report.budget} /api/v1/route calls total."
+    )
+    if not report.ok:
+        print()
+        print(_providers_hint(report.api_key, report.minted))
+
+
+async def preflight_live(client, n: int) -> tuple[str, bool]:
+    """Backwards-compatible wrapper: collect, print, and refuse if blocked.
+
+    Kept so existing callers and tests keep one obvious entry point; the
+    report-printing split above is what --dry-run needs.
+    """
+    report = await collect_preflight(client, n)
+    print_preflight(report, str(getattr(client, "base_url", "")))
+    if not report.ok:
+        raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+    return report.api_key, report.minted
 
 
 async def run_scenario_live(client, api_key: str, n: int) -> dict:
@@ -588,25 +727,48 @@ def main() -> None:
                 async with httpx.AsyncClient(
                     base_url=args.base_url, timeout=30.0
                 ) as client:
-                    api_key, minted = await preflight_live(client, args.n)
+                    report = await collect_preflight(client, args.n)
+                    print_preflight(report, args.base_url)
+
                     if args.dry_run:
+                        # A dry run reports EVERY gate before it decides. The
+                        # T0 report was a bare "configured: none" that hid its
+                        # own reasoning; printing the whole picture first is
+                        # what makes the failure diagnosable.
                         print(
-                            "--dry-run: every preflight gate passed; stopping "
-                            "before the first /api/v1/route call (no provider "
-                            "quota spent)."
+                            "DRY RUN: no /api/v1/route call was sent, so no "
+                            "provider quota was spent."
                         )
-                        await revoke_transient_key(client, api_key, minted=minted)
+                        await revoke_transient_key(
+                            client, report.api_key, minted=report.minted
+                        )
+                        if not report.ok:
+                            # Exit nonzero only AFTER the full report and the
+                            # revoke: an unrevoked key is worse than a clear
+                            # failure.
+                            raise SystemExit(f"FATAL: {report.blocker}")
                         return {
                             "scenario": "provider_down",
                             "dry_run": True,
                             "requests_sent": 0,
                         }
+
+                    if not report.ok:
+                        await revoke_transient_key(
+                            client, report.api_key, minted=report.minted
+                        )
+                        raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+
                     try:
-                        return await run_scenario_live(client, api_key, args.n)
+                        return await run_scenario_live(
+                            client, report.api_key, args.n
+                        )
                     finally:
                         # Revoke even when the scenario blew up half-way: a
                         # transient key must not outlive the run that made it.
-                        await revoke_transient_key(client, api_key, minted=minted)
+                        await revoke_transient_key(
+                            client, report.api_key, minted=report.minted
+                        )
 
             result = asyncio.run(_live())
             results = [result]
@@ -628,6 +790,13 @@ def main() -> None:
         blob = {"eval": "resilience", "mode": mode, "n_per_scenario": args.n, "scenarios": results}
         if args.json:
             print(json.dumps(blob, indent=2))
+        elif args.dry_run and args.live:
+            # A dry run measured nothing. Printing the empty results table
+            # would look like a failed measurement rather than a rehearsal.
+            print(
+                "Dry run complete: every gate passed. Re-run without "
+                "--dry-run to measure provider_down for real."
+            )
         else:
             print(render_markdown(results, args.n, mode))
     finally:

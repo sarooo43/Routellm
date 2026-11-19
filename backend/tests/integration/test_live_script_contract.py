@@ -189,3 +189,122 @@ def test_response_detail_truncates_a_huge_body():
 def test_response_detail_survives_a_bodyless_response():
     harness = _load_script("contract_harness_5", "harness.py")
     assert harness.response_detail(_Resp(503)) == "HTTP 503"
+
+
+# ---------------------------------------------------------------------------
+# T0 follow-up: every fake in the eval/benchmark tests must match reality
+# ---------------------------------------------------------------------------
+#
+# The HTTP-201 bug and the "configured: none" bug were the same shape: a fake
+# answered something the real app never sends, so the mocked suite could not
+# see the mismatch. Each fake that stands in for a backend response is pinned
+# here by asserting the REAL response instead. If the endpoint changes shape,
+# these fail and the fakes get corrected in the same commit.
+
+
+@pytest.fixture
+async def client(monkeypatch, db_session):
+    """Real app over ASGITransport with provider-key encryption available."""
+    from cryptography.fernet import Fernet
+
+    from app.config import settings
+    from app.db.session import get_session
+
+    monkeypatch.setattr(
+        settings, "PROVIDER_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode()
+    )
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", False)
+
+    async def override_session():
+        yield db_session
+
+    monkeypatch.setattr(app, "dependency_overrides", {get_session: override_session})
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:8000"
+    ) as ac:
+        yield ac
+
+
+async def test_provider_keys_rows_have_the_shape_the_eval_parses(client):
+    """`[{"provider_name", "configured", ...}]` for EVERY provider.
+
+    The eval parses this with `row["provider_name"] for row in rows if
+    row.get("configured")`. `_preflight_routes` in test_evals.py fabricates
+    this same list; if the real shape drifts, that fake would silently keep
+    passing while the live script broke.
+    """
+    resp = await client.get("/api/v1/provider-keys")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert isinstance(rows, list) and rows
+    for row in rows:
+        assert set(row) >= {"provider_name", "configured"}
+        assert isinstance(row["provider_name"], str)
+        assert isinstance(row["configured"], bool)
+    # Every registered provider is present, configured or not - the fake's
+    # "one row per provider, with a configured flag" assumption holds.
+    from app.core.provider_key_manager import SUPPORTED_PROVIDERS
+
+    assert {row["provider_name"] for row in rows} == set(SUPPORTED_PROVIDERS)
+
+
+async def test_provider_key_put_returns_the_status_row_the_dashboard_uses(client):
+    """PUT answers 200 with the same row shape as GET, configured=true."""
+    key = (await client.post("/api/v1/keys/generate", json={"label": "d"})).json()[
+        "api_key"
+    ]
+    resp = await client.put(
+        "/api/v1/provider-keys/groq",
+        json={"api_key": "gsk_FAKE0000000000000000"},
+        headers={"X-API-Key": key},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider_name"] == "groq"
+    assert body["configured"] is True
+    assert body["key_hint"], "the dashboard shows a hint; it must be returned"
+
+
+async def test_chaos_inject_returns_expires_in_seconds(monkeypatch):
+    """The benchmark reads body["expires_in_seconds"]; its fake hardcodes it."""
+    from app.core.chaos import ChaosController
+    from fakeredis import FakeAsyncRedis
+
+    controller = ChaosController(FakeAsyncRedis(decode_responses=True))
+    ttl = await controller.inject_failure("gemini", 3600)
+    assert isinstance(ttl, int) and ttl > 0
+    assert await controller.is_chaos_active("gemini") is True
+    await controller.clear_failure("gemini")
+    assert await controller.is_chaos_active("gemini") is False
+
+
+async def test_health_reports_a_components_mapping(client):
+    """The benchmark prints `.get("components", {})`; it must be a dict."""
+    resp = await client.get("/api/v1/health")
+    assert 200 <= resp.status_code < 300, resp.text
+    body = resp.json()
+    assert isinstance(body.get("components"), dict), body
+
+
+async def test_route_endpoint_answers_200_with_the_benchmark_fields(client):
+    """Scenario 1 reads these keys off a /route 200; a stub could invent them."""
+    resp = await client.post(
+        "/api/v1/route",
+        json={
+            "prompt": "hello there",
+            "task_type": "general",
+            "force_provider": "mock",
+            "max_fallbacks": 1,
+        },
+    )
+    assert resp.status_code in (200, 429), resp.text
+    if resp.status_code == 429:
+        pytest.skip("rate limited in this environment")
+    body = resp.json()
+    # record_to_row() reads exactly these; it does NOT read "provider" or
+    # "latency_ms" (the benchmark measures wall time itself).
+    for field in ("success", "model_used", "tokens_used"):
+        assert field in body, f"the benchmark reads {field!r} off /route"
+    assert isinstance(body["success"], bool)
+    assert isinstance(body["tokens_used"], int)

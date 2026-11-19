@@ -323,7 +323,23 @@ saved provider keys, and unless the backend reports `CHAOS_MODE_ENABLED`;
 it prints the request budget and the providers it will call first, then
 writes **`docs/eval-results.md`** with a `MODE: LIVE` header (date, commit,
 providers actually called) — **commit that file after a live resilience
-run**. Every success rate the suite prints carries a Wilson 95% interval,
+run**.
+
+**Provider keys belong to the Routtener key that saved them.** If the eval
+reports `configured: none` while your dashboard shows saved keys, the cause
+is almost always this: a live run mints a fresh key, and a new key owns no
+provider keys. Generate a key on the API Keys page, save your provider keys
+with that key active, then hand the same key to the eval so it reuses it
+instead of minting its own:
+
+```bash
+export ROUTELLM_EVAL_API_KEY=<your dashboard key>   # one L: ROUTELLM
+python evals/run_resilience_eval.py --live --dry-run --yes-spend-quota
+```
+
+`--dry-run` runs every gate (providers, chaos, budget) and exits before the
+first `/api/v1/route` call, so it costs nothing. The key is never printed —
+only its prefix. Every success rate the suite prints carries a Wilson 95% interval,
 and each report states what the numbers do not show. See
 [evals/REVIEW.md](evals/REVIEW.md) for how to review the label dataset.
 

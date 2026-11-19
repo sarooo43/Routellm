@@ -437,6 +437,21 @@ class _FakeClient:
         return self._routes[("POST", path)]
 
 
+#: Every provider the real GET /api/v1/provider-keys reports a row for.
+_ALL_PROVIDERS = ("groq", "gemini", "deepseek")
+
+
+def _provider_row(name, *, configured):
+    """One row exactly as the real endpoint emits it."""
+    return {
+        "provider_name": name,
+        "configured": configured,
+        "key_hint": "****abcd" if configured else None,
+        "created_at": "2026-01-01T00:00:00" if configured else None,
+        "updated_at": "2026-01-01T00:00:00" if configured else None,
+    }
+
+
 def _preflight_routes(*, configured, chaos_status):
     return {
         # 201, not 200: this fake used to answer 200 where the real endpoint
@@ -446,16 +461,15 @@ def _preflight_routes(*, configured, chaos_status):
         ("POST", "/api/v1/keys/generate"): _FakeResponse(
             201, {"api_key": "eval-key"}
         ),
+        # Real shape (OBSERVED, ASGITransport): one row per registered
+        # provider with provider_name/configured/key_hint/dates, configured or
+        # not. Pinned by test_live_script_contract.py::
+        # test_provider_keys_rows_have_the_shape_the_eval_parses.
         ("GET", "/api/v1/provider-keys"): _FakeResponse(
             200,
             [
-                {"provider_name": name, "configured": True}
-                for name in configured
-            ]
-            + [
-                {"provider_name": name, "configured": False}
-                for name in ("groq", "gemini", "deepseek")
-                if name not in configured
+                _provider_row(name, configured=name in configured)
+                for name in _ALL_PROVIDERS
             ],
         ),
         ("GET", "/api/v1/admin/chaos/status"): _FakeResponse(
@@ -498,8 +512,13 @@ def test_preflight_aborts_with_fewer_than_two_configured_providers(resilience_ev
     with pytest.raises(SystemExit) as exc:
         asyncio.run(resilience_eval.preflight_live(client, 5))
     assert "fewer than 2 providers" in str(exc.value)
-    # nothing past the key-status check was attempted
-    assert ("GET", "/api/v1/admin/chaos/status") not in client.calls
+    # T2 (intentionally changed): the chaos gate is now ALSO checked before the
+    # refusal, because --dry-run must report every gate, not stop at the first
+    # failed one. The gate order (keys -> providers -> chaos) is unchanged.
+    assert [c for c in client.calls if c[0] == "GET"] == [
+        ("GET", "/api/v1/provider-keys"),
+        ("GET", "/api/v1/admin/chaos/status"),
+    ]
 
 
 def test_preflight_refuses_chaos_mode_when_backend_disables_it(resilience_eval):
@@ -521,7 +540,8 @@ def test_preflight_passes_and_prints_budget_and_providers(resilience_eval, capsy
     assert minted is True
     out = capsys.readouterr().out
     assert "Request budget: 7 requests x 1 scenario" in out
-    assert "groq, deepseek, gemini" in out
+    # Ordered by the endpoint's row order, and labelled for what it is.
+    assert "Providers detected: groq, gemini, deepseek (3 with saved keys)" in out
 
 
 def test_preflight_reuses_an_env_key_instead_of_minting_one(
