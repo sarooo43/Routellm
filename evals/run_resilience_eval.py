@@ -820,5 +820,28 @@ def main() -> None:
         restore_structlog()
 
 
+def _run_main_with_a_civil_sigint() -> None:
+    """Ctrl-C during a live run must not print a traceback.
+
+    OBSERVED: sending SIGINT mid-run (n=5000, interrupted at ~9 s) printed the
+    full asyncio KeyboardInterrupt stack and exited -2. The CLEANUP was correct
+    - chaos was cleared and a minted key was revoked by the existing finally
+    blocks - but the user sees a crash where they should see one sentence.
+
+    The exception is caught here rather than inside the async code on purpose:
+    the ``finally`` blocks that clear chaos and revoke a transient key run as
+    the exception unwinds, so catching at the top does not skip them.
+    """
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(
+            "\nInterrupted. Chaos injections were cleared and any key minted for "
+            "this run was revoked by the cleanup blocks that just ran.",
+            file=sys.stderr,
+        )
+        raise SystemExit(130) from None
+
+
 if __name__ == "__main__":
-    main()
+    _run_main_with_a_civil_sigint()

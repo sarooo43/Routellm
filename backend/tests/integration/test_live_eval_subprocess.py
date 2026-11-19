@@ -18,6 +18,7 @@ import json
 import os
 import socket
 import subprocess
+import signal
 import sys
 import time
 from pathlib import Path
@@ -348,3 +349,62 @@ def test_a_minted_key_is_revoked_after_a_blocked_run(backend, tmp_path):
             "SELECT COUNT(*) FROM api_keys WHERE is_active = 1"
         ).fetchone()[0]
     assert active == 0, "the eval left an active key behind"
+
+
+def test_ctrl_c_reports_one_sentence_instead_of_a_traceback(tmp_path):
+    """OBSERVED: SIGINT mid-run printed the whole asyncio KeyboardInterrupt stack.
+
+    The cleanup was already correct (chaos cleared, minted key revoked by the
+    existing finally blocks); only the reporting was wrong. This pins the
+    reporting: exit 130 and one sentence, never a KeyboardInterrupt traceback.
+
+    The eval must be BLOCKED, not failing, when the signal lands, or the test
+    measures a connection error instead of the interrupt. A socket that
+    accepts and then never answers achieves that.
+    """
+    import threading
+
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def _accept_and_stall() -> None:
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            # Hold the connection open without ever replying.
+            stop.wait(5)
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    threading.Thread(target=_accept_and_stall, daemon=True).start()
+    try:
+        proc = subprocess.Popen(
+            [
+                sys.executable, str(EVAL_SCRIPT), "--live", "--yes-spend-quota",
+                "--base-url", f"http://127.0.0.1:{port}",
+            ],
+            cwd=str(REPO_ROOT), env=dict(os.environ),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        time.sleep(2.5)  # long enough to be inside the preflight request
+        proc.send_signal(signal.SIGINT)
+        try:
+            out, _ = proc.communicate(timeout=40)
+        except subprocess.TimeoutExpired:  # pragma: no cover
+            proc.kill()
+            out, _ = proc.communicate()
+    finally:
+        stop.set()
+        listener.close()
+
+    assert "KeyboardInterrupt" not in out, out[-800:]
+    assert proc.returncode == 130, out[-800:]
+    assert "Interrupted." in out, out[-800:]
