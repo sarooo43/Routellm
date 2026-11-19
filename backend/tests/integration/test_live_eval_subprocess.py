@@ -96,7 +96,13 @@ def backend(tmp_path):
     )
     try:
         _wait_ready(base_url, proc)
-        yield {"base_url": base_url, "env": env, "data_dir": data_dir, "port": port}
+        yield {
+            "base_url": base_url,
+            "env": env,
+            "data_dir": data_dir,
+            "port": port,
+            "db_path": tmp_path / "live.db",
+        }
     finally:
         proc.terminate()
         try:
@@ -184,9 +190,15 @@ def test_two_providers_saved_passes_and_sends_no_route_calls(backend):
     owner = _mint_key(backend["base_url"])
     _save_providers(backend["base_url"], owner, ["groq", "deepseek"])
 
+    before = _task_log_count(backend["db_path"])
     result = _run_eval(backend, {"ROUTTENER_EVAL_API_KEY": owner})
+    after = _task_log_count(backend["db_path"])
 
     assert result.returncode == 0, result.stdout + result.stderr
+    # Server-side witness, not the script's own promise: every routed request
+    # writes exactly one task_logs row (app/core/executor.py), so an unchanged
+    # count means no /route call reached the app.
+    assert after == before, f"dry run wrote {after - before} task_logs rows"
     out = result.stdout
     assert "Providers detected: groq, deepseek (2 with saved keys)" in out
     assert "DRY RUN: no /api/v1/route call was sent" in out
@@ -272,6 +284,17 @@ def _start_enforced_server(backend_env, db_path, tmp_path):
     base_url = f"http://127.0.0.1:{port}"
     _wait_ready(base_url, proc)
     return proc, base_url, env
+
+
+def _task_log_count(db_path: Path) -> int:
+    """Rows the router writes for every executed request."""
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        try:
+            return conn.execute("SELECT COUNT(*) FROM task_logs").fetchone()[0]
+        except sqlite3.OperationalError:
+            return 0
 
 
 def _active_key_count(db_path: Path) -> int:
