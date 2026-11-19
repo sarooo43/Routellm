@@ -1,6 +1,6 @@
 # Pre-release audit — Routtener v0.1.0
 
-Branch `arena/f16778ba-routellm` · PR #25 · HEAD `942396e`
+Branch `arena/f16778ba-routellm` · PR #25 · HEAD `1efbe2f`
 Report written 2026-10-31. Every claim is tagged **OBSERVED** (I ran it or read
 the exact lines), **DOCUMENTED** (a doc claim I did not verify) or **ASSUMED**.
 
@@ -23,16 +23,16 @@ the exact lines), **DOCUMENTED** (a doc claim I did not verify) or **ASSUMED**.
 
 The +14 backend tests are all new regression tests for findings below.
 
-### Proof of passing tests — GitHub Actions run 44535564165 (commit `942396e`)
+### Proof of passing tests — GitHub Actions run 44536844903 (commit `1efbe2f`)
 
 | Job | Result | URL |
 |---|---|---|
-| No credentials in tree or history | pass, 11 s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135599913490 |
-| Slow tests (history depth) | pass, 35 s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135600048507 |
-| backend-tests (3.11) | pass, 2m32s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135600048546 |
-| backend-tests (3.12) | pass, 2m02s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135600048644 |
-| backend-tests (3.13, informational) | pass, 1m37s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135600048555 |
-| frontend-tests | pass, 32 s | https://github.com/sarooo43/Routtener/actions/runs/44535564165/job/135599912979 |
+| No credentials in tree or history | pass, 18 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604411465 |
+| Slow tests (history depth) | pass, 36 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619035 |
+| backend-tests (3.11) | pass, 2m10s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619739 |
+| backend-tests (3.12) | pass, 2m16s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619161 |
+| backend-tests (3.13, informational) | pass, 1m32s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619069 |
+| frontend-tests | pass, 44 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604412133 |
 
 Local counts above are supplementary; the Actions run is the proof.
 
