@@ -443,3 +443,44 @@ def key_problem_response(*, provider: str, model: str, api_key, latency_ms: floa
     return error_for_invalid_key(
         provider=provider, model=model, reason=reason, latency_ms=latency_ms
     )
+
+
+def error_for_bad_response(*, provider: str, model: str, detail: str, latency_ms: float = 0.0):
+    """HTTP 200 arrived, but the body was not a usable completion.
+
+    OBSERVED: garbage JSON, a truncated body, ``{"choices": []}`` and a
+    null message all reached ``error_for_exception`` and came out as
+    ``network_error: the request to <host> failed before a response`` - which
+    is doubly false (a response DID arrive, 200) and sends the owner to check
+    their internet connection. This is a malformed provider response: a
+    protocol problem, not a reachability one.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"bad_provider_response: {provider} answered HTTP 200 but the body "
+            f"was not a usable completion ({detail}). The request reached the "
+            "provider; this is not a network problem. Retry, and if it repeats "
+            "check the provider's status page."
+        ),
+        latency_ms,
+        outcome="bad_provider_response",
+    )
+
+
+def shape_detail(exc: Exception, data=None) -> str:
+    """A short, non-secret description of why a 200 body could not be used.
+
+    Never includes the body itself (it can contain provider prose that echoes
+    a credential); only the failure shape.
+    """
+    if isinstance(exc, ValueError):
+        return "the body was not valid JSON"
+    if isinstance(exc, KeyError):
+        return f"the body had no {str(exc)} field"
+    if isinstance(exc, IndexError):
+        return "the choices list was empty"
+    if isinstance(exc, TypeError):
+        return "a field had the wrong type"
+    return type(exc).__name__

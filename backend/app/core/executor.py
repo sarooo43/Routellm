@@ -365,13 +365,26 @@ async def _chaos_active(
 
 
 async def _invalidate_models(provider_name: str, api_key: Optional[str]) -> None:
-    """Forget the cached model list so the next call asks the provider again."""
+    """Forget the cached model list so the next call asks the provider again.
+
+    MEMORY ONLY, on purpose. This used to call ``invalidate_everywhere``,
+    which runs a whole-provider DELETE on its own DB session from inside the
+    request. Every concurrent request that hit a retired model then competed
+    for SQLite's single writer lock while holding a pool connection, and the
+    pool (5 + 10) drained: OBSERVED, 30 concurrent requests against a 404-ing
+    stub took 91 s and half came back ``503 Database temporarily unavailable``
+    (with the memory-only invalidate: 1.4 s, 30/30 OK).
+
+    Dropping the memory entry is enough to break the retry loop, because the
+    next discovery call re-fetches and ``_save_persisted`` overwrites the row.
+    The stale DB row is only reachable through a cold-cache ``db_cache`` read,
+    and it expires on the same TTL. When nothing is actually deleted there is
+    no write, so there is no serialisation and nothing to lose.
+    """
     try:
         from app.providers.model_registry import model_catalog
 
-        # Every key for this provider: a retired model is retired for all of
-        # them. Both tiers, or the stale list comes straight back from the DB.
-        await model_catalog.invalidate_everywhere(provider_name)
+        model_catalog.invalidate(provider_name)
         logger.info("model_cache_invalidated", provider=provider_name)
     except Exception as exc:  # pragma: no cover - cache is best-effort
         logger.warning("model_cache_invalidate_failed", provider=provider_name, error=str(exc))

@@ -80,6 +80,7 @@ _SELF_DESCRIBING_CODES = (
     "network_error",
     "network_unreachable",
     "timeout",
+    "bad_provider_response",
     "chaos_injected",
 )
 
@@ -131,6 +132,8 @@ def _classify(code: str) -> str:
         return "provider_down"
     if lowered.startswith("network_error"):
         return "unreachable"
+    if lowered.startswith("bad_provider_response"):
+        return "bad_response"
     return "unknown"
 
 
