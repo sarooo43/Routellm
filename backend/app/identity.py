@@ -32,13 +32,3 @@ UPSTREAM_DISCLAIMER = (
 
 #: Canonical project URL (used in the OpenAPI docs and the landing page).
 PROJECT_URL = "https://github.com/sarooo43/Routtener"
-
-
-def user_agent(suffix: str = "") -> str:
-    """``User-Agent`` string for outbound provider requests.
-
-    Provider APIs rate-limit by client, so an honest, stable value matters —
-    and it must not contain a machine name or username.
-    """
-    base = f"{APP_SHORT_NAME}/{APP_VERSION}"
-    return f"{base} {suffix}".strip() if suffix else base

@@ -70,9 +70,6 @@ PROVIDER_META: dict[str, dict[str, str]] = {
     },
 }
 
-#: Order shown in the UI: fastest/cheapest first.
-PREFERRED_ORDER = ("groq", "gemini", "deepseek")
-
 STEP_DEFINITIONS = {
     "provider_key": "Add a free provider key",
     "test_prompt": "Send a test prompt",

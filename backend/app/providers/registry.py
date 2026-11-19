@@ -80,8 +80,3 @@ def demo_provider_usable() -> bool:
 def provider_is_demo(provider_name: Optional[str]) -> bool:
     """True for the mock provider name (no import of the demo module)."""
     return provider_name == "mock"
-
-
-def real_provider_names() -> list[str]:
-    """Provider names a caller can store a BYOK key for (never the demo one)."""
-    return [name for name in PROVIDER_REGISTRY if not provider_is_demo(name)]

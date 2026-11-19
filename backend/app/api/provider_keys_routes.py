@@ -48,7 +48,6 @@ from app.models.provider_model_status import (
 )
 from app.providers.model_registry import key_transport, model_catalog, spec_for
 from app.providers.outcomes import redact
-from app.providers.registry import PROVIDER_REGISTRY
 
 router = APIRouter(prefix="/provider-keys", tags=["Provider keys (BYOK)"])
 

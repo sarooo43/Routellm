@@ -31,10 +31,6 @@ COST_PER_1K_TOKENS = {"groq": 0.0, "gemini": 0.0, "deepseek": 0.0002, "mock": 0.
 # Rough expected latency (ms) — used when no historical stats exist yet.
 BASELINE_LATENCY_MS = {"groq": 300, "gemini": 600, "deepseek": 900, "mock": 400}
 
-#: Providers whose traffic must never be counted as a real measurement.
-#: Used by reports/benchmarks: a synthetic latency is not a benchmark result.
-DEMO_PROVIDERS = frozenset({"mock"})
-
 SLOWEST_BASELINE_MS = max(BASELINE_LATENCY_MS.values())
 
 # Default scoring weights (must stay explainable: they sum to 1.0).

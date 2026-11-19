@@ -29,7 +29,7 @@ import re
 from typing import Optional
 from urllib.parse import urlsplit
 
-from app.providers.base import make_error, make_success, elapsed_ms
+from app.providers.base import make_error
 
 #: How much of the provider body we keep. Raised from 200 to 1000 (T4): the
 #: retired-model 404 OBSERVED LIVE carries its full guidance ("...Please
@@ -346,11 +346,3 @@ def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, 
             f"({type(exc).__name__})."
         )
     return make_error(provider, model, message, latency_ms, outcome=outcome)
-
-
-def success_from(response, *, provider: str, model: str, text: str, tokens: int, latency_ms: float):
-    return make_success(provider, model, text, tokens, latency_ms)
-
-
-def elapsed(start: float) -> float:
-    return elapsed_ms(start)

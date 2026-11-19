@@ -82,11 +82,3 @@ def writable_dir(*parts: str, env_var: Optional[str] = None) -> Path:
         target = Path(tempfile.gettempdir()).joinpath(*parts)
         target.mkdir(parents=True, exist_ok=True)
     return target
-
-
-def describe_runtime_dir() -> str:
-    """Human-readable runtime-dir description for the startup log."""
-    try:
-        return str(writable_dir())
-    except Exception:
-        return "<unavailable>"

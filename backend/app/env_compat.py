@@ -39,15 +39,6 @@ def get(suffix: str, default: str = "") -> str:
     return os.environ.get(OLD_PREFIX + suffix, default)
 
 
-def get_int(suffix: str, default: int) -> int:
-    """``get()`` for integer-valued variables, falling back on any parse error."""
-    raw = get(suffix)
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return default
-
-
 def truthy(suffix: str, default: bool = False) -> bool:
     """``get()`` for flag-valued variables ("1", "true", "yes", "on")."""
     flag = get(suffix).strip().lower()

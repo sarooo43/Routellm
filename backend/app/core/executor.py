@@ -12,7 +12,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import redis.asyncio as redis_async
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -510,7 +509,6 @@ async def _execute_forced_single_provider(
                 # The model we chose is gone (or was never enabled). Invalidate
                 # the discovery cache so the next request re-lists models
                 # instead of repeating the same 404 for an hour.
-                force_refresh = True
                 await _invalidate_models(provider_name, kwargs.get("provider_api_key"))
         except Exception as e:
             # Naive deployments have no error net at all: a raised exception
