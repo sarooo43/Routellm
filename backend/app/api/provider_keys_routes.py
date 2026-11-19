@@ -30,6 +30,10 @@ from app import __version__ as APP_VERSION
 from app.api.dependencies import require_api_key
 from app.core import model_discovery as md
 from app.core.provider_key_crypto import ProviderKeyEncryptionError
+from app.core.provider_key_format import (
+    ProviderKeyFormatError,
+    normalize as normalize_provider_key,
+)
 from app.core.provider_key_manager import (
     SUPPORTED_PROVIDERS,
     delete_provider_key,
@@ -119,7 +123,23 @@ async def set_provider_key(
 ) -> ProviderKeyStatusResponse:
     """Encrypt and store a provider key for the calling Routtener key."""
     _require_supported(provider_name)
-    cleaned = body.api_key.strip()
+    # Strip the edges (a copy from a provider dashboard often catches a
+    # trailing space) and REFUSE what cannot be sent in a header. Before this
+    # check an embedded newline was stored happily and then made every chat
+    # call fail locally as "network_error" - pointing the owner at their
+    # internet connection instead of the key they just pasted. The message
+    # names the character class and position, never the key.
+    try:
+        cleaned = normalize_provider_key(body.api_key)
+    except ProviderKeyFormatError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"That provider key {exc.reason}. Re-copy it from the provider "
+                "dashboard - the value should be a single line of printable "
+                "characters with no spaces inside."
+            ),
+        ) from exc
     if len(cleaned) < 8 or len(cleaned) > 512:
         raise HTTPException(
             status_code=422,

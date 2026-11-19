@@ -5,7 +5,12 @@ import httpx
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
 from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
-from app.providers.outcomes import error_for_exception, error_for_status
+from app.core.provider_key_format import describe_unusable
+from app.providers.outcomes import (
+    error_for_exception,
+    error_for_invalid_key,
+    error_for_status,
+)
 
 SPEC = PROVIDER_SPECS["groq"]
 
@@ -55,8 +60,21 @@ class GroqProvider(ModelProvider):
             "Content-Type": "application/json",
         }
 
-        url = SPEC.chat_url(model)
+        url = spec_for(self.provider_name).chat_url(model)
         start = time.perf_counter()
+        # REQUEST-TIME SAFETY: a key stored before the save-time check existed
+        # (or written straight into the DB) must never crash the request. No
+        # socket is opened for a value that cannot be sent, and the failure is
+        # reported as a key problem rather than as a network problem.
+        key_problem = describe_unusable(api_key or "")
+        if key_problem and "whitespace at the start or end" not in key_problem:
+            return error_for_invalid_key(
+                provider=self.provider_name,
+                model=model,
+                reason=key_problem,
+                latency_ms=elapsed_ms(start),
+            )
+
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 response = await client.post(url, json=payload, headers=headers)

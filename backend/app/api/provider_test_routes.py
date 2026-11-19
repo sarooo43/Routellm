@@ -61,6 +61,9 @@ VERDICT_BY_OUTCOME = {
     "unexpected_status": "provider_error",
     "network_error": "network_error",
     "timeout": "network_error",
+    # The key cannot be sent in a header at all: nothing was tried, and the
+    # fix is to re-save the key - not to check the network.
+    "invalid_key_format": "invalid_key_format",
 }
 
 

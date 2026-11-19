@@ -55,6 +55,7 @@ OUTCOMES = frozenset(
         "network_error",
         "timeout",
         "unexpected_status",
+        "invalid_key_format",
     }
 )
 
@@ -321,6 +322,38 @@ def _body_says_model_missing(response) -> bool:
     return bool(_MODEL_MISSING_RE.search(" ".join(raw.split())[:400]))
 
 
+def error_for_invalid_key(
+    *, provider: str, model: str, reason: str, latency_ms: float = 0.0
+):
+    """The SAVED key cannot be put in an HTTP header; no request was sent.
+
+    Deliberately NOT ``network_error``: nothing was sent and nothing was
+    received, so blaming the network sends the owner to check their internet
+    connection while the problem is the pasted key. ``reason`` comes from
+    provider_key_format and never contains the key.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"invalid_key_format: the saved {provider} key {reason}, so no "
+            "request could be sent. Re-save the key in the dashboard."
+        ),
+        latency_ms,
+        outcome="invalid_key_format",
+    )
+
+
+def _is_local_protocol_error(exc: Exception) -> bool:
+    """True for h11/httpx refusing to serialise OUR request (nothing sent).
+
+    Checked by name so this module keeps working without importing h11.
+    ``UnicodeEncodeError`` is included: httpx encodes header values as ASCII,
+    so a non-ASCII key raises before a socket is touched.
+    """
+    return type(exc).__name__ in {"LocalProtocolError", "UnicodeEncodeError"}
+
+
 def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, latency_ms: float):
     """Network-shaped failures: timeouts, DNS, TLS, connection resets."""
     import httpx
@@ -331,6 +364,16 @@ def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, 
         message = (
             f"network_error: {host} did not answer within the client timeout. "
             f"Slow network, a blocking proxy, or an overloaded provider."
+        )
+    elif _is_local_protocol_error(exc):
+        # h11 refused to SERIALISE the request: a header value or the request
+        # line contained something illegal. Nothing was sent, so this is never
+        # a network failure - it is a value this app produced.
+        outcome = "invalid_key_format"
+        message = (
+            "invalid_key_format: the request could not be built because one of "
+            "its values contains characters that cannot be sent in an HTTP "
+            "header. Re-save the provider key in the dashboard."
         )
     elif isinstance(exc, httpx.ConnectError):
         outcome = "network_error"
