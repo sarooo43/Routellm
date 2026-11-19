@@ -189,3 +189,147 @@ def test_response_detail_truncates_a_huge_body():
 def test_response_detail_survives_a_bodyless_response():
     harness = _load_script("contract_harness_5", "harness.py")
     assert harness.response_detail(_Resp(503)) == "HTTP 503"
+
+
+# ---------------------------------------------------------------------------
+# T0 follow-up: every fake in the eval/benchmark tests must match reality
+# ---------------------------------------------------------------------------
+#
+# The HTTP-201 bug and the "configured: none" bug were the same shape: a fake
+# answered something the real app never sends, so the mocked suite could not
+# see the mismatch. Each fake that stands in for a backend response is pinned
+# here by asserting the REAL response instead. If the endpoint changes shape,
+# these fail and the fakes get corrected in the same commit.
+
+
+@pytest.fixture(autouse=True)
+def no_post_save_discovery(monkeypatch):
+    """Saving a provider key fires a BACKGROUND discovery call to the real
+    provider host. Keep these tests off the network: the save path, storage
+    and response are still real; only the outbound warm-up is stubbed."""
+    import app.api.provider_keys_routes as provider_routes
+
+    async def _noop(provider_name, raw_key):
+        return None
+
+    monkeypatch.setattr(provider_routes, "_warm_discovery_after_save", _noop)
+
+
+@pytest.fixture
+async def client(monkeypatch, db_session, breaker, tracker, redis_client):
+    """Real app over ASGITransport with provider-key encryption available."""
+
+    # The app caches ONE global ChaosController/breaker/tracker bound to
+    # whichever event loop first created them (executor._ensure_shared_clients).
+    # Under pytest every test gets a fresh loop, so a cached Redis client from
+    # an earlier test raises "Event loop is closed" - and it only shows up with
+    # a REAL Redis (CI), which is why SQLite+fakeredis runs looked clean.
+    # Every other integration test installs this override; this one now does
+    # too, instead of reaching the process-global client.
+    from app.core import executor as executor_module
+    from app.core.chaos import ChaosController
+
+    monkeypatch.setattr(
+        executor_module,
+        "_ensure_shared_clients",
+        lambda: (breaker, tracker, ChaosController(redis_client)),
+    )
+    # chaos_routes did `from app.core.executor import _ensure_shared_clients`,
+    # so patching the executor module alone does not reach it - the chaos
+    # endpoints kept using the stale, loop-bound client.
+    import app.api.chaos_routes as chaos_routes_module
+
+    monkeypatch.setattr(
+        chaos_routes_module,
+        "_ensure_shared_clients",
+        lambda: (breaker, tracker, ChaosController(redis_client)),
+    )
+    from cryptography.fernet import Fernet
+
+    from app.config import settings
+    from app.db.session import get_session
+
+    monkeypatch.setattr(
+        settings, "PROVIDER_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode()
+    )
+    monkeypatch.setattr(settings, "REQUIRE_API_KEY", False)
+
+    async def override_session():
+        yield db_session
+
+    monkeypatch.setattr(app, "dependency_overrides", {get_session: override_session})
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:8000"
+    ) as ac:
+        yield ac
+
+
+async def test_provider_keys_rows_have_the_shape_the_eval_parses(client):
+    """`[{"provider_name", "configured", ...}]` for EVERY provider.
+
+    The eval parses this with `row["provider_name"] for row in rows if
+    row.get("configured")`. `_preflight_routes` in test_evals.py fabricates
+    this same list; if the real shape drifts, that fake would silently keep
+    passing while the live script broke.
+    """
+    resp = await client.get("/api/v1/provider-keys")
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert isinstance(rows, list) and rows
+    for row in rows:
+        assert set(row) >= {"provider_name", "configured"}
+        assert isinstance(row["provider_name"], str)
+        assert isinstance(row["configured"], bool)
+    # Every registered provider is present, configured or not - the fake's
+    # "one row per provider, with a configured flag" assumption holds.
+    from app.core.provider_key_manager import SUPPORTED_PROVIDERS
+
+    assert {row["provider_name"] for row in rows} == set(SUPPORTED_PROVIDERS)
+
+
+async def test_provider_key_put_returns_the_status_row_the_dashboard_uses(client):
+    """PUT answers 200 with the same row shape as GET, configured=true."""
+    key = (await client.post("/api/v1/keys/generate", json={"label": "d"})).json()[
+        "api_key"
+    ]
+    resp = await client.put(
+        "/api/v1/provider-keys/groq",
+        json={"api_key": "gsk_FAKE0000000000000000"},
+        headers={"X-API-Key": key},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["provider_name"] == "groq"
+    assert body["configured"] is True
+    assert body["key_hint"], "the dashboard shows a hint; it must be returned"
+
+
+async def test_chaos_inject_returns_expires_in_seconds(monkeypatch):
+    """The benchmark reads body["expires_in_seconds"]; its fake hardcodes it."""
+    from app.core.chaos import ChaosController
+    from fakeredis import FakeAsyncRedis
+
+    controller = ChaosController(FakeAsyncRedis(decode_responses=True))
+    ttl = await controller.inject_failure("gemini", 3600)
+    assert isinstance(ttl, int) and ttl > 0
+    assert await controller.is_chaos_active("gemini") is True
+    await controller.clear_failure("gemini")
+    assert await controller.is_chaos_active("gemini") is False
+
+
+async def test_health_reports_a_components_mapping(client):
+    """The benchmark prints `.get("components", {})`; it must be a dict."""
+    resp = await client.get("/api/v1/health")
+    assert 200 <= resp.status_code < 300, resp.text
+    body = resp.json()
+    assert isinstance(body.get("components"), dict), body
+
+
+# NOTE on POST /api/v1/route: the benchmark's `record_to_row()` reads
+# success/model_used/tokens_used. That shape is ALREADY pinned against the real
+# app in tests/integration/test_routes.py (see the `model_used`/`tokens_used`
+# assertions), so no duplicate contract test is added here. Duplicating it
+# would be a second place to keep in sync - the same trap this file exists to
+# avoid - and the version written first here reached for a `force_provider`
+# request field whose behaviour this change has no business assuming.
