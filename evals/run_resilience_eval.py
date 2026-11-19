@@ -73,7 +73,24 @@ from harness import (  # noqa: E402
 from app.providers.registry import PROVIDER_REGISTRY  # noqa: E402
 
 #: Reuse an existing eval key instead of minting one (see preflight_live).
-EVAL_KEY_ENV_VAR = "ROUTELLM_EVAL_API_KEY"
+#: ROUTTENER_ is the current name (the product is Routtener); ROUTELLM_ is the
+#: pre-rename name and still works, because a shell profile or CI secret that a
+#: user already exported must not silently stop being honoured.
+EVAL_KEY_ENV_VAR = "ROUTTENER_EVAL_API_KEY"
+LEGACY_EVAL_KEY_ENV_VAR = "ROUTELLM_EVAL_API_KEY"
+
+
+def eval_key_from_env() -> str:
+    """The caller's eval key, or "".
+
+    ROUTTENER_EVAL_API_KEY wins when both are set; the legacy ROUTELLM_ name is
+    the fallback. Returns the trimmed value, never logging it.
+    """
+    for name in (EVAL_KEY_ENV_VAR, LEGACY_EVAL_KEY_ENV_VAR):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
 
 PRIMARY = "groq"      # ranks first with zero stats for qa -> the scripted failure target
 SECONDARY = "deepseek"  # ranks after groq -> the healthy fallback target
@@ -413,7 +430,7 @@ async def collect_preflight(client, n: int) -> PreflightReport:
     Never raises for a gate failure; the caller inspects ``blocker``. Raises
     only when a live call itself fails (a dead backend is not a gate result).
     """
-    api_key = (os.environ.get(EVAL_KEY_ENV_VAR) or "").strip()
+    api_key = eval_key_from_env()
     minted = not api_key
 
     if minted:

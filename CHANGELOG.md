@@ -15,6 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **`ROUTELLM_EVAL_API_KEY` is renamed `ROUTTENER_EVAL_API_KEY`** in the
+  resilience eval, the printed hints and the README. The old name still works
+  as a fallback and the new name wins when both are set, so an exported shell
+  variable or a CI secret keeps working.
+- **The launcher's Codespaces hint prints a URL you can open.** It used to
+  print `https://<codespace>-.app.github.dev` — the port was parsed out of a
+  URL ending in `/` and then dropped. It now prints
+  `https://<codespace>-<port>.<forwarding domain>`, matching what
+  `_codespace_host_allowed` already accepted.
+- **"No provider key configured yet" also counts keys saved in the database.**
+  The banner looked only at the environment and `.env`, so it claimed no key
+  was configured while the dashboard listed three. It reads `provider_keys`
+  read-only and still decrypts nothing.
+- **README and launcher say Node 22.19+, not 20+.** vite 8, vitest 5 and jsdom
+  30 (which pulls in undici 8, needing zstd in `node:zlib`) all refuse Node 20.
+  `frontend/package.json` now declares that floor in `engines`, which the CI
+  comment already pointed at, and `run.py` compares major *and* minor.
+- **LICENSE copyright holder is `Routtener contributors`** (was the previous
+  personal handle). Still MIT.
+- **The "different HTTP stacks" explanation for the discovery-vs-chat split is
+  retracted.** Both paths use httpx and build `Authorization: Bearer {key}`
+  identically, so no stored value can make one send and the other fail
+  locally. What is real: discovery omits the header for an empty key while
+  chat sends `Bearer `. The owner's specific split stays unexplained rather
+  than explained by a hypothesis the code contradicts.
+
 - **Renamed the project RouteLLM → Routtener.** Display name, dashboard title
   and header, OpenAPI title, launcher banner, health `service` field, release
   archive name, and docs. Compatibility surfaces deliberately unchanged so
@@ -36,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Live-eval tests run the real script as a subprocess** against a real
+  uvicorn on an OS-chosen port: 0/1/2 providers saved, Chaos disabled, a minted
+  key provably revoked, a user-supplied key never revoked, and zero
+  `/api/v1/route` calls on `--dry-run`.
+- **Provider wire-contract tests over a real local socket**, replacing the
+  assumption that a `respx` fake returns the shape a provider really sends.
 - **The benchmark report also lands in `docs/benchmark-results.md`.** The one
   benchmark command now writes its Markdown report to
   `benchmark/results/REPORT.md` AND the repo-root docs location the README

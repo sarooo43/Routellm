@@ -7,10 +7,12 @@ OBSERVED LIVE (owner's server log, three real provider keys):
 received - httpx/h11 refused to serialise the ``Authorization`` header because
 the saved key contained a character that is illegal in a header value.
 
-Meanwhile the model-LIST call for the same key came back 401, because a
-different HTTP stack trims the value it serialises. That asymmetry - one call
-reaching the provider, the other dying locally - is why "the key is rejected
-with 401" and "the key fails with network_error" could both be true.
+The model-LIST call for the same key came back 401 in the owner's log. An
+earlier explanation for that split (a different HTTP stack trimming the value)
+is RETRACTED: both paths use httpx and build the header identically, and every
+control character makes both raise. The owner's split remains UNEXPLAINED; what
+these tests cover is the part this repo is actually responsible for - that an
+unsendable value is refused on save and can never crash a request.
 
 These tests go through the real app (ASGITransport), save through the real
 PUT /api/v1/provider-keys/{provider}, and never mock our own adapter. The

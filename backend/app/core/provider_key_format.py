@@ -12,11 +12,26 @@ request, so no status code comes back - and the router reported it as
 ``network_error`` ("the request failed before a response"), which points the
 owner at their internet connection instead of at the key they just pasted.
 
-Worse, the two code paths disagreed for the SAME stored key: the model-list
-call trims the value it sends (requests/urllib3 and httpx differ per version),
-so it went out and came back 401, while the chat call raised. That asymmetry is
-what makes "the same key is rejected with 401 on one call and fails locally on
-the other" possible.
+RETRACTED EXPLANATION (C1, corrected): an earlier version of this note claimed
+the two paths disagreed because the model-list call went through
+requests/urllib3, which trims a header value before serialising it, while the
+chat call went through httpx/h11, which raises. That is WRONG. Both paths use
+httpx and build the header the same way, so no stored value can make one send
+and the other fail. Measured: for every control character, both paths raise
+identical errors.
+
+What IS true, and is what makes a saved-key problem unavoidable to diagnose:
+discovery OMITS the Authorization header entirely when the key is falsy
+(``_auth_headers`` only adds it ``if api_key``), while the chat adapters build
+``Bearer {key}`` unconditionally. So an empty stored value yields a request
+with no credential (a provider answers 401) on one path and
+``Authorization: Bearer `` on the other. Neither is a LocalProtocolError, but
+both are silent misbehaviour of the same kind: the app sends a credential it
+never validated.
+
+The owner's specific split (401 on the list call, LocalProtocolError on chat,
+same key) is therefore NOT explained by this repo. It stays UNEXPLAINED rather
+than being papered over with a hypothesis that the code contradicts.
 
 So the rule is stated once, here, and enforced in two places:
   * on SAVE - reject the key with a clear 4xx that never echoes it;
