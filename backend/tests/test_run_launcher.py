@@ -129,6 +129,34 @@ def test_arguments_parse(launcher, argv, attr, expected):
 # --------------------------------------------------------------------------
 
 
+def test_an_impossible_port_is_rejected_with_one_clean_line(launcher, capsys):
+    """OBSERVED: `--port 99999` escaped as a raw OverflowError traceback.
+
+    Port 65536 is out of range, so socket.bind raises OverflowError, which is
+    NOT an OSError and sailed past port_is_free()'s except clause. The user saw
+    a stack trace instead of a sentence.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.main(["--check", "--port", "99999"])
+    assert excinfo.value.code == 2  # argparse usage error, not a crash
+    stderr = capsys.readouterr().err
+    assert "port must be between 0 and 65535" in stderr
+    assert "Traceback" not in stderr
+    assert "OverflowError" not in stderr
+
+
+def test_a_negative_port_is_rejected_with_one_clean_line(launcher, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.main(["--check", "--port", "-5"])
+    assert excinfo.value.code == 2
+    assert "port must be between 0 and 65535" in capsys.readouterr().err
+
+
+def test_the_port_parser_still_accepts_real_values(launcher):
+    assert launcher._port_number("8000") == 8000
+    assert launcher._port_number("0") == 0
+
+
 def test_a_free_port_is_used_as_requested(launcher):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))

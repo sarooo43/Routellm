@@ -444,6 +444,28 @@ def ensure_data_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _port_number(value: str) -> int:
+    """argparse type for --port: an int that a socket can actually bind.
+
+    OBSERVED: `--port 99999` used to escape the OSError handler in
+    port_is_free() as a raw "OverflowError: bind(): port must be 0-65535"
+    traceback, because OverflowError is not an OSError. Rejecting it at parse
+    time gives one clean sentence instead. 0 is allowed: it means "pick any
+    free port", which the launcher already reports back.
+    """
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid port {value!r}: expected a whole number"
+        ) from None
+    if not 0 <= number <= 65535:
+        raise argparse.ArgumentTypeError(
+            f"port must be between 0 and 65535, got {number}"
+        )
+    return number
+
+
 def port_is_free(host: str, port: int) -> bool:
     """True when ``host:port`` can be bound right now."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -684,7 +706,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        type=int,
+        type=_port_number,
         default=int(os.environ.get("PORT", DEFAULT_PORT) or DEFAULT_PORT),
         help=f"port (default {DEFAULT_PORT}; the next free port is used if taken)",
     )
