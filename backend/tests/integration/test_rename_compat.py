@@ -14,6 +14,8 @@ compatibility contract:
 
 import os
 import sqlite3
+
+import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,19 +36,35 @@ from app.env_compat import NEW_PREFIX, OLD_PREFIX, get as env_get, truthy as env
 # ---------------------------------------------------------------------------
 
 
-def test_new_prefix_only_is_accepted(monkeypatch):
+@pytest.fixture
+def isolated_cwd(tmp_path, monkeypatch):
+    """Run in a throwaway directory before touching the data-dir setting.
+
+    OBSERVED: constructing ``Settings()`` with a data dir that does not exist
+    makes ``app.local.data_dir()`` CREATE it, so these three assertions used
+    to create a literal ``C:/tmp/new-dir`` (and ``C:/tmp/legacy-dir``)
+    directory inside ``backend/`` - invisible in the test output, present in
+    the working tree afterwards, and shipped by a naive packaging copy. The
+    values below are Windows-shaped on purpose (they pin that the setting is
+    passed through verbatim); the cwd makes the side effect land in tmp_path.
+    """
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+def test_new_prefix_only_is_accepted(monkeypatch, isolated_cwd):
     monkeypatch.delenv("ROUTELLM_DATA_DIR", raising=False)
     monkeypatch.setenv("ROUTTENER_DATA_DIR", "C:/tmp/new-dir")
     assert Settings().ROUTELLM_DATA_DIR == "C:/tmp/new-dir"
 
 
-def test_legacy_prefix_only_still_works(monkeypatch):
+def test_legacy_prefix_only_still_works(monkeypatch, isolated_cwd):
     monkeypatch.delenv("ROUTTENER_DATA_DIR", raising=False)
     monkeypatch.setenv("ROUTELLM_DATA_DIR", "C:/tmp/legacy-dir")
     assert Settings().ROUTELLM_DATA_DIR == "C:/tmp/legacy-dir"
 
 
-def test_new_prefix_wins_when_both_are_set(monkeypatch):
+def test_new_prefix_wins_when_both_are_set(monkeypatch, isolated_cwd):
     monkeypatch.setenv("ROUTTENER_DATA_DIR", "C:/tmp/new-dir")
     monkeypatch.setenv("ROUTELLM_DATA_DIR", "C:/tmp/legacy-dir")
     assert Settings().ROUTELLM_DATA_DIR == "C:/tmp/new-dir"
