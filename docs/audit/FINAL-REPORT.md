@@ -1,6 +1,6 @@
 # Pre-release audit — Routtener v0.1.0
 
-Branch `arena/f16778ba-routellm` · PR #25 · HEAD `1efbe2f`
+Branch `arena/f16778ba-routellm` · PR #25 · HEAD `fe2dda2`
 Report written 2026-10-31. Every claim is tagged **OBSERVED** (I ran it or read
 the exact lines), **DOCUMENTED** (a doc claim I did not verify) or **ASSUMED**.
 
@@ -23,18 +23,24 @@ the exact lines), **DOCUMENTED** (a doc claim I did not verify) or **ASSUMED**.
 
 The +14 backend tests are all new regression tests for findings below.
 
-### Proof of passing tests — GitHub Actions run 44536844903 (commit `1efbe2f`)
+### Proof of passing tests — GitHub Actions run 44537646511 (commit `fe2dda2`)
 
 | Job | Result | URL |
 |---|---|---|
-| No credentials in tree or history | pass, 18 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604411465 |
-| Slow tests (history depth) | pass, 36 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619035 |
-| backend-tests (3.11) | pass, 2m10s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619739 |
-| backend-tests (3.12) | pass, 2m16s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619161 |
-| backend-tests (3.13, informational) | pass, 1m32s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604619069 |
-| frontend-tests | pass, 44 s | https://github.com/sarooo43/Routtener/actions/runs/44536844903/job/135604412133 |
+| No credentials in tree or history | pass, 11 s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607221445 |
+| Slow tests (history depth) | pass, 37 s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607364701 |
+| backend-tests (3.11) | pass, 2m13s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607364401 |
+| backend-tests (3.12) | pass, 2m23s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607364439 |
+| backend-tests (3.13, informational) | pass, 1m31s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607364413 |
+| frontend-tests | pass, 40 s | https://github.com/sarooo43/Routtener/actions/runs/44537646511/job/135607222039 |
 
 Local counts above are supplementary; the Actions run is the proof.
+
+**On provenance.** A commit cannot cite the CI run for itself — the run only
+exists after the commit does. So the run above is for `fe2dda2`, the commit that
+carries this report; the only change in it is this document. The two earlier
+runs for this work (`44535564165` on `942396e`, `44536844903` on `1efbe2f`) were
+also six-for-six green, and no code differs between them and `fe2dda2`.
 
 ### Findings by severity
 
