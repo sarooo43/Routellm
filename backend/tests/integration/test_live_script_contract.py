@@ -202,6 +202,19 @@ def test_response_detail_survives_a_bodyless_response():
 # these fail and the fakes get corrected in the same commit.
 
 
+@pytest.fixture(autouse=True)
+def no_post_save_discovery(monkeypatch):
+    """Saving a provider key fires a BACKGROUND discovery call to the real
+    provider host. Keep these tests off the network: the save path, storage
+    and response are still real; only the outbound warm-up is stubbed."""
+    import app.api.provider_keys_routes as provider_routes
+
+    async def _noop(provider_name, raw_key):
+        return None
+
+    monkeypatch.setattr(provider_routes, "_warm_discovery_after_save", _noop)
+
+
 @pytest.fixture
 async def client(monkeypatch, db_session):
     """Real app over ASGITransport with provider-key encryption available."""
@@ -287,24 +300,10 @@ async def test_health_reports_a_components_mapping(client):
     assert isinstance(body.get("components"), dict), body
 
 
-async def test_route_endpoint_answers_200_with_the_benchmark_fields(client):
-    """Scenario 1 reads these keys off a /route 200; a stub could invent them."""
-    resp = await client.post(
-        "/api/v1/route",
-        json={
-            "prompt": "hello there",
-            "task_type": "general",
-            "force_provider": "mock",
-            "max_fallbacks": 1,
-        },
-    )
-    assert resp.status_code in (200, 429), resp.text
-    if resp.status_code == 429:
-        pytest.skip("rate limited in this environment")
-    body = resp.json()
-    # record_to_row() reads exactly these; it does NOT read "provider" or
-    # "latency_ms" (the benchmark measures wall time itself).
-    for field in ("success", "model_used", "tokens_used"):
-        assert field in body, f"the benchmark reads {field!r} off /route"
-    assert isinstance(body["success"], bool)
-    assert isinstance(body["tokens_used"], int)
+# NOTE on POST /api/v1/route: the benchmark's `record_to_row()` reads
+# success/model_used/tokens_used. That shape is ALREADY pinned against the real
+# app in tests/integration/test_routes.py (see the `model_used`/`tokens_used`
+# assertions), so no duplicate contract test is added here. Duplicating it
+# would be a second place to keep in sync - the same trap this file exists to
+# avoid - and the version written first here reached for a `force_provider`
+# request field whose behaviour this change has no business assuming.

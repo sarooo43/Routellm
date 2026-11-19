@@ -35,6 +35,26 @@ FAKE_PROVIDER_KEYS = {
 
 
 @pytest.fixture(autouse=True)
+def no_post_save_discovery(monkeypatch):
+    """Saving a provider key normally fires a BACKGROUND model-discovery call
+    to the real provider host (see _warm_discovery_after_save).
+
+    In CI that is a live network request whose task can outlive the test's
+    event loop - and these tests save three keys each. Nothing here is about
+    discovery, so it is stubbed out: the save path, the storage and the
+    detection call are all still real.
+    """
+    import app.api.provider_keys_routes as provider_routes
+
+    async def _noop(provider_name, raw_key):
+        return None
+
+    monkeypatch.setattr(
+        provider_routes, "_warm_discovery_after_save", _noop
+    )
+
+
+@pytest.fixture(autouse=True)
 def encryption_key(monkeypatch):
     monkeypatch.setattr(
         settings, "PROVIDER_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode()
