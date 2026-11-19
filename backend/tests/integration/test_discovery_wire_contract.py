@@ -113,6 +113,15 @@ def upstream(monkeypatch):
         "data": [{"id": "llama-3.1-8b-instant"}, {"id": "whisper-large-v3"}]
     }
     _Upstream.chat_status = 200
+    # OBSERVED: chat_body was NOT reset here, so the 401 test's
+    # {"error": "invalid api key"} body leaked into whichever test ran next and
+    # the success-shape test failed with bad_provider_response. That made the
+    # module order-dependent: 5 of 10 randomised runs failed, while every test
+    # passed 5/5 when run alone. Restore the pristine body explicitly.
+    _Upstream.chat_body = {
+        "choices": [{"message": {"role": "assistant", "content": "pong"}}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+    }
     _Upstream.seen = []
 
     with socket.socket() as probe:
