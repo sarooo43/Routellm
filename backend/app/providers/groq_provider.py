@@ -4,7 +4,7 @@ import httpx
 
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
-from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
+from app.providers.model_registry import PROVIDER_SPECS, resolve_model
 from app.providers.outcomes import error_for_exception, error_for_status
 
 SPEC = PROVIDER_SPECS["groq"]
@@ -29,7 +29,6 @@ class GroqProvider(ModelProvider):
     API_URL = SPEC.chat_url(SPEC.default_model)
 
     async def resolve_model(self, api_key, override=None, force_refresh=False):
-        spec = spec_for(self.provider_name)
         return await resolve_model(
             self.provider_name, api_key, override=override, force_refresh=force_refresh
         )

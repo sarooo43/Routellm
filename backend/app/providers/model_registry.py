@@ -639,8 +639,6 @@ class ModelCatalog:
 
     async def _load_persisted(self, provider: str, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
         try:
-            import json
-
             from sqlalchemy import select
 
             from app.models.model_cache import DiscoveredModelCacheDB

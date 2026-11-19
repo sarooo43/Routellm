@@ -12,7 +12,7 @@ from app.core.model_catalog import MODEL_CATALOG
 from app.core.scorer import COST_PER_1K_TOKENS
 from app.db.session import get_optional_session
 from app.models import ModelStatsDB
-from app.providers.registry import PROVIDER_REGISTRY, routable_providers
+from app.providers.registry import routable_providers
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)

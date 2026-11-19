@@ -44,9 +44,6 @@ router = APIRouter(prefix="/provider-test", tags=["Provider test"])
 PROBE_PROMPT = "ping"
 PROBE_MAX_TOKENS = 1
 
-#: Key-specific outcomes. Only these may be described as "your key".
-KEY_OUTCOMES = frozenset({"auth_failed", "missing_provider_key"})
-
 #: User-facing verdicts, one per outcome.
 VERDICT_BY_OUTCOME = {
     "auth_failed": "auth_failed",

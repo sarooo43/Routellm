@@ -1165,7 +1165,6 @@ async def generate_with_walking(
             latency_ms=response.latency_ms,
         )
     ]
-    replacement_hint: Optional[str] = None
     tried: set[str] = {initial_model or ""}
     attempts_after_first = 1  # the initial failed attempt counts
     auth_probe_done = False
@@ -1235,7 +1234,6 @@ async def generate_with_walking(
                 and hint not in tried
                 and _replacement_allowed(provider_name, hint)
             ):
-                replacement_hint = hint
                 ordered.insert(0, hint)
             continue
 

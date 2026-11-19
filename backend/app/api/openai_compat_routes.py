@@ -26,7 +26,7 @@ from app.core.error_messages import explain_route_failure
 from app.core.executor import AttemptLog, ExecutionResult, execute_with_fallback
 from app.db.session import get_session
 from app.models import ApiKeyDB
-from app.providers.registry import PROVIDER_REGISTRY, routable_providers
+from app.providers.registry import PROVIDER_REGISTRY
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)

@@ -75,13 +75,6 @@ def create_redis_client(url: Optional[str] = None):
     return client
 
 
-def describe_redis() -> str:
-    """Log-safe Redis description (scheme + host, never the password)."""
-    from app.db.url import describe_redis_url
-
-    return describe_redis_url(settings.REDIS_URL)
-
-
 async def ping_redis(client, timeout: float = REDIS_HEALTH_TIMEOUT_S) -> str:
     """Return ``"ok"``/``"down"`` for the health probe. Never raises."""
     try:
