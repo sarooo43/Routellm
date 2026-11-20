@@ -266,7 +266,7 @@ See [`/docs/TESTING.md`](./docs/TESTING.md) for the full test case matrix.
 
 ## 📄 License
 
-MIT © [Your Name]
+MIT © 2026 Saboor Nasar
 
 ---
 

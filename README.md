@@ -552,6 +552,6 @@ follow [SECURITY.md](SECURITY.md) rather than opening a public issue.
 
 ## Licence
 
-[MIT](LICENSE) © sarooo43.
+[MIT](LICENSE) © 2026 Saboor Nasar.
 
 Not affiliated with LMSYS RouteLLM.

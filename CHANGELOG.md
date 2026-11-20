@@ -32,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   30 (which pulls in undici 8, needing zstd in `node:zlib`) all refuse Node 20.
   `frontend/package.json` now declares that floor in `engines`, which the CI
   comment already pointed at, and `run.py` compares major *and* minor.
-- **LICENSE copyright holder is `Routtener contributors`** (was the previous
-  personal handle). Still MIT.
+- **LICENSE copyright holder is `Saboor Nasar`** (2026, the first commit year).
+  The licence remains MIT.
 - **The "different HTTP stacks" explanation for the discovery-vs-chat split is
   retracted.** Both paths use httpx and build `Authorization: Bearer {key}`
   identically, so no stored value can make one send and the other fail
