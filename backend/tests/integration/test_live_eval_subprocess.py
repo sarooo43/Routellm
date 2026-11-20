@@ -352,59 +352,86 @@ def test_a_minted_key_is_revoked_after_a_blocked_run(backend, tmp_path):
 
 
 def test_ctrl_c_reports_one_sentence_instead_of_a_traceback(tmp_path):
-    """OBSERVED: SIGINT mid-run printed the whole asyncio KeyboardInterrupt stack.
+    """Interrupt a live eval only once its HTTP request is actually blocked.
 
-    The cleanup was already correct (chaos cleared, minted key revoked by the
-    existing finally blocks); only the reporting was wrong. This pins the
-    reporting: exit 130 and one sentence, never a KeyboardInterrupt traceback.
-
-    The eval must be BLOCKED, not failing, when the signal lands, or the test
-    measures a connection error instead of the interrupt. A socket that
-    accepts and then never answers achieves that.
+    Background process managers may inherit SIGINT as SIG_IGN. Start the child
+    with the normal interactive Python SIGINT handler, then wait for the stub
+    to accept its request: asyncio has installed its handler by that point.
     """
     import threading
 
     listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
-    listener.listen(8)
+    listener.listen(1)
+    listener.settimeout(0.1)
     port = listener.getsockname()[1]
+    accepted = threading.Event()
     stop = threading.Event()
+    events = []
 
     def _accept_and_stall() -> None:
         while not stop.is_set():
             try:
                 conn, _ = listener.accept()
-            except OSError:
+                break
+            except socket.timeout:
+                continue
+            except OSError as exc:
+                events.append(f"accept failed: {exc}")
                 return
-            # Hold the connection open without ever replying.
-            stop.wait(5)
-            try:
-                conn.close()
-            except OSError:
-                pass
+        else:
+            return
+        with conn:
+            events.append("accepted connection; holding it open")
+            accepted.set()
+            stop.wait(45)
+        events.append("connection closed")
 
-    threading.Thread(target=_accept_and_stall, daemon=True).start()
+    thread = threading.Thread(target=_accept_and_stall, daemon=True)
+    thread.start()
+    env = dict(os.environ)
+    for name in ("ROUTTENER_EVAL_API_KEY", "ROUTELLM_EVAL_API_KEY"):
+        env.pop(name, None)
+    # A fresh interpreter avoids preexec_fn in a multithreaded process. The
+    # exec leaves the normal Python handler in place for asyncio.run to replace.
+    bootstrap = (
+        "import runpy, signal, sys; "
+        "signal.signal(signal.SIGINT, signal.default_int_handler); "
+        "path = sys.argv.pop(1); "
+        "runpy.run_path(path, run_name='__main__')"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", bootstrap, str(EVAL_SCRIPT), "--live",
+         "--yes-spend-quota", "--base-url", f"http://127.0.0.1:{port}"],
+        cwd=str(REPO_ROOT), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    out = err = ""
     try:
-        proc = subprocess.Popen(
-            [
-                sys.executable, str(EVAL_SCRIPT), "--live", "--yes-spend-quota",
-                "--base-url", f"http://127.0.0.1:{port}",
-            ],
-            cwd=str(REPO_ROOT), env=dict(os.environ),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        )
-        time.sleep(2.5)  # long enough to be inside the preflight request
-        proc.send_signal(signal.SIGINT)
-        try:
-            out, _ = proc.communicate(timeout=40)
-        except subprocess.TimeoutExpired:  # pragma: no cover
+        deadline = time.monotonic() + 30
+        while not accepted.wait(0.1):
+            if proc.poll() is not None or time.monotonic() >= deadline:
+                break
+        if accepted.is_set() and proc.poll() is None:
+            proc.send_signal(signal.SIGINT)
+        else:
             proc.kill()
-            out, _ = proc.communicate()
+        try:
+            out, err = proc.communicate(timeout=40)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, err = proc.communicate()
+            pytest.fail(f"child did not exit after SIGINT; stdout={out!r}; stderr={err!r}; stub={events!r}")
     finally:
         stop.set()
         listener.close()
+        thread.join(timeout=2)
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
 
-    assert "KeyboardInterrupt" not in out, out[-800:]
-    assert proc.returncode == 130, out[-800:]
-    assert "Interrupted." in out, out[-800:]
+    diagnostic = f"stdout={out!r}; stderr={err!r}; stub={events!r}"
+    assert accepted.is_set(), f"child never reached the stub; {diagnostic}"
+    assert "KeyboardInterrupt" not in out + err, diagnostic
+    assert proc.returncode == 130, f"exit={proc.returncode}; {diagnostic}"
+    assert "Interrupted." in out + err, diagnostic

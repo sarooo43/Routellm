@@ -60,8 +60,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Cloud CI jobs (`hf-space-boot`, `cloudflare-worker`) and `docs/deploy`
   contents are intentionally left as they were on main.
 
+- CI now tests the launcher's full support range: the backend suite runs on
+  Python 3.11 and 3.12, and the frontend job type-checks, lints and builds, so a
+  broken `frontend/dist` cannot reach a user's first run.
+- **CI and repo trimmed of the cloud experiments.** The `cloudflare-worker` and
+  `hf-space-boot` CI jobs are removed (the remaining jobs: secret-scan,
+  backend tests on 3.11+3.12, the slow git-history suite, an informational
+  Python 3.13 run, and the frontend job). The Worker code is archived — not
+  deleted — under `docs/deploy/cloudflare/` with the exact state of the
+  attempt tagged `cloud-deploy-attempt`; the root `wrangler` devDependency and
+  the `deploy` / `test:cloudflare` scripts remain in the repository. Local-first
+  (`python run.py`) is the supported path.
+- The dashboard's unreachable-backend copy now tells a local user to start the
+  app instead of blaming a worker proxy; the Providers page uses the error
+  taxonomy instead of answering "Is the backend running?" for every failure.
+- `PORT` defaults to 8000 and `HOST` to `127.0.0.1`.
+- `/health` reports the effective database driver (including the SQLite
+  default) and stays a 200 with component state, never a 503.
+- Import-time logging was removed; startup emits one line per subsystem.
+
+
 ### Added
 
+- Prompt classification into `code`, `reasoning`, `summarization`, `qa` and
+  `general`, then capability/cost/latency/availability scoring and ranking.
+- Execution with automatic fallback, per-provider circuit breaker (closed →
+  open → half-open), daily quota pre-flight gates, and a recorded attempt chain.
+- Provider adapters for Groq, Google Gemini and DeepSeek behind one
+  `ModelProvider` interface returning a structured `ProviderResponse`.
+- FastAPI gateway: `POST /api/v1/route`, `/models`, `/logs`, `/analytics`,
+  `/health`, a static model catalog, and OpenAI-compatible
+  `POST /v1/chat/completions` plus `GET /v1/models`.
+- Bring-your-own-key provider storage, encrypted at rest with Fernet and scoped
+  per RouteLLM key, with hint-only disclosure.
+- React + TypeScript dashboard (dark glassmorphism): overview KPIs, live feed,
+  model health, routing explorer, analytics, catalog, API keys, provider keys.
+- Error taxonomy shared by the API and the UI (network, unauthorized, rate
+  limited, service unavailable, validation, server error) with actionable copy.
+- Chaos-mode fault injection for demonstrating failover.
 - **Live-eval tests run the real script as a subprocess** against a real
   uvicorn on an OS-chosen port: 0/1/2 providers saved, Chaos disabled, a minted
   key provably revoked, a user-supplied key never revoked, and zero
@@ -129,10 +165,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `src/appInfo.ts`) with the LMSYS name-collision disclaimer written once.
 - MIT licence, CONTRIBUTING, SECURITY (with a local-first threat model),
   CODE_OF_CONDUCT, issue and PR templates, and this changelog.
-- Tests: local runtime contracts, a Redis contract suite that runs the same
-  assertions against the in-process store and a real Redis when configured, the
-  auth-mode matrix, demo-mode honesty, launcher behaviour, and packaging
-  invariants.
+- Tests: executor, scoring, breaker, quota, auth matrix, OpenAI compatibility,
+  deployment resilience, dashboard components, local runtime contracts, a
+  Redis contract suite run against the in-process store and real Redis when
+  configured, demo-mode honesty, launcher behaviour, and packaging invariants.
 
 ### Fixed
 
@@ -156,27 +192,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Tests: `cleanup()` was never registered.** Rendered trees leaked between
   tests, so queries matched several elements and files were ~5x slower.
 
-### Changed
-
-- CI now tests the launcher's full support range: the backend suite runs on
-  Python 3.11 and 3.12, and the frontend job type-checks, lints and builds, so a
-  broken `frontend/dist` cannot reach a user's first run.
-- **CI and repo trimmed of the cloud experiments.** The `cloudflare-worker` and
-  `hf-space-boot` CI jobs are removed (the remaining jobs: secret-scan,
-  backend tests on 3.11+3.12, the slow git-history suite, an informational
-  Python 3.13 run, and the frontend job). The Worker code is archived — not
-  deleted — under `docs/deploy/cloudflare/` with the exact state of the
-  attempt tagged `cloud-deploy-attempt`; the root `wrangler` devDependency and
-  the `deploy` / `test:cloudflare` scripts are gone. Local-first
-  (`python run.py`) is the supported path.
-- The dashboard's unreachable-backend copy now tells a local user to start the
-  app instead of blaming a worker proxy; the Providers page uses the error
-  taxonomy instead of answering "Is the backend running?" for every failure.
-- `PORT` defaults to 8000 and `HOST` to `127.0.0.1`.
-- `/health` reports the effective database driver (including the SQLite
-  default) and stays a 200 with component state, never a 503.
-- Import-time logging was removed; startup emits one line per subsystem.
-
 ### Deprecated
 
 - The Hugging Face Space deployment path is documented as experimental under
@@ -186,31 +201,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   kept for reference only and is not tested by CI anymore.
 
 ---
-
-## [0.1.0]
-
-The first state worth running: routing, fallback, observability.
-
-### Added
-
-- Prompt classification into `code`, `reasoning`, `summarization`, `qa` and
-  `general`, then capability/cost/latency/availability scoring and ranking.
-- Execution with automatic fallback, per-provider circuit breaker (closed →
-  open → half-open), daily quota pre-flight gates, and a recorded attempt chain.
-- Provider adapters for Groq, Google Gemini and DeepSeek behind one
-  `ModelProvider` interface returning a structured `ProviderResponse`.
-- FastAPI gateway: `POST /api/v1/route`, `/models`, `/logs`, `/analytics`,
-  `/health`, a static model catalog, and OpenAI-compatible
-  `POST /v1/chat/completions` plus `GET /v1/models`.
-- Bring-your-own-key provider storage, encrypted at rest with Fernet and scoped
-  per RouteLLM key, with hint-only disclosure.
-- React + TypeScript dashboard (dark glassmorphism): overview KPIs, live feed,
-  model health, routing explorer, analytics, catalog, API keys, provider keys.
-- Error taxonomy shared by the API and the UI (network, unauthorized, rate
-  limited, service unavailable, validation, server error) with actionable copy.
-- Chaos-mode fault injection for demonstrating failover.
-- Test suite covering the executor, scoring, breaker, quota, auth matrix,
-  OpenAI compatibility, deployment resilience and the dashboard components.
 
 [Unreleased]: https://github.com/sarooo43/Routtener/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/sarooo43/Routtener/releases/tag/v0.1.0

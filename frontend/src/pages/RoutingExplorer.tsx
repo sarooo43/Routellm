@@ -198,7 +198,7 @@ export function RoutingExplorer() {
             <tr className="border-b border-white/[0.06] bg-white/[0.03] text-left text-[11px] uppercase tracking-widest text-text-secondary">
               <th className="px-4 py-3 font-medium">When</th>
               <th className="px-4 py-3 font-medium">Task</th>
-              <th className="px-4 py-3 font-medium">Model</th>
+              <th className="px-4 py-3 font-medium">Provider</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium text-right">Latency</th>
               <th className="w-8" />

@@ -58,6 +58,25 @@ flowchart TD
 The order of `B` before `C` is deliberate: the Host check is registered last so
 it runs first, before any CORS handling (`backend/app/main.py:404-408`).
 
+## Route metadata
+
+`POST /api/v1/route` returns the provider name in `model_used`, not a concrete
+upstream model ID; chain entries may also contain a concrete `model`.
+A successful fallback retains the first failure explanation in the top-level
+`error`, so use `success` for the outcome and inspect the chain for details
+(`backend/app/core/executor.py`, `backend/app/api/routes.py`). Abridged example:
+
+```json
+{"success": true, "model_used": "deepseek", "error": "provider_server_error: groq failed on its side", "fallback_chain_attempted": [{"provider_name": "groq", "success": false}, {"provider_name": "deepseek", "success": true}]}
+```
+
+The log field `attempts` is the number of chain entries, including preflight
+skips and model-walk steps. The all-failed log field `real_attempts` counts
+budget-consuming provider attempts, including injected chaos failures but not
+preflight skips. The success log field `fallbacks_used` is
+`max(0, real_attempts - 1)`, counting provider retries after the first attempt,
+not preflight skips or model-walk steps (`backend/app/core/executor.py`).
+
 ## Routing decision
 
 The router answers one question: *which provider, and which model within it,
