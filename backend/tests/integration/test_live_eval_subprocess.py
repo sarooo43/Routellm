@@ -435,3 +435,80 @@ def test_ctrl_c_reports_one_sentence_instead_of_a_traceback(tmp_path):
     assert "KeyboardInterrupt" not in out + err, diagnostic
     assert proc.returncode == 130, f"exit={proc.returncode}; {diagnostic}"
     assert "Interrupted." in out + err, diagnostic
+
+@pytest.mark.parametrize("value", ["   ", "echo ${X:0:8}", "rk_bad key", "rk_bad\nkey"])
+def test_malformed_eval_key_never_mints_or_echoes(backend, value):
+    before = _active_key_count(backend["db_path"])
+    result = _run_eval(backend, {"ROUTTENER_EVAL_API_KEY": value})
+    assert result.returncode != 0
+    assert "FATAL: the supplied eval API key is malformed" in result.stderr
+    assert value not in result.stdout + result.stderr
+    assert _active_key_count(backend["db_path"]) == before
+
+
+def test_empty_eval_key_announces_before_detection(backend):
+    result = _run_eval(backend, {"ROUTTENER_EVAL_API_KEY": ""})
+    assert result.returncode != 0
+    assert result.stdout.index("minting a throwaway key") < result.stdout.index("Providers detected:")
+    assert "API key: revoked" in result.stdout
+
+
+def test_prompt_requires_terminal(backend):
+    result = subprocess.run(
+        [sys.executable, str(EVAL_SCRIPT), "--live", "--dry-run", "--yes-spend-quota",
+         "--base-url", backend["base_url"], "--api-key-prompt"],
+        cwd=REPO_ROOT, env=backend["env"], capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode != 0
+    assert "requires an interactive terminal" in result.stderr
+
+
+def test_prompt_takes_precedence_and_never_echoes_key(backend):
+    import pty
+    import select
+
+    owner = _mint_key(backend["base_url"])
+    _save_providers(backend["base_url"], owner, ["groq", "deepseek"])
+    env = dict(backend["env"], ROUTTENER_EVAL_API_KEY="bad env", ROUTELLM_EVAL_API_KEY="also bad")
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        [sys.executable, str(EVAL_SCRIPT), "--live", "--dry-run", "--yes-spend-quota",
+         "--base-url", backend["base_url"], "--api-key-prompt"],
+        cwd=REPO_ROOT, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    data = b""
+    try:
+        deadline = time.monotonic() + 30
+        while b"Routtener API key:" not in data and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                data += os.read(master, 4096)
+            if proc.poll() is not None:
+                break
+        assert b"Routtener API key:" in data
+        os.write(master, owner.encode() + b"\n")
+        deadline = time.monotonic() + 30
+        while proc.poll() is None and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                try:
+                    data += os.read(master, 4096)
+                except OSError:
+                    break
+        proc.wait(timeout=10)
+        try:
+            while select.select([master], [], [], 0)[0]:
+                data += os.read(master, 4096)
+        except OSError:
+            pass
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        os.close(master)
+    assert proc.returncode == 0
+    assert b"Providers detected: groq, deepseek" in data
+    assert owner.encode() not in data
+    with _http(backend["base_url"]) as c:
+        assert c.get("/api/v1/keys/me", headers={"X-API-Key": owner}).status_code == 200

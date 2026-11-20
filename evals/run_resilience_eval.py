@@ -42,6 +42,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import getpass
+import re
 import asyncio
 import json
 import logging
@@ -424,13 +426,13 @@ async def detect_providers(client, api_key: str) -> list[str]:
     return [row["provider_name"] for row in rows if row.get("configured")]
 
 
-async def collect_preflight(client, n: int) -> PreflightReport:
+async def collect_preflight(client, n: int, *, supplied_key: str | None = None) -> PreflightReport:
     """Gather every gate's result WITHOUT deciding to exit.
 
     Never raises for a gate failure; the caller inspects ``blocker``. Raises
     only when a live call itself fails (a dead backend is not a gate result).
     """
-    api_key = eval_key_from_env()
+    api_key = eval_key_from_env() if supplied_key is None else supplied_key
     minted = not api_key
 
     if minted:
@@ -474,17 +476,15 @@ async def collect_preflight(client, n: int) -> PreflightReport:
     return report
 
 
-def print_preflight(report: PreflightReport, base_url: str) -> None:
+def print_preflight(report: PreflightReport, base_url: str, *, prompted: bool = False) -> None:
     """Everything the owner needs to understand the run, pass or fail."""
     if report.minted:
         print_key_lines(report.api_key)
         print("API key: minted for this run, and revoked when the run ends")
         print(f"  hint: export {EVAL_KEY_ENV_VAR}=<key> to reuse a key instead")
     else:
-        print(
-            f"API key: reused from ${EVAL_KEY_ENV_VAR} "
-            f"({credential_label(report.api_key)})"
-        )
+        source = "the prompt" if prompted else f"${EVAL_KEY_ENV_VAR}"
+        print(f"API key: reused from {source} ({credential_label(report.api_key)})")
 
     print(
         "Providers detected: "
@@ -728,6 +728,10 @@ def main() -> None:
             "first /api/v1/route call (spends no provider quota). Use it to "
             "prove the backend wiring is right before a real run.",
         )
+        parser.add_argument(
+            "--api-key-prompt", action="store_true",
+            help="Read the Routtener API key privately from the terminal.",
+        )
         args = parser.parse_args()
 
         if args.live and not args.yes_spend_quota:
@@ -738,14 +742,31 @@ def main() -> None:
             )
 
         if args.live:
+            if args.api_key_prompt:
+                if not sys.stdin.isatty():
+                    raise SystemExit("FATAL: --api-key-prompt requires an interactive terminal.")
+                supplied_key = getpass.getpass("Routtener API key: ")
+            elif EVAL_KEY_ENV_VAR in os.environ:
+                supplied_key = os.environ[EVAL_KEY_ENV_VAR]
+            else:
+                supplied_key = os.environ.get(LEGACY_EVAL_KEY_ENV_VAR, "")
+            if supplied_key and not re.fullmatch(r"rk_[A-Za-z0-9_-]+", supplied_key):
+                raise SystemExit("FATAL: the supplied eval API key is malformed; use a Routtener rk_ key without whitespace.")
+            if not supplied_key:
+                print(
+                    "ROUTTENER_EVAL_API_KEY is not set: minting a throwaway key. "
+                    "A throwaway key owns no provider keys; set your dashboard key "
+                    "for a real run (see docs/running-the-live-eval.md).",
+                    flush=True,
+                )
             import httpx
 
             async def _live() -> dict:
                 async with httpx.AsyncClient(
                     base_url=args.base_url, timeout=30.0
                 ) as client:
-                    report = await collect_preflight(client, args.n)
-                    print_preflight(report, args.base_url)
+                    report = await collect_preflight(client, args.n, supplied_key=supplied_key)
+                    print_preflight(report, args.base_url, prompted=args.api_key_prompt)
 
                     if args.dry_run:
                         # A dry run reports EVERY gate before it decides. The
