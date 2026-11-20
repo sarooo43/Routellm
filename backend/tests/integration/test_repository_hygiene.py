@@ -50,12 +50,11 @@ def test_required_file_exists(relative):
 def test_licence_is_mit_for_the_declared_holder():
     text = _read("LICENSE")
     assert text.startswith("MIT License")
-    # Owner's decision (C6): the holder is the project, not a personal handle.
+    # Owner's decision: the holder is Saboor Nasar, dated to the first commit.
     assert "Saboor Nasar" in text
     # A holder line must be present and dated - an empty copyright is not one.
     assert "Copyright (c) 2026 Saboor Nasar" in text
-    # The repo slug in clone URLs is unchanged, so it must not have been
-    # rewritten to the new holder by accident.
+    # README must agree with the licence holder.
     assert "Saboor Nasar" in _read("README.md")
     # The previous licence must be gone, not merely supplemented.
     assert "Boost Software License" not in text

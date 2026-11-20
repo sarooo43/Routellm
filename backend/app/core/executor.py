@@ -955,7 +955,7 @@ async def execute_with_fallback(
                 provider=provider_name,
                 task_type=resolved_task_type,
                 attempts=len(attempts),
-                fallbacks_used=real_attempts,
+                fallbacks_used=max(0, real_attempts - 1),  # provider retries, not the initial attempt
             )
             result = ExecutionResult(
                 success=True,
