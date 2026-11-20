@@ -78,6 +78,18 @@ afterEach(() => {
 })
 
 describe('ProviderKeys', () => {
+  it('shows only the active key prefix and its saved-provider count', async () => {
+    saveGeneratedKey(generated)
+    vi.mocked(getProviderKeys).mockResolvedValue(unconfigured.map((row) => ({
+      ...row, configured: row.provider_name !== 'gemini',
+    })))
+    const { container } = renderPage()
+    expect(await screen.findByText('owns 2 provider keys', { exact: false })).toBeInTheDocument()
+    expect(container.textContent).toContain('rk_abcde')
+    expect(container.textContent).not.toContain(generated.api_key)
+    expect(container.innerHTML).not.toContain(generated.api_key)
+  })
+
   it('renders a section for each provider and loads status for the active RouteLLM key', async () => {
     saveGeneratedKey(generated)
     renderPage()

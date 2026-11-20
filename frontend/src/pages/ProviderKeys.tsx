@@ -117,6 +117,7 @@ export function ProviderKeys() {
       setStatuses({})
       return
     }
+    setStatuses({})
     setLoading(true)
     try {
       const rows = await getProviderKeys(key.api_key)
@@ -300,8 +301,10 @@ export function ProviderKeys() {
         </div>
         {activeKey && (
           <p className="mt-3 text-xs text-text-secondary">
-            Selected: <code className="font-mono text-text-primary">{activeKey.key_prefix}…</code>
-            {loading && <span className="ml-2 text-accent">Loading provider status…</span>}
+            Active key <code className="font-mono text-text-primary">{activeKey.key_prefix.slice(0, 8)}…</code>
+            {loading ? <span className="ml-2 text-accent">Loading provider status…</span> :
+              Object.keys(statuses).length > 0 ? ` owns ${Object.values(statuses).filter((status) => status.configured).length} provider keys` :
+              ' — provider key count unavailable'}
           </p>
         )}
         {/* No-key nudge: routing still works (demo/MOCK answers, or operator
