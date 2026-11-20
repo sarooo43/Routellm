@@ -235,7 +235,7 @@ def load_or_create_encryption_key(configured: Optional[str] = None) -> Optional[
         if path.exists():
             existing = path.read_text(encoding="utf-8").strip()
             if existing:
-                logger.info("encryption_key_reused", path=str(path))
+                logger.debug("encryption_key_reused", path=str(path))
                 return existing
     except OSError as exc:
         logger.warning("encryption_key_unreadable", path=str(path), error=str(exc)[:200])

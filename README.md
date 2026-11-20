@@ -514,15 +514,7 @@ auth problem, never as `model_not_found`.
 
 ## Why I built this
 
-<!-- OWNER TASK: replace this TODO with your own story, in your own voice,
-     before tagging v0.1.0. Suggested shape: the itch (a provider dying
-     mid-task, free-tier keys expiring, juggling three dashboards), what you
-     wanted instead (one local endpoint that reroutes by itself and shows
-     you why), and what surprised you while building it. Keep it honest —
-     no performance claims in this section; measured numbers, if any, live
-     in Benchmarks. -->
-
-TODO: owner's own words go here.
+I built Routtener because working with LLMs on a real project is full of "what the heck" moments. You rarely know whether a task is easy or hard for a given model. Halfway through, a provider's free limit runs out and you have to switch models by hand. Routtener sits in front of your providers, picks a model by task type with a confidence score, and falls back automatically when one fails or runs out of quota, so you can keep working. It is local-first, free and open source, and your provider keys stay in an encrypted database on your own machine.
 
 ---
 
@@ -552,6 +544,6 @@ follow [SECURITY.md](SECURITY.md) rather than opening a public issue.
 
 ## Licence
 
-[MIT](LICENSE) © sarooo43.
+[MIT](LICENSE) © 2026 Saboor Nasar.
 
 Not affiliated with LMSYS RouteLLM.
