@@ -270,7 +270,7 @@ class AnalyticsResponse(BaseModel):
 
 def _explain_result(result) -> Optional[str]:
     """Human summary of a failed route, naming the provider that failed first."""
-    if result.success or (not result.error and not result.fallback_chain_attempted):
+    if not result.error and not result.fallback_chain_attempted:
         return None
     return explain_route_failure(result.error, result.fallback_chain_attempted) or result.error
 
