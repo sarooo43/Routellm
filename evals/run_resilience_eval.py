@@ -58,6 +58,8 @@ if str(BACKEND_DIR) not in sys.path:
 if str(EVALS_DIR) not in sys.path:
     sys.path.insert(0, str(EVALS_DIR))
 
+from url_validation import SafeArgumentParser, backend_base_url  # noqa: E402
+
 from harness import (  # noqa: E402
     ScriptedProvider,
     build_eval_stack,
@@ -703,7 +705,7 @@ def main() -> None:
     # via importlib under a different module name than harness.py itself, so
     # the test suite's restore fixture cannot see this module's globals.
     try:
-        parser = argparse.ArgumentParser(
+        parser = SafeArgumentParser(
             description="E2: resilience eval - router vs naive single-provider baseline."
         )
         parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
@@ -720,7 +722,7 @@ def main() -> None:
             help="REQUIRED with --live: explicit consent that real provider "
             "quota will be spent. --live without this flag refuses to run.",
         )
-        parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
+        parser.add_argument("--base-url", type=backend_base_url, default="http://127.0.0.1:8000", help="backend URL for --live")
         parser.add_argument(
             "--dry-run",
             action="store_true",

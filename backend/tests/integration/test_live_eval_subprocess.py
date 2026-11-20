@@ -512,3 +512,18 @@ def test_prompt_takes_precedence_and_never_echoes_key(backend):
     assert owner.encode() not in data
     with _http(backend["base_url"]) as c:
         assert c.get("/api/v1/keys/me", headers={"X-API-Key": owner}).status_code == 200
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8000.", "127.0.0.1:8000", "http://:8000", "http://127.0.0.1:abc"])
+@pytest.mark.parametrize("script", [EVAL_SCRIPT, REPO_ROOT / "benchmark" / "run_benchmark.py"])
+def test_invalid_base_url_fails_before_minting(backend, url, script):
+    before = _active_key_count(backend["db_path"])
+    args = [sys.executable, str(script), "--base-url", url]
+    if script == EVAL_SCRIPT:
+        args += ["--live", "--dry-run", "--yes-spend-quota"]
+    result = subprocess.run(args, cwd=REPO_ROOT, env=backend["env"], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2
+    assert result.stderr.startswith("FATAL: --base-url is not a valid URL")
+    assert len(result.stderr.splitlines()) == 1
+    assert "Traceback" not in result.stderr
+    assert _active_key_count(backend["db_path"]) == before
