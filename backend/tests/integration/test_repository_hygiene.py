@@ -66,10 +66,12 @@ def test_readme_badge_matches_the_licence():
     assert "boost" not in readme.lower()
 
 
-def test_changelog_starts_at_the_first_release():
+def test_changelog_collects_first_release_in_unreleased():
     text = _read("CHANGELOG.md")
-    assert text.index("[Unreleased]") < text.index("## [0.1.0]")
-    assert re.search(r"^## \[0\.1\.0\]", text, re.MULTILINE)
+    assert re.search(r"^## \[Unreleased\]", text, re.MULTILINE)
+    assert not re.search(r"^## \[0\.1\.0\]", text, re.MULTILINE)
+    assert "Prompt classification" in text
+    assert "Execution with automatic fallback" in text
 
 
 # --------------------------------------------------------------------------

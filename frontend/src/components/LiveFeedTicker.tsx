@@ -109,7 +109,7 @@ export function LiveFeedTicker({ limit = MAX_VISIBLE }: { limit?: number }) {
                   log.selected_model ? 'text-text-primary' : 'text-text-secondary'
                 }`}
               >
-                {log.selected_model ?? 'no model available'}
+                {log.selected_model ?? 'no provider available'}
               </span>
 
               <span className="ml-auto shrink-0 rounded-md bg-white/[0.04] px-2 py-0.5 text-xs tabular-nums text-text-secondary">

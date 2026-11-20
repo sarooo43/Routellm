@@ -70,6 +70,13 @@ describe('LiveFeedTicker', () => {
     expect(screen.getByText('qa')).toBeInTheDocument()
   })
 
+  it('labels a missing selected provider correctly', async () => {
+    mockGetLogs.mockResolvedValue(page([makeLog({ selected_model: null, status: 'failed' })]))
+    render(<MemoryRouter><LiveFeedTicker /></MemoryRouter>)
+    await act(async () => {})
+    expect(screen.getByText('no provider available')).toBeInTheDocument()
+  })
+
   it('renders a genuinely new entry appearing on the next poll without crashing', async () => {
     mockGetLogs.mockResolvedValueOnce(FIRST_PAGE).mockResolvedValue(SECOND_PAGE)
 

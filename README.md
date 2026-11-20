@@ -142,6 +142,31 @@ print(reply.choices[0].message.content)
 `api_key` is ignored when `REQUIRE_API_KEY=false` (the local default). Set it to
 `true` to require a generated `rk_…` key.
 
+For `POST /api/v1/route`, `model_used` is the winning **provider name**, not
+an upstream model ID. A successful fallback retains the first failure's
+explanation in the top-level `error`; inspect `success` for the route outcome
+and `fallback_chain_attempted` for individual steps. For example (abridged):
+
+```json
+{
+  "success": true,
+  "model_used": "deepseek",
+  "error": "provider_server_error: groq failed on its side",
+  "fallback_chain_attempted": [
+    {"provider_name": "groq", "success": false},
+    {"provider_name": "deepseek", "success": true}
+  ]
+}
+```
+
+The `execution_succeeded` and `all_providers_failed` log field `attempts` is
+the number of chain entries, including preflight skips and model-walk steps.
+The `all_providers_failed` log field `real_attempts` counts provider attempts
+that consume the budget, including injected chaos failures but excluding
+preflight skips. The success log field `fallbacks_used` is
+`max(0, real_attempts - 1)`: budget-consuming provider retries after the first,
+not a count of skips or model-walk steps. See [route metadata](docs/architecture.md#route-metadata).
+
 ---
 
 ## What it does
@@ -514,7 +539,7 @@ auth problem, never as `model_not_found`.
 
 ## Why I built this
 
-I built Routtener because working with LLMs on a real project is full of "what the heck" moments. You rarely know whether a task is easy or hard for a given model. Halfway through, a provider's free limit runs out and you have to switch models by hand. Routtener sits in front of your providers, picks a model by task type with a confidence score, and falls back automatically when one fails or runs out of quota, so you can keep working. It is local-first, free and open source, and your provider keys stay in an encrypted database on your own machine.
+I built Routtener because working with LLMs on a real project is full of "what the heck" moments. You rarely know whether a task is easy or hard for a given model. Halfway through, a provider's free limit runs out and you have to switch models by hand. Routtener sits in front of your providers, picks a provider and model by task type with a confidence score, and falls back automatically when one fails or runs out of quota, so you can keep working. It is local-first, free and open source, and your provider keys are stored encrypted on your own machine.
 
 ---
 

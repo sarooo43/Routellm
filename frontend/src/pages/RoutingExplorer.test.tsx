@@ -52,6 +52,11 @@ function renderWithLog(log: TaskLog) {
 }
 
 describe('RoutingExplorer feedback widget', () => {
+  it('labels the selected provider correctly', () => {
+    renderWithLog(successLog)
+    expect(screen.getByRole('columnheader', { name: 'Provider' })).toBeInTheDocument()
+  })
+
   it('clicking 👍 POSTs the feedback endpoint with correct request_id and rating, then shows the confirmation', async () => {
     renderWithLog(successLog)
 
