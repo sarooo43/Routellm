@@ -73,7 +73,24 @@ from harness import (  # noqa: E402
 from app.providers.registry import PROVIDER_REGISTRY  # noqa: E402
 
 #: Reuse an existing eval key instead of minting one (see preflight_live).
-EVAL_KEY_ENV_VAR = "ROUTELLM_EVAL_API_KEY"
+#: ROUTTENER_ is the current name (the product is Routtener); ROUTELLM_ is the
+#: pre-rename name and still works, because a shell profile or CI secret that a
+#: user already exported must not silently stop being honoured.
+EVAL_KEY_ENV_VAR = "ROUTTENER_EVAL_API_KEY"
+LEGACY_EVAL_KEY_ENV_VAR = "ROUTELLM_EVAL_API_KEY"
+
+
+def eval_key_from_env() -> str:
+    """The caller's eval key, or "".
+
+    ROUTTENER_EVAL_API_KEY wins when both are set; the legacy ROUTELLM_ name is
+    the fallback. Returns the trimmed value, never logging it.
+    """
+    for name in (EVAL_KEY_ENV_VAR, LEGACY_EVAL_KEY_ENV_VAR):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
 
 PRIMARY = "groq"      # ranks first with zero stats for qa -> the scripted failure target
 SECONDARY = "deepseek"  # ranks after groq -> the healthy fallback target
@@ -413,7 +430,7 @@ async def collect_preflight(client, n: int) -> PreflightReport:
     Never raises for a gate failure; the caller inspects ``blocker``. Raises
     only when a live call itself fails (a dead backend is not a gate result).
     """
-    api_key = (os.environ.get(EVAL_KEY_ENV_VAR) or "").strip()
+    api_key = eval_key_from_env()
     minted = not api_key
 
     if minted:
@@ -803,5 +820,28 @@ def main() -> None:
         restore_structlog()
 
 
+def _run_main_with_a_civil_sigint() -> None:
+    """Ctrl-C during a live run must not print a traceback.
+
+    OBSERVED: sending SIGINT mid-run (n=5000, interrupted at ~9 s) printed the
+    full asyncio KeyboardInterrupt stack and exited -2. The CLEANUP was correct
+    - chaos was cleared and a minted key was revoked by the existing finally
+    blocks - but the user sees a crash where they should see one sentence.
+
+    The exception is caught here rather than inside the async code on purpose:
+    the ``finally`` blocks that clear chaos and revoke a transient key run as
+    the exception unwinds, so catching at the top does not skip them.
+    """
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(
+            "\nInterrupted. Chaos injections were cleared and any key minted for "
+            "this run was revoked by the cleanup blocks that just ran.",
+            file=sys.stderr,
+        )
+        raise SystemExit(130) from None
+
+
 if __name__ == "__main__":
-    main()
+    _run_main_with_a_civil_sigint()

@@ -50,7 +50,13 @@ def test_required_file_exists(relative):
 def test_licence_is_mit_for_the_declared_holder():
     text = _read("LICENSE")
     assert text.startswith("MIT License")
-    assert "sarooo43" in text
+    # Owner's decision (C6): the holder is the project, not a personal handle.
+    assert "Routtener contributors" in text
+    # A holder line must be present and dated - an empty copyright is not one.
+    assert "Copyright (c) 2026 Routtener contributors" in text
+    # The repo slug in clone URLs is unchanged, so it must not have been
+    # rewritten to the new holder by accident.
+    assert "sarooo43" in _read("README.md")
     # The previous licence must be gone, not merely supplemented.
     assert "Boost Software License" not in text
 
@@ -187,3 +193,37 @@ def test_main_readme_does_not_send_users_to_the_cloud_path_first():
     readme = _read("README.md")
     cloud_index = readme.find("docs/deploy/")
     assert cloud_index == -1 or "experimental" in readme.lower()
+
+
+# ---------------------------------------------------------------------------
+# No test may leave junk in the working tree.
+#
+# OBSERVED: three env-prefix tests in test_rename_compat.py used a data dir of
+# "C:/tmp/new-dir" to prove the setting is passed through verbatim. Merely
+# constructing Settings() CREATES that directory, and on Linux it is a relative
+# path, so the repository grew a literal `backend/C:/tmp/new-dir/routellm.db`.
+# A release archive built afterwards contained those files.
+# ---------------------------------------------------------------------------
+
+def test_no_windows_shaped_paths_exist_inside_the_backend_tree():
+    """A `C:` directory inside the repo is always an accident, never a feature."""
+    backend = REPO_ROOT / "backend"
+    strays = [
+        p for p in backend.rglob("*")
+        if p.is_dir() and p.name.startswith(("C:", "D:"))
+        and "__pycache__" not in p.parts
+    ]
+    assert strays == [], (
+        "test pollution: these directories were created inside the repository "
+        f"and would ship in a release archive: {[str(p) for p in strays]}"
+    )
+
+
+def test_no_stray_sqlite_files_outside_a_data_directory():
+    """routellm.db belongs in the data directory, nowhere else in the tree."""
+    backend = REPO_ROOT / "backend"
+    strays = [
+        p for p in backend.rglob("routellm.db*")
+        if "__pycache__" not in p.parts and "data" not in p.parts
+    ]
+    assert strays == [], f"stray database files inside the repo: {strays}"

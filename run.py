@@ -12,7 +12,7 @@ What it does, in order:
 1. Checks the Python version (3.11+).
 2. Creates ``.venv`` and installs ``backend/requirements.txt`` into it, only
    when something is missing or out of date (``--reinstall`` forces it).
-3. Uses ``frontend/dist`` when present; otherwise builds it with npm (Node 20+),
+3. Uses ``frontend/dist`` when present; otherwise builds it with npm (Node 22.19+),
    or explains how to get a prebuilt release zip.
 4. Creates the data directory and, on first run only, ``backend/.env`` from
    ``backend/.env.example``.
@@ -151,10 +151,18 @@ def environment_report() -> list[tuple[bool, str]]:
         lines.append((True, "dashboard build found (frontend/dist)"))
     else:
         version = node_version()
-        if version and version[0] >= 20:
-            lines.append((False, f"dashboard not built — will build with Node {version[0]}"))
+        if version and not node_too_old(version):
+            lines.append(
+                (False, f"dashboard not built — will build with Node {version[0]}.{version[1]}")
+            )
         elif version:
-            lines.append((False, f"dashboard not built and Node {version[0]} is too old (need 20+)"))
+            lines.append(
+                (
+                    False,
+                    f"dashboard not built and Node {version[0]}.{version[1]} "
+                    f"is too old (need {MIN_NODE[0]}.{MIN_NODE[1]}+)",
+                )
+            )
         else:
             lines.append((False, "dashboard not built and Node.js is missing (API still runs)"))
 
@@ -275,6 +283,25 @@ def _run(
 # ---------------------------------------------------------------------------
 
 
+#: The lowest Node that can build the dashboard. vite 8 / vitest 5 / jsdom 30
+#: (which pulls in undici 8, needing zstd in node:zlib) all refuse Node 20.
+MIN_NODE = (22, 19)
+
+#: The lowest Node that can merely RUN npm — used only for the --dev proxy.
+MIN_NODE_ANY = (20, 0)
+
+
+def node_too_old(version: Optional[tuple[int, ...]]) -> bool:
+    """True when an INSTALLED Node cannot build the dashboard.
+
+    ``None`` (no Node at all) is a different failure with its own message, so
+    it is not "too old" - callers check for ``None`` first.
+    """
+    if version is None:
+        return False
+    return tuple(version[:2]) < MIN_NODE
+
+
 def node_version() -> Optional[tuple[int, ...]]:
     """Installed Node major/minor version, or None when Node is absent."""
     binary = shutil.which("node")
@@ -359,14 +386,14 @@ def ensure_frontend(dev: bool = False, rebuild: bool = False) -> Optional[Path]:
     if not npm or not version:
         print(
             f"  {warn('Node.js not found')} — cannot build the dashboard.\n"
-            f"  {dim('Install Node 20+ (https://nodejs.org), or unzip the prebuilt')}\n"
+            f"  {dim('Install Node 22.19+ (https://nodejs.org), or unzip the prebuilt')}\n"
             f"  {dim('frontend/dist from a release, then rerun. The API still works:')}\n"
             f"  {dim('http://127.0.0.1:8000/docs')}"
         )
         return None
-    if version[0] < 20:
+    if node_too_old(version):
         print(
-            f"  {warn(f'Node {version[0]} is too old to build the dashboard (need 20+)')}\n"
+            f"  {warn(f'Node {version[0]}.{version[1]} is too old to build the dashboard (need {MIN_NODE[0]}.{MIN_NODE[1]}+)')}\n"
             f"  {dim('The API still works: http://127.0.0.1:8000/docs')}"
         )
         return None
@@ -417,6 +444,28 @@ def ensure_data_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _port_number(value: str) -> int:
+    """argparse type for --port: an int that a socket can actually bind.
+
+    OBSERVED: `--port 99999` used to escape the OSError handler in
+    port_is_free() as a raw "OverflowError: bind(): port must be 0-65535"
+    traceback, because OverflowError is not an OSError. Rejecting it at parse
+    time gives one clean sentence instead. 0 is allowed: it means "pick any
+    free port", which the launcher already reports back.
+    """
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"invalid port {value!r}: expected a whole number"
+        ) from None
+    if not 0 <= number <= 65535:
+        raise argparse.ArgumentTypeError(
+            f"port must be between 0 and 65535, got {number}"
+        )
+    return number
+
+
 def port_is_free(host: str, port: int) -> bool:
     """True when ``host:port`` can be bound right now."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -450,6 +499,25 @@ def pick_port(host: str, preferred: int, attempts: int = 20) -> tuple[int, bool]
 # ---------------------------------------------------------------------------
 
 
+def port_of(url: str, default: int = 8000) -> int:
+    """The port in a URL like ``http://127.0.0.1:8123/``.
+
+    Extracted as a function because the Codespaces hint used to print
+    ``https://<codespace>-.app.github.dev`` - the port vanished - which is a
+    URL nobody can click. Parsing the string by hand is what produced that;
+    this does it once, in one place, with a test.
+
+    Falls back to ``default`` when there is no explicit port (http) and to 443
+    for explicit https, matching what a browser would actually use.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.port:
+        return parts.port
+    return 443 if parts.scheme == "https" else default
+
+
 def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     """The one thing worth reading: where the app is and what to do next."""
     line = "─" * 58
@@ -468,8 +536,7 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
         # the middleware's loopback set, so the first request through the
         # forwarded port would 400. One line, before it happens. The middleware
         # already allows <CODESPACE_NAME>-<port>.<domain> automatically.
-        port = url.split(":", 1)[1].split("/", 1)[0] if ":" in url else "8000"
-        forwarded = f"{codespace}-{port}.{domain}"
+        forwarded = f"{codespace}-{port_of(url)}.{domain}"
         print(f"  {warn('Codespace detected:')} its forwarded Host is allowed automatically.")
         print(f"  {dim(f'  forwarded URL: https://{forwarded}')}")
     if provider_hint:
@@ -486,8 +553,21 @@ def print_banner(url: str, data_dir: Path, provider_hint: bool) -> None:
     print()
 
 
-def _providers_configured(env_path: Path = ENV_FILE) -> bool:
-    """True when any provider key is present in .env or the environment."""
+def _providers_configured(env_path: Path = ENV_FILE, data_dir: Path | None = None) -> bool:
+    """True when any provider key is available to the app.
+
+    THREE places count, because a key can be saved in three ways and the
+    banner must not tell someone "no provider key configured yet" while their
+    dashboard plainly lists three:
+
+      * the process environment (``GROQ_API_KEY=...``),
+      * the ``.env`` file,
+      * the SQLite database the dashboard writes to (``provider_keys``).
+
+    The DB check is deliberate and READ-ONLY: it does not decrypt anything, it
+    only asks whether any row exists, so a broken encryption key cannot make
+    the banner lie a second way.
+    """
     names = ("GROQ_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY")
     if any((os.environ.get(name) or "").strip() for name in names):
         return True
@@ -502,7 +582,32 @@ def _providers_configured(env_path: Path = ENV_FILE) -> bool:
         key, _, value = stripped.partition("=")
         if key.strip() in names and value.strip():
             return True
-    return False
+    return _providers_saved_in_database(data_dir)
+
+
+def _providers_saved_in_database(data_dir: Path | None = None) -> bool:
+    """True when the dashboard has saved at least one provider key.
+
+    Any row counts, for any caller key: the question the banner asks is "has
+    this installation been set up", not "which key owns it". Never raises -
+    a missing or unreadable database simply means "not configured".
+    """
+    import sqlite3
+
+    try:
+        base = data_dir or DATA_DIR
+        db_path = Path(base) / "routellm.db"
+        if not db_path.exists():
+            return False
+        # Read-only URI so a probe can never create or migrate the file.
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM provider_keys "
+                "WHERE encrypted_key IS NOT NULL AND length(encrypted_key) > 0 LIMIT 1"
+            ).fetchone()
+        return row is not None
+    except Exception:  # noqa: BLE001 - a banner must never break startup
+        return False
 
 
 def open_browser(url: str) -> None:
@@ -562,7 +667,7 @@ def serve_dev_frontend(dev: bool) -> Optional[subprocess.Popen]:
         return None
     npm = shutil.which("npm")
     if not npm:
-        print(f"  {warn('npm not found — --dev needs Node 20+; serving the API only')}")
+        print(f"  {warn('npm not found — --dev needs Node 22.19+; serving the API only')}")
         return None
     print(f"  {dim('starting the Vite dev server (http://localhost:5173)')}")
     try:
@@ -601,7 +706,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        type=int,
+        type=_port_number,
         default=int(os.environ.get("PORT", DEFAULT_PORT) or DEFAULT_PORT),
         help=f"port (default {DEFAULT_PORT}; the next free port is used if taken)",
     )
@@ -683,7 +788,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print()
             return 0
 
-        print_banner(url, data_dir, provider_hint=not _providers_configured())
+        print_banner(
+            url,
+            data_dir,
+            provider_hint=not _providers_configured(data_dir=data_dir),
+        )
 
         dev_frontend = serve_dev_frontend(args.dev)
         if args.dev and dev_frontend is not None:

@@ -5,7 +5,13 @@ import httpx
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
 from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
-from app.providers.outcomes import error_for_exception, error_for_status
+from app.providers.outcomes import (
+    error_for_bad_response,
+    error_for_exception,
+    error_for_status,
+    key_problem_response,
+    shape_detail,
+)
 
 SPEC = PROVIDER_SPECS["deepseek"]
 
@@ -79,8 +85,23 @@ class DeepSeekProvider(ModelProvider):
             "Content-Type": "application/json",
         }
 
-        url = SPEC.chat_url(model)
+        url = spec_for(self.provider_name).chat_url(model)
         start = time.perf_counter()
+        # REQUEST-TIME SAFETY: a key stored before the save-time check existed
+        # (or written straight into the DB) must never crash the request. No
+        # socket is opened for a value that cannot be sent, and the failure is
+        # reported as a key problem rather than as a network problem.
+        # One shared rule for all three adapters: no key and an unsendable
+        # key are different, truthful errors, and neither opens a socket.
+        unusable = key_problem_response(
+            provider=self.provider_name,
+            model=model,
+            api_key=api_key,
+            latency_ms=elapsed_ms(start),
+        )
+        if unusable is not None:
+            return unusable
+
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 response = await client.post(url, json=payload, headers=headers)
@@ -95,8 +116,24 @@ class DeepSeekProvider(ModelProvider):
                     latency_ms=latency_ms,
                 )
 
-            data = response.json()
-            text = data["choices"][0]["message"]["content"]
+            data = None
+            try:
+                data = response.json()
+                text = data["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                return error_for_bad_response(
+                    provider=self.provider_name,
+                    model=model,
+                    detail=shape_detail(exc, data),
+                    latency_ms=latency_ms,
+                )
+            if text is None:
+                return error_for_bad_response(
+                    provider=self.provider_name,
+                    model=model,
+                    detail="the message content was null",
+                    latency_ms=latency_ms,
+                )
             usage = data.get("usage") or {}
             return make_success(
                 self.provider_name, model, text, usage.get("total_tokens", 0), latency_ms

@@ -30,6 +30,10 @@ from app import __version__ as APP_VERSION
 from app.api.dependencies import require_api_key
 from app.core import model_discovery as md
 from app.core.provider_key_crypto import ProviderKeyEncryptionError
+from app.core.provider_key_format import (
+    ProviderKeyFormatError,
+    normalize as normalize_provider_key,
+)
 from app.core.provider_key_manager import (
     SUPPORTED_PROVIDERS,
     delete_provider_key,
@@ -85,11 +89,37 @@ def _require_supported(provider_name: str) -> None:
         raise HTTPException(status_code=404, detail="Unknown provider")
 
 
+def _stored_key_is_usable(record: ProviderKeyDB) -> bool:
+    """True when the saved ciphertext decrypts to a sendable key.
+
+    A row is not a key. A truncated token, a row written under a different
+    ``encryption.key``, or a ciphertext that decrypts to an empty string all
+    decrypt to nothing usable - and reporting those as "configured" is what
+    makes a green badge sit next to every request failing (OBSERVED). Cheap
+    enough to check per row: at most three providers, one Fernet open each.
+    """
+    from app.core.provider_key_crypto import ProviderKeyEncryptionError, decrypt_provider_key
+    from app.core.provider_key_format import describe_unusable
+
+    try:
+        raw = decrypt_provider_key(record.encrypted_key)
+    except (ProviderKeyEncryptionError, ValueError, TypeError, AttributeError):
+        return False
+    return describe_unusable(raw) is None
+
+
 def _status(
     provider_name: str, record: Optional[ProviderKeyDB]
 ) -> ProviderKeyStatusResponse:
     if record is None:
         return ProviderKeyStatusResponse(provider_name=provider_name, configured=False)
+    if not _stored_key_is_usable(record):
+        # Deliberately reported as NOT configured, and without the old hint: a
+        # hint invites the user to trust a key that cannot be used, and the
+        # only fix is to re-save it.
+        return ProviderKeyStatusResponse(
+            provider_name=provider_name, configured=False
+        )
     return ProviderKeyStatusResponse(
         provider_name=provider_name,
         configured=True,
@@ -119,7 +149,23 @@ async def set_provider_key(
 ) -> ProviderKeyStatusResponse:
     """Encrypt and store a provider key for the calling Routtener key."""
     _require_supported(provider_name)
-    cleaned = body.api_key.strip()
+    # Strip the edges (a copy from a provider dashboard often catches a
+    # trailing space) and REFUSE what cannot be sent in a header. Before this
+    # check an embedded newline was stored happily and then made every chat
+    # call fail locally as "network_error" - pointing the owner at their
+    # internet connection instead of the key they just pasted. The message
+    # names the character class and position, never the key.
+    try:
+        cleaned = normalize_provider_key(body.api_key)
+    except ProviderKeyFormatError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"That provider key {exc.reason}. Re-copy it from the provider "
+                "dashboard - the value should be a single line of printable "
+                "characters with no spaces inside."
+            ),
+        ) from exc
     if len(cleaned) < 8 or len(cleaned) > 512:
         raise HTTPException(
             status_code=422,

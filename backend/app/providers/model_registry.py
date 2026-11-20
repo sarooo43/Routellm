@@ -793,6 +793,22 @@ class ModelCatalog:
         }
 
     async def _fetch(self, spec: ProviderSpec, api_key: Optional[str]) -> tuple[list[str], dict[str, dict]]:
+        # An empty/blank key is NOT a request to make. Before this, discovery
+        # sent a credential-less GET (``_auth_headers`` omits the header for a
+        # falsy key) which the provider answered 401 - while the chat call for
+        # the same key failed locally. That split made one bug look like two,
+        # and the 401 sent the owner to replace a key that was simply absent.
+        # Refusing here means both paths report the same "no key" condition.
+        from app.core.provider_key_format import describe_unusable
+
+        if describe_unusable(api_key) is not None and not (api_key or "").strip():
+            logger.info(
+                "model_discovery_skipped_no_key",
+                provider=spec.name,
+                host=spec.host,
+            )
+            return [], {}
+
         url = spec.models_url()
         headers = self._auth_headers(spec, api_key)
 

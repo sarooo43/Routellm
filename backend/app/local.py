@@ -181,6 +181,29 @@ def resolve_database_url(configured: Optional[str]) -> str:
     return default_database_url()
 
 
+def _encrypted_rows_exist() -> bool:
+    """True when the local SQLite database already holds provider keys.
+
+    Read-only and best-effort: this only decides whether a warning is
+    warranted, so any failure (no database, Postgres configured, unreadable
+    file) means "say nothing".
+    """
+    import sqlite3
+
+    try:
+        db_path = data_dir(create=False) / SQLITE_FILENAME
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        try:
+            row = conn.execute("SELECT 1 FROM provider_keys LIMIT 1").fetchone()
+        finally:
+            conn.close()
+        return row is not None
+    except Exception:  # noqa: BLE001 - advisory only
+        return False
+
+
 def encryption_key_path() -> Path:
     """Where the generated Fernet key lives (inside the data directory)."""
     return data_dir(create=True) / ENCRYPTION_KEY_FILENAME
@@ -224,6 +247,23 @@ def load_or_create_encryption_key(configured: Optional[str] = None) -> Optional[
     except Exception as exc:  # pragma: no cover - cryptography is a hard dep
         logger.warning("encryption_key_generation_failed", error=str(exc)[:200])
         return None
+
+    if _encrypted_rows_exist():
+        # The file is gone but the database still holds ciphertext. A new key
+        # cannot read any of it, so every saved provider key has just become
+        # unusable. That must be LOUD: silently regenerating turns "my keys
+        # stopped working" into a mystery (OBSERVED: after deleting
+        # encryption.key the app carried on, generated a fresh key, and every
+        # saved key silently became unreadable).
+        logger.warning(
+            "encryption_key_missing_but_ciphertext_exists",
+            path=str(path),
+            hint=(
+                "stored provider keys cannot be decrypted with a new key; "
+                "restore the old encryption.key from a backup, or re-save the "
+                "provider keys"
+            ),
+        )
 
     try:
         # Create with 0o600 from the start where the OS honours it, so the key

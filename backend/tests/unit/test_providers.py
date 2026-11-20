@@ -10,6 +10,13 @@ from app.providers.gemini_provider import GeminiProvider
 from app.providers.groq_provider import GroqProvider
 from app.providers.registry import PROVIDER_REGISTRY, routable_providers
 
+#: Supplied explicitly to every call below. Before this, each test relied on
+#: whatever ``settings.*_API_KEY`` the ambient environment happened to have -
+#: with none set they silently stopped exercising the adapter at all
+#: (``route.called`` was False, not an error). A test that needs a credential
+#: must say so.
+FAKE_KEY = "gsk_UNITTEST000000000000000000"
+
 GROQ_URL = GroqProvider.API_URL
 DEEPSEEK_URL = DeepSeekProvider.API_URL
 GEMINI_HOST = "generativelanguage.googleapis.com"
@@ -38,7 +45,7 @@ async def test_groq_success():
     route = respx.post(GROQ_URL).mock(
         return_value=httpx.Response(200, json=openai_body())
     )
-    resp = await GroqProvider().generate("Say hi")
+    resp = await GroqProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert route.called
     assert resp.success is True
     assert resp.text == "Hello from the mock!"
@@ -54,7 +61,7 @@ async def test_groq_rate_limit():
     respx.post(GROQ_URL).mock(
         return_value=httpx.Response(429, json={"error": "rate limit"})
     )
-    resp = await GroqProvider().generate("Say hi")
+    resp = await GroqProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "rate_limit_exceeded"
     assert resp.error.startswith("rate_limit_exceeded:")
@@ -66,7 +73,7 @@ async def test_groq_timeout():
     respx.post(GROQ_URL).mock(
         side_effect=httpx.TimeoutException("simulated timeout")
     )
-    resp = await GroqProvider().generate("Say hi")
+    resp = await GroqProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "timeout"
     assert resp.error.startswith("network_error:")
@@ -78,7 +85,7 @@ async def test_groq_empty_response():
     respx.post(GROQ_URL).mock(
         return_value=httpx.Response(200, json=openai_body(text="   ", total_tokens=5))
     )
-    resp = await GroqProvider().generate("Say hi")
+    resp = await GroqProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.error == "empty_response"
     assert resp.text == ""
@@ -89,7 +96,7 @@ async def test_groq_server_error():
     respx.post(GROQ_URL).mock(
         return_value=httpx.Response(500, text="internal error")
     )
-    resp = await GroqProvider().generate("Say hi")
+    resp = await GroqProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "provider_server_error"
     assert resp.error.startswith("provider_server_error:")
@@ -103,7 +110,7 @@ async def test_gemini_success():
     route = respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         return_value=httpx.Response(200, json=gemini_body())
     )
-    resp = await GeminiProvider().generate("Say hi")
+    resp = await GeminiProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert route.called
     assert resp.success is True
     assert resp.text == "Hello from the mock!"
@@ -119,7 +126,7 @@ async def test_gemini_rate_limit():
     respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         return_value=httpx.Response(429, json={"error": "rate limit"})
     )
-    resp = await GeminiProvider().generate("Say hi")
+    resp = await GeminiProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "rate_limit_exceeded"
     assert resp.error.startswith("rate_limit_exceeded:")
@@ -130,7 +137,7 @@ async def test_gemini_timeout():
     respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         side_effect=httpx.TimeoutException("simulated timeout")
     )
-    resp = await GeminiProvider().generate("Say hi")
+    resp = await GeminiProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "timeout"
     assert resp.error.startswith("network_error:")
@@ -141,7 +148,7 @@ async def test_gemini_empty_response():
     respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         return_value=httpx.Response(200, json=gemini_body(text=""))
     )
-    resp = await GeminiProvider().generate("Say hi")
+    resp = await GeminiProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.error == "empty_response"
     assert resp.text == ""
@@ -152,7 +159,7 @@ async def test_gemini_server_error():
     respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         return_value=httpx.Response(500, text="internal error")
     )
-    resp = await GeminiProvider().generate("Say hi")
+    resp = await GeminiProvider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "provider_server_error"
     assert resp.error.startswith("provider_server_error:")
@@ -170,7 +177,7 @@ async def test_deepseek_success():
     route = respx.post(DEEPSEEK_URL).mock(
         return_value=httpx.Response(200, json=openai_body())
     )
-    resp = await _deepseek().generate("Say hi")
+    resp = await _deepseek().generate("Say hi", provider_api_key=FAKE_KEY)
     assert route.called
     assert resp.success is True
     assert resp.text == "Hello from the mock!"
@@ -186,7 +193,7 @@ async def test_deepseek_rate_limit():
     respx.post(DEEPSEEK_URL).mock(
         return_value=httpx.Response(429, json={"error": "rate limit"})
     )
-    resp = await _deepseek().generate("Say hi")
+    resp = await _deepseek().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "rate_limit_exceeded"
     assert resp.error.startswith("rate_limit_exceeded:")
@@ -197,7 +204,7 @@ async def test_deepseek_timeout():
     respx.post(DEEPSEEK_URL).mock(
         side_effect=httpx.TimeoutException("simulated timeout")
     )
-    resp = await _deepseek().generate("Say hi")
+    resp = await _deepseek().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "timeout"
     assert resp.error.startswith("network_error:")
@@ -210,7 +217,7 @@ async def test_deepseek_empty_response():
             200, json=openai_body(text="", total_tokens=3)
         )
     )
-    resp = await _deepseek().generate("Say hi")
+    resp = await _deepseek().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.error == "empty_response"
     assert resp.text == ""
@@ -221,7 +228,7 @@ async def test_deepseek_server_error():
     respx.post(DEEPSEEK_URL).mock(
         return_value=httpx.Response(503, text="service unavailable")
     )
-    resp = await _deepseek().generate("Say hi")
+    resp = await _deepseek().generate("Say hi", provider_api_key=FAKE_KEY)
     assert resp.success is False
     assert resp.outcome == "provider_server_error"
     assert resp.error.startswith("provider_server_error:")
@@ -235,7 +242,7 @@ async def test_deepseek_model_variant_kwarg():
     route = respx.post(DEEPSEEK_URL).mock(
         return_value=httpx.Response(200, json=openai_body())
     )
-    resp = await _deepseek().generate("write code", model_variant="deepseek-coder")
+    resp = await _deepseek().generate("write code", model_variant="deepseek-coder", provider_api_key=FAKE_KEY)
     assert resp.success is True
     assert resp.model_name == "deepseek-coder"
     sent_payload = json.loads(route.calls.last.request.content)
@@ -258,7 +265,7 @@ async def test_registry_contains_expected_providers():
 @respx.mock
 async def test_openai_generation_options_reach_upstream_payload(provider, url):
     route = respx.post(url).mock(return_value=httpx.Response(200, json=openai_body()))
-    response = await provider().generate("Say hi", temperature=0.2, max_tokens=64)
+    response = await provider().generate("Say hi", temperature=0.2, max_tokens=64, provider_api_key=FAKE_KEY)
     assert response.success is True
     payload = json.loads(route.calls.last.request.content)
     assert payload["temperature"] == 0.2
@@ -270,7 +277,7 @@ async def test_gemini_generation_options_use_native_field_names():
     route = respx.post(host=GEMINI_HOST, path=GEMINI_PATH).mock(
         return_value=httpx.Response(200, json=gemini_body())
     )
-    response = await GeminiProvider().generate("Say hi", temperature=0.2, max_tokens=64)
+    response = await GeminiProvider().generate("Say hi", temperature=0.2, max_tokens=64, provider_api_key=FAKE_KEY)
     assert response.success is True
     payload = json.loads(route.calls.last.request.content)
     assert payload["generationConfig"] == {"temperature": 0.2, "maxOutputTokens": 64}
@@ -287,7 +294,7 @@ async def test_gemini_generation_options_use_native_field_names():
 @respx.mock
 async def test_legacy_provider_defaults_do_not_gain_generation_limits(provider, url, body):
     route = respx.post(url).mock(return_value=httpx.Response(200, json=body))
-    response = await provider().generate("Say hi")
+    response = await provider().generate("Say hi", provider_api_key=FAKE_KEY)
     assert response.success is True
     payload = json.loads(route.calls.last.request.content)
     assert "max_tokens" not in payload
@@ -349,6 +356,7 @@ async def test_legacy_provider_uses_operator_bearer_token_when_no_byok(
     from app.config import settings
 
     monkeypatch.setattr(settings, settings_key, "operator-secret")
+    # NO provider_api_key argument: that absence is the behaviour under test.
     route = respx.post(url).mock(return_value=httpx.Response(200, json=openai_body()))
     response = await provider().generate("Say hi")
     assert response.success is True

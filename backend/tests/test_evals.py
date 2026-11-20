@@ -548,9 +548,10 @@ def test_preflight_reuses_an_env_key_instead_of_minting_one(
     resilience_eval, monkeypatch, capsys
 ):
     """Every live run used to mint a fresh key, so the key table grew one eval
-    key per run, forever. A supplied ROUTELLM_EVAL_API_KEY is used as-is and
+    key per run, forever. A supplied ROUTTENER_EVAL_API_KEY is used as-is and
     never revoked (it is not ours)."""
-    monkeypatch.setenv("ROUTELLM_EVAL_API_KEY", "reused-key-from-env")
+    monkeypatch.delenv("ROUTELLM_EVAL_API_KEY", raising=False)
+    monkeypatch.setenv("ROUTTENER_EVAL_API_KEY", "reused-key-from-env")
     client = _FakeClient(
         _preflight_routes(configured=["groq", "deepseek"], chaos_status=200)
     )
@@ -560,7 +561,7 @@ def test_preflight_reuses_an_env_key_instead_of_minting_one(
     assert minted is False
     assert ("POST", "/api/v1/keys/generate") not in client.calls
     out = capsys.readouterr().out
-    assert "reused from $ROUTELLM_EVAL_API_KEY" in out
+    assert "reused from $ROUTTENER_EVAL_API_KEY" in out
     assert "reused-key-from-env" not in out  # never echo the value
 
 

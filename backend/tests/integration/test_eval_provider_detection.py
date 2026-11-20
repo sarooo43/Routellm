@@ -299,13 +299,49 @@ def test_docs_spell_the_credential_variable_exactly_as_the_code_does():
     root = Path(__file__).resolve().parents[3]
     module = _load_eval()
     name = module.EVAL_KEY_ENV_VAR
-    assert name == "ROUTELLM_EVAL_API_KEY"
+    legacy = module.LEGACY_EVAL_KEY_ENV_VAR
+    # C3: the product is Routtener, so ROUTTENER_ is the documented name and
+    # ROUTELLM_ is only a compatibility fallback.
+    assert name == "ROUTTENER_EVAL_API_KEY"
+    assert legacy == "ROUTELLM_EVAL_API_KEY"
 
     for rel in ("README.md", "docs/testing.md"):
         path = root / rel
         if not path.exists():
             continue
         text = path.read_text()
-        # Any near-miss spelling of the variable fails loudly.
-        for wrong in set(re.findall(r"ROUTTE?L+M_EVAL_API_KEY", text)) - {name}:
-            raise AssertionError(f"{rel} misspells {name} as {wrong}")
+        # Any near-miss spelling of either variable fails loudly.
+        for wrong in set(re.findall(r"ROUTTE?L+M_EVAL_API_KEY", text)) - {name, legacy}:
+            raise AssertionError(f"{rel} misspells the variable as {wrong}")
+
+
+def test_rename_prefers_the_new_name_and_falls_back_to_the_old(tmp_path):
+    """C3: ROUTTENER_ wins; ROUTELLM_ still works; neither leaks a value."""
+    module = _load_eval()
+
+    import os
+
+    saved = {k: os.environ.get(k) for k in
+             (module.EVAL_KEY_ENV_VAR, module.LEGACY_EVAL_KEY_ENV_VAR)}
+    try:
+        for name in (module.EVAL_KEY_ENV_VAR, module.LEGACY_EVAL_KEY_ENV_VAR):
+            os.environ.pop(name, None)
+        assert module.eval_key_from_env() == ""
+
+        os.environ[module.LEGACY_EVAL_KEY_ENV_VAR] = "old-name-key"
+        assert module.eval_key_from_env() == "old-name-key"
+
+        os.environ[module.EVAL_KEY_ENV_VAR] = "new-name-key"
+        # Both set: the current name must win.
+        assert module.eval_key_from_env() == "new-name-key"
+
+        os.environ.pop(module.EVAL_KEY_ENV_VAR, None)
+        # Whitespace-only values are not keys.
+        os.environ[module.LEGACY_EVAL_KEY_ENV_VAR] = "   "
+        assert module.eval_key_from_env() == ""
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value

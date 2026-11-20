@@ -65,6 +65,26 @@ CONSOLE_URLS = {
 }
 
 
+#: Error strings that already read as a complete, user-facing diagnosis:
+#: "<code>: <what happened, and what to do>". See app/providers/outcomes.py.
+_SELF_DESCRIBING_CODES = (
+    "model_not_found",
+    "endpoint_not_found",
+    "bad_request",
+    "auth_failed",
+    "invalid_key_format",
+    "missing_provider_key",
+    "rate_limit_exceeded",
+    "rate_limited",
+    "provider_server_error",
+    "network_error",
+    "network_unreachable",
+    "timeout",
+    "bad_provider_response",
+    "chaos_injected",
+)
+
+
 def _classify(code: str) -> str:
     """Bucket a provider error code into one of our four families."""
     lowered = code.strip().lower()
@@ -97,6 +117,23 @@ def _classify(code: str) -> str:
         return "bad_request"
     if lowered.startswith("chaos_injected"):
         return "chaos"
+    # Codes emitted by app/providers/outcomes.py. Without these, a precise
+    # message such as "auth_failed: <provider> rejected the credential (HTTP
+    # 401)" was classified "unknown" and then re-wrapped as
+    # "provider_error: ... failed with an unexpected error (...)", which blames
+    # the gateway for a key problem. This was the text in the owner's log.
+    if lowered.startswith(("invalid_key_format", "invalid_key")):
+        return "invalid_key"
+    if lowered.startswith(("auth_failed", "key_rejected")):
+        return "auth"
+    if lowered.startswith("rate_limit_exceeded"):
+        return "rate_limited"
+    if lowered.startswith(("provider_server_error", "provider_down")):
+        return "provider_down"
+    if lowered.startswith("network_error"):
+        return "unreachable"
+    if lowered.startswith("bad_provider_response"):
+        return "bad_response"
     return "unknown"
 
 
@@ -131,6 +168,27 @@ def explain(error: Optional[str], provider: Optional[str] = None) -> Optional[st
     name = provider or "the provider"
     console = CONSOLE_URLS.get((provider or "").lower())
 
+    # Messages produced by app/providers/outcomes.py are already precise,
+    # already carry their own "code: sentence" prefix and are already
+    # redacted. Re-wrapping one in "failed with an unexpected error" both
+    # hides the real cause and labels a KNOWN condition as a surprise. The
+    # test is narrow on purpose: the prefix must be a known code followed by
+    # a colon, so ordinary provider prose is still explained normally.
+    for code in _SELF_DESCRIBING_CODES:
+        if raw.lower().startswith(f"{code}:"):
+            # One exception: "network_error: ... (LocalProtocolError)" is not
+            # a network failure - h11 refused to serialise OUR request, which
+            # means a value we produced is unsendable (usually the key). Saying
+            # "check your internet" there is the wrong diagnosis.
+            if code == "network_error" and "LocalProtocolError" in raw:
+                return (
+                    f"invalid_key_format: the request to {name} could not be "
+                    "built because one of its values contains characters that "
+                    "cannot be sent in an HTTP header, so nothing was sent. "
+                    "Re-save the provider key on the Providers page."
+                )
+            return raw
+
     if family == "unreachable":
         return (
             f"network_unreachable: this machine could not open a connection to "
@@ -139,20 +197,21 @@ def explain(error: Optional[str], provider: Optional[str] = None) -> Optional[st
             f"VPN, or a firewall rule, then retry."
         )
 
-    # Messages produced by app/providers/outcomes.py are already precise and
-    # already redacted: pass them through untouched rather than re-wrapping
-    # them in generic prose.
-    if family in {"model_not_found", "bad_request"} and raw.lower().startswith(
-        ("model_not_found", "endpoint_not_found", "bad_request")
-    ):
-        return raw
-
     if family == "missing_key":
         where = f" at {console}" if console else ""
         return (
             f"missing_provider_key: no API key is configured for {name}, so the "
             f"request was never sent. Get a free key{where} and paste it on the "
             f"Providers page."
+        )
+
+    if family == "invalid_key":
+        if raw.lower().startswith("invalid_key_format:"):
+            return raw
+        return (
+            f"invalid_key_format: the saved {name} key cannot be sent in a "
+            "request header, so nothing was sent. Re-save it on the Providers "
+            "page."
         )
 
     if family == "auth":

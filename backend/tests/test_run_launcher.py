@@ -129,6 +129,34 @@ def test_arguments_parse(launcher, argv, attr, expected):
 # --------------------------------------------------------------------------
 
 
+def test_an_impossible_port_is_rejected_with_one_clean_line(launcher, capsys):
+    """OBSERVED: `--port 99999` escaped as a raw OverflowError traceback.
+
+    Port 65536 is out of range, so socket.bind raises OverflowError, which is
+    NOT an OSError and sailed past port_is_free()'s except clause. The user saw
+    a stack trace instead of a sentence.
+    """
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.main(["--check", "--port", "99999"])
+    assert excinfo.value.code == 2  # argparse usage error, not a crash
+    stderr = capsys.readouterr().err
+    assert "port must be between 0 and 65535" in stderr
+    assert "Traceback" not in stderr
+    assert "OverflowError" not in stderr
+
+
+def test_a_negative_port_is_rejected_with_one_clean_line(launcher, capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.main(["--check", "--port", "-5"])
+    assert excinfo.value.code == 2
+    assert "port must be between 0 and 65535" in capsys.readouterr().err
+
+
+def test_the_port_parser_still_accepts_real_values(launcher):
+    assert launcher._port_number("8000") == 8000
+    assert launcher._port_number("0") == 0
+
+
 def test_a_free_port_is_used_as_requested(launcher):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
@@ -202,6 +230,123 @@ def test_provider_detection_reads_env_and_environment(launcher, tmp_path, monkey
 
     monkeypatch.setenv("GROQ_API_KEY", "gsk_value")
     assert launcher._providers_configured(tmp_path / "missing.env") is True
+
+
+def test_provider_detection_counts_keys_saved_by_the_dashboard(
+    launcher, tmp_path, monkeypatch
+):
+    """C4(c): the banner said "No provider key configured yet" while three
+    keys were saved in the database.
+
+    A key can live in the environment, in .env, or in the SQLite database the
+    dashboard writes. Anything else makes the banner lie to the user.
+    """
+    import sqlite3
+
+    for name in ("GROQ_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("# nothing set\n", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    # No database at all -> not configured.
+    assert launcher._providers_configured(env_file, data_dir) is False
+
+    db_path = data_dir / "routellm.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE provider_keys ("
+            " id INTEGER PRIMARY KEY, api_key_id INTEGER, provider_name TEXT,"
+            " encrypted_key TEXT NOT NULL)"
+        )
+        conn.commit()
+
+    # Table exists but empty -> still not configured.
+    assert launcher._providers_configured(env_file, data_dir) is False
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO provider_keys (api_key_id, provider_name, encrypted_key)"
+            " VALUES (1, 'gemini', 'gAAAAA-fake-ciphertext')"
+        )
+        conn.commit()
+
+    # A dashboard-saved key counts, with no env var and nothing in .env.
+    assert launcher._providers_configured(env_file, data_dir) is True
+
+
+def test_provider_detection_never_breaks_startup_on_a_bad_database(
+    launcher, tmp_path, monkeypatch
+):
+    """A corrupt/unreadable DB must not crash the banner - worst case it says
+    "not configured", never raises."""
+    for name in ("GROQ_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "routellm.db").write_bytes(b"this is not a sqlite database")
+    assert launcher._providers_configured(tmp_path / "none.env", data_dir) is False
+
+
+@pytest.mark.parametrize(
+    "version,too_old",
+    [
+        (None, False),      # no Node at all: a different message, not "too old"
+        ((20, 18), True),
+        ((22, 17), True),
+        ((22, 18), True),   # undici 8 needs >=22.19.0, exactly
+        ((22, 19), False),
+        ((24, 0), False),
+    ],
+)
+def test_node_too_old_matches_the_build_toolchain(launcher, version, too_old):
+    """README used to promise Node 20+, which vite 8 / vitest 5 / jsdom 30 refuse."""
+    assert launcher.node_too_old(version) is too_old
+
+
+def test_package_json_declares_the_engine_the_ci_comment_points_at(launcher):
+    """CI says "see frontend/package.json engines" - so it must exist."""
+    import json
+    from pathlib import Path
+
+    root = Path(launcher.__file__).resolve().parent
+    data = json.loads((root / "frontend" / "package.json").read_text())
+    assert data["engines"]["node"] == ">=22.19.0"
+
+
+# --------------------------------------------------------------------------
+# C4(a): the Codespaces hint must print a URL that can actually be opened
+# --------------------------------------------------------------------------
+
+
+def test_codespace_hint_includes_the_port(launcher, monkeypatch, capsys, tmp_path):
+    """OBSERVED before the fix: "https://myspace-.app.github.dev" - no port.
+
+    GitHub forwards as <codespace>-<port>.<domain>; a URL without the port is
+    unopenable and looks like the codespace is broken.
+    """
+    monkeypatch.setenv("CODESPACE_NAME", "myspace")
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+
+    launcher.print_banner("http://127.0.0.1:8123/", tmp_path, provider_hint=False)
+    out = capsys.readouterr().out
+
+    assert "https://myspace-8123.app.github.dev" in out
+    assert "myspace-.app.github.dev" not in out
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("http://127.0.0.1:8123/", 8123),
+        ("http://127.0.0.1:8000", 8000),
+        ("https://example.test/", 443),
+        ("http://localhost/", 8000),
+    ],
+)
+def test_port_of(launcher, url, expected):
+    assert launcher.port_of(url) == expected
 
 
 def test_requirements_stamp_tracks_the_pinned_file(launcher):
@@ -324,7 +469,8 @@ def test_ensure_frontend_rebuilds_when_stale(launcher, tmp_path, monkeypatch, ca
     os.utime(source, (future, future))
 
     monkeypatch.setattr(launcher, "dist_is_usable", lambda: True)
-    monkeypatch.setattr(launcher, "node_version", lambda: (22, 0, 0))
+    # 22.19+, not 22.0: vite 8 refuses anything below and the check must agree.
+    monkeypatch.setattr(launcher, "node_version", lambda: (22, 19, 0))
     monkeypatch.setattr(launcher.shutil, "which", lambda name: "npm")
     calls = []
     monkeypatch.setattr(

@@ -55,6 +55,7 @@ OUTCOMES = frozenset(
         "network_error",
         "timeout",
         "unexpected_status",
+        "invalid_key_format",
     }
 )
 
@@ -321,6 +322,38 @@ def _body_says_model_missing(response) -> bool:
     return bool(_MODEL_MISSING_RE.search(" ".join(raw.split())[:400]))
 
 
+def error_for_invalid_key(
+    *, provider: str, model: str, reason: str, latency_ms: float = 0.0
+):
+    """The SAVED key cannot be put in an HTTP header; no request was sent.
+
+    Deliberately NOT ``network_error``: nothing was sent and nothing was
+    received, so blaming the network sends the owner to check their internet
+    connection while the problem is the pasted key. ``reason`` comes from
+    provider_key_format and never contains the key.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"invalid_key_format: the saved {provider} key {reason}, so no "
+            "request could be sent. Re-save the key in the dashboard."
+        ),
+        latency_ms,
+        outcome="invalid_key_format",
+    )
+
+
+def _is_local_protocol_error(exc: Exception) -> bool:
+    """True for h11/httpx refusing to serialise OUR request (nothing sent).
+
+    Checked by name so this module keeps working without importing h11.
+    ``UnicodeEncodeError`` is included: httpx encodes header values as ASCII,
+    so a non-ASCII key raises before a socket is touched.
+    """
+    return type(exc).__name__ in {"LocalProtocolError", "UnicodeEncodeError"}
+
+
 def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, latency_ms: float):
     """Network-shaped failures: timeouts, DNS, TLS, connection resets."""
     import httpx
@@ -331,6 +364,16 @@ def error_for_exception(exc: Exception, *, provider: str, model: str, url: str, 
         message = (
             f"network_error: {host} did not answer within the client timeout. "
             f"Slow network, a blocking proxy, or an overloaded provider."
+        )
+    elif _is_local_protocol_error(exc):
+        # h11 refused to SERIALISE the request: a header value or the request
+        # line contained something illegal. Nothing was sent, so this is never
+        # a network failure - it is a value this app produced.
+        outcome = "invalid_key_format"
+        message = (
+            "invalid_key_format: the request could not be built because one of "
+            "its values contains characters that cannot be sent in an HTTP "
+            "header. Re-save the provider key in the dashboard."
         )
     elif isinstance(exc, httpx.ConnectError):
         outcome = "network_error"
@@ -354,3 +397,90 @@ def success_from(response, *, provider: str, model: str, text: str, tokens: int,
 
 def elapsed(start: float) -> float:
     return elapsed_ms(start)
+
+
+def error_for_missing_key(*, provider: str, model: str, latency_ms: float = 0.0):
+    """No usable credential: say so, and say the request was never sent.
+
+    Distinct from ``error_for_invalid_key`` (a key that exists but cannot be
+    serialised). Both mean "nothing left this process", so neither may be
+    reported as a network problem -- and neither may be retried as though the
+    provider had answered.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"missing_provider_key: no {provider} key is saved for this "
+            "Routtener key and no operator key is configured, so the request "
+            "was never sent. Save one on the Providers page."
+        ),
+        latency_ms,
+        outcome="missing_provider_key",
+    )
+
+
+def key_problem_response(*, provider: str, model: str, api_key, latency_ms: float = 0.0):
+    """``None`` when the key can be sent, else the error to return instead.
+
+    The one place the three adapters ask "is this credential usable?". Before
+    this, Groq and DeepSeek shared a hand-copied two-line check and Gemini had
+    none at all, so the same empty key produced three different behaviours.
+
+    Two outcomes, both truthful and both "nothing was sent":
+      * no key at all  -> ``missing_provider_key`` (a setup problem, not a bug);
+      * an unsendable key -> ``invalid_key_format`` (a stored value to re-save).
+    """
+    from app.core.provider_key_format import EMPTY_REASON, describe_unusable
+
+    reason = describe_unusable(api_key)
+    if reason is None or "whitespace at the start or end" in reason:
+        return None
+    if reason == EMPTY_REASON:
+        return error_for_missing_key(
+            provider=provider, model=model, latency_ms=latency_ms
+        )
+    return error_for_invalid_key(
+        provider=provider, model=model, reason=reason, latency_ms=latency_ms
+    )
+
+
+def error_for_bad_response(*, provider: str, model: str, detail: str, latency_ms: float = 0.0):
+    """HTTP 200 arrived, but the body was not a usable completion.
+
+    OBSERVED: garbage JSON, a truncated body, ``{"choices": []}`` and a
+    null message all reached ``error_for_exception`` and came out as
+    ``network_error: the request to <host> failed before a response`` - which
+    is doubly false (a response DID arrive, 200) and sends the owner to check
+    their internet connection. This is a malformed provider response: a
+    protocol problem, not a reachability one.
+    """
+    return make_error(
+        provider,
+        model,
+        (
+            f"bad_provider_response: {provider} answered HTTP 200 but the body "
+            f"was not a usable completion ({detail}). The request reached the "
+            "provider; this is not a network problem. Retry, and if it repeats "
+            "check the provider's status page."
+        ),
+        latency_ms,
+        outcome="bad_provider_response",
+    )
+
+
+def shape_detail(exc: Exception, data=None) -> str:
+    """A short, non-secret description of why a 200 body could not be used.
+
+    Never includes the body itself (it can contain provider prose that echoes
+    a credential); only the failure shape.
+    """
+    if isinstance(exc, ValueError):
+        return "the body was not valid JSON"
+    if isinstance(exc, KeyError):
+        return f"the body had no {str(exc)} field"
+    if isinstance(exc, IndexError):
+        return "the choices list was empty"
+    if isinstance(exc, TypeError):
+        return "a field had the wrong type"
+    return type(exc).__name__

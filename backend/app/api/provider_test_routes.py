@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.provider_key_crypto import ProviderKeyEncryptionError
 from app.api.dependencies import require_api_key
 from app.core.provider_key_manager import is_supported_provider
 from app.core.test_endpoint_guard import check_and_acquire, release
@@ -61,6 +62,9 @@ VERDICT_BY_OUTCOME = {
     "unexpected_status": "provider_error",
     "network_error": "network_error",
     "timeout": "network_error",
+    # The key cannot be sent in a header at all: nothing was tried, and the
+    # fix is to re-save the key - not to check the network.
+    "invalid_key_format": "invalid_key_format",
 }
 
 
@@ -225,5 +229,17 @@ async def test_provider(
     check_and_acquire(api_key_row.id)
     try:
         return await _probe(provider, "", db_session, api_key_row)
+    except ProviderKeyEncryptionError as exc:
+        # Encryption key missing or replaced (e.g. ./data was deleted): the
+        # stored ciphertext cannot be read. That is an operator problem with a
+        # documented 503, not a bare 500 traceback (OBSERVED before this fix).
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Provider key encryption is unavailable, so the saved key "
+                "cannot be read. The encryption key in the data directory is "
+                "missing or different; re-save the provider key."
+            ),
+        ) from exc
     finally:
         release(api_key_row.id)

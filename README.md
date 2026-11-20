@@ -8,7 +8,7 @@ showing you exactly what it decided and why.
 [![CI](https://github.com/sarooo43/Routtener/actions/workflows/ci.yml/badge.svg)](https://github.com/sarooo43/Routtener/actions/workflows/ci.yml)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
-[![Node 20+ (only to build the UI)](https://img.shields.io/badge/node-20%2B%20(optional)-339933.svg)](https://nodejs.org)
+[![Node 22.19+ (only to build the UI)](https://img.shields.io/badge/node-22.19%2B%20(optional)-339933.svg)](https://nodejs.org)
 
 > **Name:** this project is called **Routtener**. It was previously called
 > RouteLLM — a name it shared, entirely coincidentally, with **LMSYS RouteLLM**,
@@ -94,7 +94,7 @@ python run.py --check
 The dashboard needs a build. Without Node, the launcher runs the API only and
 `/` explains how to build the UI. Two ways to get the UI anyway:
 
-- install Node 20+ and rerun `python run.py`, or
+- install Node 22.19+ and rerun `python run.py`, or
 - download a release zip — it ships a prebuilt `frontend/dist`, so
   `python run.py` serves the full app with no Node at all.
 
@@ -333,13 +333,18 @@ with that key active, then hand the same key to the eval so it reuses it
 instead of minting its own:
 
 ```bash
-export ROUTELLM_EVAL_API_KEY=<your dashboard key>   # one L: ROUTELLM
+export ROUTTENER_EVAL_API_KEY=<your dashboard key>
 python evals/run_resilience_eval.py --live --dry-run --yes-spend-quota
 ```
 
 `--dry-run` runs every gate (providers, chaos, budget) and exits before the
 first `/api/v1/route` call, so it costs nothing. The key is never printed —
-only its prefix. Every success rate the suite prints carries a Wilson 95% interval,
+only its prefix.
+
+The pre-rename name `ROUTELLM_EVAL_API_KEY` still works as a fallback;
+`ROUTTENER_EVAL_API_KEY` wins when both are set.
+
+Every success rate the suite prints carries a Wilson 95% interval,
 and each report states what the numbers do not show. See
 [evals/REVIEW.md](evals/REVIEW.md) for how to review the label dataset.
 

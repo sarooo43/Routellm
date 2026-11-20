@@ -103,6 +103,17 @@ def _is_sqlite(url: str) -> bool:
     return url.lower().startswith("sqlite")
 
 
+#: How long a statement waits for SQLite's writer lock before erroring.
+SQLITE_BUSY_TIMEOUT_S = 30.0
+
+#: Concurrent routed requests a local install is expected to absorb. SQLite
+#: readers and one writer are cheap; the pool must be larger than the number of
+#: requests that can be in flight, or requests fail on a pool timeout rather
+#: than on any real database problem.
+SQLITE_POOL_SIZE = 20
+SQLITE_MAX_OVERFLOW = 20
+
+
 def sqlite_connect_args() -> dict[str, float]:
     """``connect_args`` for a file-backed SQLite database.
 
@@ -110,7 +121,34 @@ def sqlite_connect_args() -> dict[str, float]:
     raising ``database is locked`` immediately. The dashboard polling while a
     routing log commits is exactly that case.
     """
-    return {"timeout": 30.0}
+    return {"timeout": SQLITE_BUSY_TIMEOUT_S}
+
+
+async def _enable_sqlite_wal(engine) -> None:
+    """Put a file-backed SQLite database in WAL mode. Best-effort, once.
+
+    WHY (OBSERVED): in the default rollback-journal mode a write takes an
+    exclusive lock and every reader waits for it, so a handful of concurrent
+    requests that each write a log row serialise into a queue. Measured on a
+    real uvicorn server, 30 concurrent requests against a provider answering
+    404: 62 s wall, half answered ``503 Database temporarily unavailable``.
+    WAL lets readers proceed while one writer commits, which is what this
+    app's workload actually looks like (one insert per routed request, plus
+    dashboard polls).
+
+    ``:memory:`` and other non-file databases are left alone: WAL is a
+    property of a file, and changing journal mode on a shared-memory database
+    is not meaningful.
+    """
+    from sqlalchemy import text
+
+    try:
+        async with engine.connect() as conn:
+            mode = await conn.execute(text("PRAGMA journal_mode=WAL"))
+            result = mode.scalar()
+        logger.info("sqlite_journal_mode", mode=str(result))
+    except Exception as exc:  # noqa: BLE001 - never block startup on a pragma
+        logger.warning("sqlite_journal_mode_failed", error=type(exc).__name__)
 
 
 def get_engine() -> AsyncEngine:
@@ -127,11 +165,18 @@ def get_engine() -> AsyncEngine:
         url = database_url_normalized()
         try:
             if _is_sqlite(url):
-                # SQLite has no server: pre-ping/pool-recycle are meaningless,
-                # and a file-backed DB keeps a single writer. Pooling settings
-                # are left at SQLAlchemy's async defaults for aiosqlite.
+                # SQLite has no server, so pre-ping/pool-recycle are
+                # meaningless - but the pool still caps concurrency, and the
+                # default (5 + 10 overflow) is smaller than a burst of routed
+                # requests. OBSERVED: 30 concurrent requests, half of them
+                # 503 "Database temporarily unavailable" purely from pool
+                # exhaustion. Size it for a local burst instead.
                 _engine = create_async_engine(
-                    url, echo=False, connect_args=sqlite_connect_args()
+                    url,
+                    echo=False,
+                    connect_args=sqlite_connect_args(),
+                    pool_size=SQLITE_POOL_SIZE,
+                    max_overflow=SQLITE_MAX_OVERFLOW,
                 )
             else:
                 _engine = create_async_engine(
@@ -191,6 +236,10 @@ async def ensure_schema() -> bool:
             return True
         try:
             engine = get_engine()
+            if _is_sqlite(database_url_normalized()):
+                # Before the first write, so no reader ever sees the
+                # rollback-journal behaviour this app was measured failing on.
+                await _enable_sqlite_wal(engine)
             async with engine.begin() as conn:
                 await conn.run_sync(SQLModel.metadata.create_all)
                 for statement in _POST_V1_COLUMNS:

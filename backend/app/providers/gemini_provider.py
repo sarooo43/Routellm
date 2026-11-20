@@ -5,7 +5,13 @@ import httpx
 from app.config import settings
 from app.providers.base import ModelProvider, ProviderResponse, elapsed_ms, make_success
 from app.providers.model_registry import PROVIDER_SPECS, resolve_model, spec_for
-from app.providers.outcomes import error_for_exception, error_for_status
+from app.providers.outcomes import (
+    error_for_bad_response,
+    error_for_exception,
+    error_for_status,
+    key_problem_response,
+    shape_detail,
+)
 
 SPEC = PROVIDER_SPECS["gemini"]
 
@@ -58,6 +64,17 @@ class GeminiProvider(ModelProvider):
 
         url = SPEC.chat_url(model)
         start = time.perf_counter()
+        # Gemini had NO request-time key guard: an empty stored key sent a
+        # request with no x-goog-api-key and the provider's 401 was then
+        # reported as a key problem. Same rule as the other two adapters.
+        unusable = key_problem_response(
+            provider=self.provider_name,
+            model=model,
+            api_key=api_key,
+            latency_ms=elapsed_ms(start),
+        )
+        if unusable is not None:
+            return unusable
         try:
             async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
                 response = await client.post(url, json=payload, headers=headers)
@@ -72,8 +89,19 @@ class GeminiProvider(ModelProvider):
                     latency_ms=latency_ms,
                 )
 
-            data = response.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            data = None
+            try:
+                data = response.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                # Gemini answers 200 with a promptFeedback block when it
+                # refuses content; that is a protocol answer, not a network one.
+                return error_for_bad_response(
+                    provider=self.provider_name,
+                    model=model,
+                    detail=shape_detail(exc, data),
+                    latency_ms=latency_ms,
+                )
             usage = data.get("usageMetadata") or {}
             return make_success(
                 self.provider_name,
