@@ -28,10 +28,12 @@ Use only provider credentials you are authorized to use.
 
 ## Check first, then run
 
-In a separate interactive terminal, from the repository root, run:
+In a separate interactive terminal, from the repository root, run the
+launcher-created virtual environment interpreter (on Windows PowerShell use
+`.venv\Scripts\python.exe` in place of `.venv/bin/python`):
 
 ```bash
-python evals/run_resilience_eval.py --live --dry-run --yes-spend-quota --api-key-prompt --base-url http://127.0.0.1:8000
+.venv/bin/python evals/run_resilience_eval.py --live --dry-run --yes-spend-quota --api-key-prompt --base-url http://127.0.0.1:8000
 ```
 
 Enter the same full Routtener key when prompted; terminal input is hidden.
@@ -41,7 +43,7 @@ Chaos check. A dry run sends no routing calls and writes no live results.
 After testing the providers and checking their quotas, run:
 
 ```bash
-python evals/run_resilience_eval.py --live --yes-spend-quota --api-key-prompt --base-url http://127.0.0.1:8000
+.venv/bin/python evals/run_resilience_eval.py --live --yes-spend-quota --api-key-prompt --base-url http://127.0.0.1:8000
 ```
 
 The script will ask for the key again. A completed live run writes
