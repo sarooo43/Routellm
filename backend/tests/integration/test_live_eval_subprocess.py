@@ -527,3 +527,17 @@ def test_invalid_base_url_fails_before_minting(backend, url, script):
     assert len(result.stderr.splitlines()) == 1
     assert "Traceback" not in result.stderr
     assert _active_key_count(backend["db_path"]) == before
+
+
+def test_legacy_key_fallback_and_new_name_precedence(backend):
+    owner = _mint_key(backend["base_url"])
+    _save_providers(backend["base_url"], owner, ["groq", "deepseek"])
+    legacy = _run_eval(backend, {"ROUTELLM_EVAL_API_KEY": owner})
+    assert legacy.returncode == 0
+    assert "API key: reused from $ROUTELLM_EVAL_API_KEY" in legacy.stdout
+    assert "Providers detected: groq, deepseek" in legacy.stdout
+    # A set-but-empty new name wins over the old name and announces minting.
+    new_empty = _run_eval(backend, {"ROUTELLM_EVAL_API_KEY": owner, "ROUTTENER_EVAL_API_KEY": ""})
+    assert new_empty.returncode != 0
+    assert "minting a throwaway key" in new_empty.stdout
+    assert "Providers detected: none" in new_empty.stdout

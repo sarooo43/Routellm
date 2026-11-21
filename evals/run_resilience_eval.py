@@ -478,14 +478,14 @@ async def collect_preflight(client, n: int, *, supplied_key: str | None = None) 
     return report
 
 
-def print_preflight(report: PreflightReport, base_url: str, *, prompted: bool = False) -> None:
+def print_preflight(report: PreflightReport, base_url: str, *, key_source: str | None = None) -> None:
     """Everything the owner needs to understand the run, pass or fail."""
     if report.minted:
         print_key_lines(report.api_key)
         print("API key: minted for this run, and revoked when the run ends")
         print(f"  hint: export {EVAL_KEY_ENV_VAR}=<key> to reuse a key instead")
     else:
-        source = "the prompt" if prompted else f"${EVAL_KEY_ENV_VAR}"
+        source = key_source or f"${EVAL_KEY_ENV_VAR}"
         print(f"API key: reused from {source} ({credential_label(report.api_key)})")
 
     print(
@@ -748,10 +748,13 @@ def main() -> None:
                 if not sys.stdin.isatty():
                     raise SystemExit("FATAL: --api-key-prompt requires an interactive terminal.")
                 supplied_key = getpass.getpass("Routtener API key: ")
+                key_source = "the prompt"
             elif EVAL_KEY_ENV_VAR in os.environ:
                 supplied_key = os.environ[EVAL_KEY_ENV_VAR]
+                key_source = f"${EVAL_KEY_ENV_VAR}"
             else:
                 supplied_key = os.environ.get(LEGACY_EVAL_KEY_ENV_VAR, "")
+                key_source = f"${LEGACY_EVAL_KEY_ENV_VAR}"
             if supplied_key and not re.fullmatch(r"rk_[A-Za-z0-9_-]+", supplied_key):
                 raise SystemExit("FATAL: the supplied eval API key is malformed; use a Routtener rk_ key without whitespace.")
             if not supplied_key:
@@ -768,7 +771,7 @@ def main() -> None:
                     base_url=args.base_url, timeout=30.0
                 ) as client:
                     report = await collect_preflight(client, args.n, supplied_key=supplied_key)
-                    print_preflight(report, args.base_url, prompted=args.api_key_prompt)
+                    print_preflight(report, args.base_url, key_source=key_source)
 
                     if args.dry_run:
                         # A dry run reports EVERY gate before it decides. The
