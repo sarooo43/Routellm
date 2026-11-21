@@ -115,7 +115,7 @@ function kindBody(kind: ApiErrorKind, detail?: string): string {
     case 'unauthorized':
       return 'Generate a key on the API Keys page (free, one click) — or select a previously saved one.'
     case 'forbidden':
-      return 'The active RouteLLM key is not allowed to perform this action.'
+      return 'The active Routtener key is not allowed to perform this action.'
     case 'rate_limited':
       return 'Too many requests in a short window. Wait a moment and retry.'
     case 'service_unavailable': {
