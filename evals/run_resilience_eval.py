@@ -548,7 +548,7 @@ async def run_scenario_live(client, api_key: str, n: int) -> dict:
             route.raise_for_status()
             body = route.json()
             successes += 1 if body.get("success") else 0
-            latencies.append(float(body.get("total_latency_ms") or 0.0))
+            latencies.append(float(body["latency_ms"]))
             chain = body.get("fallback_chain_attempted") or []
             attempts.append(len(chain))
             if body.get("model_used"):
@@ -573,6 +573,14 @@ async def run_scenario_live(client, api_key: str, n: int) -> dict:
             "wilson_95": [round(lo, 4), round(hi, 4)],
             "mean_attempts": round(mean(attempts), 3),
             "mean_latency_ms": round(mean(latencies), 1),
+            "first_request": {
+                "attempts": attempts[0] if attempts else 0,
+                "latency_ms": round(latencies[0], 1) if latencies else 0.0,
+            },
+            "steady_state": {
+                "mean_attempts": round(mean(attempts[1:]), 3),
+                "mean_latency_ms": round(mean(latencies[1:]), 1),
+            },
         },
         "naive": None,
         "added_latency_ms": None,
