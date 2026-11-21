@@ -351,7 +351,7 @@ providers actually called) — **commit that file after a live resilience
 run**.
 
 For the recommended hidden-key prompt and step-by-step instructions, see the
-[live-eval runbook](docs/running-the-live-eval.md). A saved key is not proof
+[live-eval runbook](https://github.com/sarooo43/Routtener/blob/main/docs/running-the-live-eval.md). The eval tools live in the repository, not the release zip. A saved key is not proof
 that its provider answers; use the dashboard Test control first.
 
 **Provider keys belong to the Routtener key that saved them.** If the eval
