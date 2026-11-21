@@ -117,6 +117,7 @@ export function ProviderKeys() {
       setStatuses({})
       return
     }
+    setStatuses({})
     setLoading(true)
     try {
       const rows = await getProviderKeys(key.api_key)
@@ -127,7 +128,7 @@ export function ProviderKeys() {
       if (status === 401) {
         markKeyRevoked(key.key_prefix)
         setStatuses({})
-        setError('That RouteLLM key is no longer active. Select or generate another key.')
+        setError('That Routtener key is no longer active. Select or generate another key.')
       } else {
         setError(errorDetail(err, 'Could not load provider-key status.'))
       }
@@ -138,7 +139,7 @@ export function ProviderKeys() {
 
   useEffect(() => {
     // Provider-key status is fetched from the backend for the selected local
-    // RouteLLM key; raw provider secrets are never persisted in the browser.
+    // Routtener key; raw provider secrets are never persisted in the browser.
     // eslint-disable-next-line react/set-state-in-effect
     void loadStatuses(getActiveKey())
     const onChanged = () => {
@@ -164,7 +165,7 @@ export function ProviderKeys() {
     } catch (err) {
       // Never guess "the backend is down": the taxonomy already knows whether
       // this was a network failure, a 5xx, or a validation error.
-      setError(errorDetail(err, 'Could not generate a RouteLLM key.'))
+      setError(errorDetail(err, 'Could not generate a Routtener key.'))
     } finally {
       setGenerating(false)
     }
@@ -183,7 +184,7 @@ export function ProviderKeys() {
     const current = getActiveKey()
     const draft = (drafts[provider.name] ?? '').trim()
     if (!current) {
-      setError('Select or generate a RouteLLM key first.')
+      setError('Select or generate a Routtener key first.')
       return
     }
     if (draft.length < 8) {
@@ -250,12 +251,12 @@ export function ProviderKeys() {
         <div className="flex gap-3">
           <ShieldCheck size={18} className="mt-0.5 shrink-0 text-success" aria-hidden="true" />
           <div className="text-sm text-text-secondary">
-            <p className="font-semibold text-text-primary">Encrypted at rest, scoped per RouteLLM key</p>
+            <p className="font-semibold text-text-primary">Encrypted at rest, scoped per Routtener key</p>
             <p className="mt-1">
               Provider keys are encrypted with a server-side Fernet key before storage and are never
               returned to the browser after saving. Once you configure at least one provider key,
               automatic routing and fallback stay within the providers you configured for the selected
-              RouteLLM key.
+              Routtener key.
             </p>
           </div>
         </div>
@@ -264,10 +265,10 @@ export function ProviderKeys() {
       <GlassCard hoverable={false}>
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[240px] flex-1 text-sm">
-            <span className="rl-eyebrow mb-1.5 block">RouteLLM key</span>
+            <span className="rl-eyebrow mb-1.5 block">Routtener key</span>
             {usableKeys.length > 0 ? (
               <select
-                aria-label="RouteLLM key"
+                aria-label="Routtener key"
                 className="rl-input"
                 value={activePrefix ?? ''}
                 onChange={(event) => onSelectKey(event.target.value)}
@@ -280,7 +281,7 @@ export function ProviderKeys() {
               </select>
             ) : (
               <p className="text-sm text-text-secondary">
-                No active RouteLLM key in this browser. Generate one here or on the{' '}
+                No active Routtener key in this browser. Generate one here or on the{' '}
                 <Link to="/keys" className="text-accent underline-offset-2 hover:underline">
                   API Keys page
                 </Link>
@@ -300,8 +301,10 @@ export function ProviderKeys() {
         </div>
         {activeKey && (
           <p className="mt-3 text-xs text-text-secondary">
-            Selected: <code className="font-mono text-text-primary">{activeKey.key_prefix}…</code>
-            {loading && <span className="ml-2 text-accent">Loading provider status…</span>}
+            Active key <code className="font-mono text-text-primary">{activeKey.key_prefix.slice(0, 8)}…</code>
+            {loading ? <span className="ml-2 text-accent">Loading provider status…</span> :
+              Object.keys(statuses).length > 0 ? ` owns ${Object.values(statuses).filter((status) => status.configured).length} provider keys` :
+              ' — provider key count unavailable'}
           </p>
         )}
         {/* No-key nudge: routing still works (demo/MOCK answers, or operator
@@ -324,7 +327,7 @@ export function ProviderKeys() {
             <p>
               {anyUserKeyConfigured
                 ? 'At least one provider key is configured — routing and fallback now work through your own keys.'
-                : 'Add a provider key on the Providers page to start routing — none of Groq, Gemini or DeepSeek is configured yet for this RouteLLM key.'}
+                : 'Add a provider key on the Providers page to start routing — none of Groq, Gemini or DeepSeek is configured yet for this Routtener key.'}
             </p>
           </div>
         )}
@@ -385,7 +388,7 @@ export function ProviderKeys() {
                     {status.updated_at && <p className="mt-1">Updated {relativeTime(status.updated_at)}</p>}
                   </>
                 ) : (
-                  <p>No key stored for the selected RouteLLM key.</p>
+                  <p>No key stored for the selected Routtener key.</p>
                 )}
               </div>
 

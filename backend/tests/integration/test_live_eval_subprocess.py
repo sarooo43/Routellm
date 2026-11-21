@@ -435,3 +435,209 @@ def test_ctrl_c_reports_one_sentence_instead_of_a_traceback(tmp_path):
     assert "KeyboardInterrupt" not in out + err, diagnostic
     assert proc.returncode == 130, f"exit={proc.returncode}; {diagnostic}"
     assert "Interrupted." in out + err, diagnostic
+
+@pytest.mark.parametrize("value", ["   ", "echo ${X:0:8}", "rk_bad key", "rk_bad\nkey"])
+def test_malformed_eval_key_never_mints_or_echoes(backend, value):
+    before = _active_key_count(backend["db_path"])
+    result = _run_eval(backend, {"ROUTTENER_EVAL_API_KEY": value})
+    assert result.returncode != 0
+    assert "FATAL: the supplied eval API key is malformed" in result.stderr
+    assert value not in result.stdout + result.stderr
+    assert _active_key_count(backend["db_path"]) == before
+
+
+def test_empty_eval_key_announces_before_detection(backend):
+    result = _run_eval(backend, {"ROUTTENER_EVAL_API_KEY": ""})
+    assert result.returncode != 0
+    assert result.stdout.index("minting a throwaway key") < result.stdout.index("Providers detected:")
+    assert "API key: revoked" in result.stdout
+
+
+def test_prompt_requires_terminal(backend):
+    result = subprocess.run(
+        [sys.executable, str(EVAL_SCRIPT), "--live", "--dry-run", "--yes-spend-quota",
+         "--base-url", backend["base_url"], "--api-key-prompt"],
+        cwd=REPO_ROOT, env=backend["env"], capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode != 0
+    assert "requires an interactive terminal" in result.stderr
+
+
+def test_prompt_takes_precedence_and_never_echoes_key(backend):
+    import pty
+    import select
+
+    owner = _mint_key(backend["base_url"])
+    _save_providers(backend["base_url"], owner, ["groq", "deepseek"])
+    env = dict(backend["env"], ROUTTENER_EVAL_API_KEY="bad env", ROUTELLM_EVAL_API_KEY="also bad")
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        [sys.executable, str(EVAL_SCRIPT), "--live", "--dry-run", "--yes-spend-quota",
+         "--base-url", backend["base_url"], "--api-key-prompt"],
+        cwd=REPO_ROOT, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    data = b""
+    try:
+        deadline = time.monotonic() + 30
+        while b"Routtener API key:" not in data and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                data += os.read(master, 4096)
+            if proc.poll() is not None:
+                break
+        assert b"Routtener API key:" in data
+        os.write(master, owner.encode() + b"\n")
+        deadline = time.monotonic() + 30
+        while proc.poll() is None and time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                try:
+                    data += os.read(master, 4096)
+                except OSError:
+                    break
+        proc.wait(timeout=10)
+        try:
+            while select.select([master], [], [], 0)[0]:
+                data += os.read(master, 4096)
+        except OSError:
+            pass
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        os.close(master)
+    assert proc.returncode == 0
+    assert b"Providers detected: groq, deepseek" in data
+    assert owner.encode() not in data
+    with _http(backend["base_url"]) as c:
+        assert c.get("/api/v1/keys/me", headers={"X-API-Key": owner}).status_code == 200
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8000.", "127.0.0.1:8000", "http://:8000", "http://127.0.0.1:abc"])
+@pytest.mark.parametrize("script", [EVAL_SCRIPT, REPO_ROOT / "benchmark" / "run_benchmark.py"])
+def test_invalid_base_url_fails_before_minting(backend, url, script):
+    before = _active_key_count(backend["db_path"])
+    args = [sys.executable, str(script), "--base-url", url]
+    if script == EVAL_SCRIPT:
+        args += ["--live", "--dry-run", "--yes-spend-quota"]
+    result = subprocess.run(args, cwd=REPO_ROOT, env=backend["env"], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2
+    assert result.stderr.startswith("FATAL: --base-url is not a valid URL")
+    assert len(result.stderr.splitlines()) == 1
+    assert "Traceback" not in result.stderr
+    assert _active_key_count(backend["db_path"]) == before
+
+
+def test_legacy_key_fallback_and_new_name_precedence(backend):
+    owner = _mint_key(backend["base_url"])
+    _save_providers(backend["base_url"], owner, ["groq", "deepseek"])
+    legacy = _run_eval(backend, {"ROUTELLM_EVAL_API_KEY": owner})
+    assert legacy.returncode == 0
+    assert "API key: reused from $ROUTELLM_EVAL_API_KEY" in legacy.stdout
+    assert "Providers detected: groq, deepseek" in legacy.stdout
+    # A set-but-empty new name wins over the old name and announces minting.
+    new_empty = _run_eval(backend, {"ROUTELLM_EVAL_API_KEY": owner, "ROUTTENER_EVAL_API_KEY": ""})
+    assert new_empty.returncode != 0
+    assert "minting a throwaway key" in new_empty.stdout
+    assert "Providers detected: none" in new_empty.stdout
+
+
+@pytest.mark.parametrize('kill_server', [False, True])
+def test_minted_key_cleanup_during_preflight_interrupt_or_server_death(backend, tmp_path, kill_server):
+    """The socket proxy delays detection after a real minted key is received."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    import httpx
+
+    db_path = tmp_path / 'interrupt.db'
+    server, base, env = _start_enforced_server(backend['env'], db_path, tmp_path)
+    arrived = threading.Event()
+    release = threading.Event()
+    state = {'key': None, 'deleted': False}
+
+    class Proxy(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def _forward(self):
+            length = int(self.headers.get('Content-Length', '0'))
+            body = self.rfile.read(length)
+            headers = {'X-API-Key': self.headers.get('X-API-Key', '')}
+            try:
+                response = httpx.request(self.command, base + self.path, content=body, headers={**headers, 'Content-Type': 'application/json'}, timeout=5)
+                if self.path == '/api/v1/keys/generate' and response.status_code == 201:
+                    state['key'] = response.json()['api_key']
+                if self.command == 'DELETE' and self.path == '/api/v1/keys/me' and response.status_code == 200:
+                    state['deleted'] = True
+                content, status = response.content, response.status_code
+            except httpx.HTTPError:
+                content, status = b'{}', 502
+            try:
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def do_POST(self):
+            self._forward()
+
+        def do_GET(self):
+            if self.path == '/api/v1/provider-keys':
+                arrived.set()
+                release.wait(20)
+            self._forward()
+
+        def do_DELETE(self):
+            self._forward()
+
+    proxy = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+    thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    thread.start()
+    run_env = dict(env)
+    for name in ('ROUTTENER_EVAL_API_KEY', 'ROUTELLM_EVAL_API_KEY'):
+        run_env.pop(name, None)
+    bootstrap = "import runpy, signal, sys; signal.signal(signal.SIGINT, signal.default_int_handler); path=sys.argv.pop(1); runpy.run_path(path,run_name='__main__')"
+    proc = subprocess.Popen([sys.executable, '-c', bootstrap, str(EVAL_SCRIPT), '--live', '--dry-run', '--yes-spend-quota', '--base-url', f'http://127.0.0.1:{proxy.server_port}'], cwd=REPO_ROOT, env=run_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert arrived.wait(30), 'the eval never reached post-mint detection'
+        assert state['key'] is not None
+        if kill_server:
+            server.terminate()
+            server.wait(timeout=10)
+            release.set()
+        else:
+            proc.send_signal(signal.SIGINT)
+        out, err = proc.communicate(timeout=30)
+        assert state['key'] not in out + err
+        if kill_server:
+            assert proc.returncode != 0
+            assert 'FATAL: could not revoke transient API key ' in err
+            assert state['key'][:8] in err
+        else:
+            assert proc.returncode == 130, err
+            assert state['deleted']
+            assert 'API key: revoked' in out
+            assert httpx.get(base + '/api/v1/keys/me', headers={'X-API-Key': state['key']}).status_code == 401
+    finally:
+        release.set()
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+        proxy.shutdown()
+        proxy.server_close()
+        thread.join(timeout=2)
+        if server.poll() is None:
+            server.terminate()
+        server.communicate(timeout=15)
+
+
+def test_sigint_wrapper_preserves_normal_help_output():
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(REPO_ROOT / 'evals'), str(REPO_ROOT / 'backend')]))
+    wrapper = subprocess.run([sys.executable, str(EVAL_SCRIPT), '--help'], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=30)
+    direct = subprocess.run([sys.executable, '-c', 'import sys; sys.argv[0]="run_resilience_eval.py"; from run_resilience_eval import main; main()', '--help'], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=30)
+    assert (wrapper.returncode, wrapper.stdout, wrapper.stderr) == (direct.returncode, direct.stdout, direct.stderr)

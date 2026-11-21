@@ -70,6 +70,7 @@ EVALS_DIR = Path(__file__).resolve().parents[1] / "evals"
 if str(EVALS_DIR) not in sys.path:
     sys.path.insert(0, str(EVALS_DIR))
 from harness import response_detail, require_success  # noqa: E402
+from url_validation import SafeArgumentParser, backend_base_url  # noqa: E402
 
 RESULTS_DIR = BENCHMARK_DIR / "results"
 PROMPTS_FILE = BENCHMARK_DIR / "test_prompts.json"
@@ -407,7 +408,7 @@ async def run_scenario(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
+    parser = SafeArgumentParser(
         description="Benchmark: naive single-model baseline vs Routtener full system."
     )
     parser.add_argument(
@@ -426,6 +427,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--base-url",
+        type=backend_base_url,
         default="http://localhost:8000",
         help="Base URL of the already-running backend (default: %(default)s).",
     )

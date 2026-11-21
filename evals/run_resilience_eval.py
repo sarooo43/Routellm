@@ -42,6 +42,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import getpass
+import re
 import asyncio
 import json
 import logging
@@ -55,6 +57,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 if str(EVALS_DIR) not in sys.path:
     sys.path.insert(0, str(EVALS_DIR))
+
+from url_validation import SafeArgumentParser, backend_base_url  # noqa: E402
 
 from harness import (  # noqa: E402
     ScriptedProvider,
@@ -295,24 +299,19 @@ def git_commit_hash() -> str:
         return "unknown"
 
 
-async def revoke_transient_key(client, api_key: str, *, minted: bool) -> None:
-    """Delete the key this run minted, so repeated live runs do not accumulate.
-
-    Best-effort by design: revocation happens on an exit path, and failing to
-    clean up must never turn a successful eval into a crash. A key we did NOT
-    mint (reused from the env) is never touched - it is not ours to delete.
-    """
+async def revoke_transient_key(client, api_key: str, *, minted: bool) -> bool:
+    """Revoke a minted key; never revoke an owner's key, and report failure."""
     if not minted or not api_key:
-        return
+        return True
     try:
         resp = await client.delete("/api/v1/keys/me", headers={"X-API-Key": api_key})
-    except Exception as exc:  # noqa: BLE001 - cleanup is never fatal
-        print(f"note: could not revoke the transient eval key ({type(exc).__name__})")
-        return
-    if 200 <= resp.status_code < 300:
-        print("API key: revoked (the secret was never printed)")
-    else:
-        print(f"note: could not revoke the transient eval key ({response_detail(resp)})")
+        if 200 <= resp.status_code < 300:
+            print("API key: revoked (the secret was never printed)")
+            return True
+    except Exception:  # noqa: BLE001 - do not expose a credential in an exception
+        pass
+    print(f"FATAL: could not revoke transient API key {api_key[:8]}…; revoke it in the dashboard.", file=sys.stderr)
+    return False
 
 
 class PreflightReport:
@@ -424,13 +423,13 @@ async def detect_providers(client, api_key: str) -> list[str]:
     return [row["provider_name"] for row in rows if row.get("configured")]
 
 
-async def collect_preflight(client, n: int) -> PreflightReport:
+async def collect_preflight(client, n: int, *, supplied_key: str | None = None, on_minted=None) -> PreflightReport:
     """Gather every gate's result WITHOUT deciding to exit.
 
     Never raises for a gate failure; the caller inspects ``blocker``. Raises
     only when a live call itself fails (a dead backend is not a gate result).
     """
-    api_key = eval_key_from_env()
+    api_key = eval_key_from_env() if supplied_key is None else supplied_key
     minted = not api_key
 
     if minted:
@@ -439,6 +438,8 @@ async def collect_preflight(client, n: int) -> PreflightReport:
         )
         require_success(resp, "key generation")
         api_key = resp.json()["api_key"]
+        if on_minted is not None:
+            on_minted(api_key)
 
     configured = await detect_providers(client, api_key)
 
@@ -474,17 +475,15 @@ async def collect_preflight(client, n: int) -> PreflightReport:
     return report
 
 
-def print_preflight(report: PreflightReport, base_url: str) -> None:
+def print_preflight(report: PreflightReport, base_url: str, *, key_source: str | None = None) -> None:
     """Everything the owner needs to understand the run, pass or fail."""
     if report.minted:
         print_key_lines(report.api_key)
         print("API key: minted for this run, and revoked when the run ends")
         print(f"  hint: export {EVAL_KEY_ENV_VAR}=<key> to reuse a key instead")
     else:
-        print(
-            f"API key: reused from ${EVAL_KEY_ENV_VAR} "
-            f"({credential_label(report.api_key)})"
-        )
+        source = key_source or f"${EVAL_KEY_ENV_VAR}"
+        print(f"API key: reused from {source} ({credential_label(report.api_key)})")
 
     print(
         "Providers detected: "
@@ -546,7 +545,7 @@ async def run_scenario_live(client, api_key: str, n: int) -> dict:
             route.raise_for_status()
             body = route.json()
             successes += 1 if body.get("success") else 0
-            latencies.append(float(body.get("total_latency_ms") or 0.0))
+            latencies.append(float(body["latency_ms"]))
             chain = body.get("fallback_chain_attempted") or []
             attempts.append(len(chain))
             if body.get("model_used"):
@@ -571,6 +570,14 @@ async def run_scenario_live(client, api_key: str, n: int) -> dict:
             "wilson_95": [round(lo, 4), round(hi, 4)],
             "mean_attempts": round(mean(attempts), 3),
             "mean_latency_ms": round(mean(latencies), 1),
+            "first_request": {
+                "attempts": attempts[0] if attempts else 0,
+                "latency_ms": round(latencies[0], 1) if latencies else 0.0,
+            },
+            "steady_state": {
+                "mean_attempts": round(mean(attempts[1:]), 3),
+                "mean_latency_ms": round(mean(latencies[1:]), 1),
+            },
         },
         "naive": None,
         "added_latency_ms": None,
@@ -703,7 +710,7 @@ def main() -> None:
     # via importlib under a different module name than harness.py itself, so
     # the test suite's restore fixture cannot see this module's globals.
     try:
-        parser = argparse.ArgumentParser(
+        parser = SafeArgumentParser(
             description="E2: resilience eval - router vs naive single-provider baseline."
         )
         parser.add_argument("--n", type=int, default=50, help="requests per scenario/arm (default 50)")
@@ -720,13 +727,17 @@ def main() -> None:
             help="REQUIRED with --live: explicit consent that real provider "
             "quota will be spent. --live without this flag refuses to run.",
         )
-        parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="backend URL for --live")
+        parser.add_argument("--base-url", type=backend_base_url, default="http://127.0.0.1:8000", help="backend URL for --live")
         parser.add_argument(
             "--dry-run",
             action="store_true",
             help="with --live: run every preflight gate and stop before the "
             "first /api/v1/route call (spends no provider quota). Use it to "
             "prove the backend wiring is right before a real run.",
+        )
+        parser.add_argument(
+            "--api-key-prompt", action="store_true",
+            help="Read the Routtener API key privately from the terminal.",
         )
         args = parser.parse_args()
 
@@ -738,54 +749,58 @@ def main() -> None:
             )
 
         if args.live:
+            if args.api_key_prompt:
+                if not sys.stdin.isatty():
+                    raise SystemExit("FATAL: --api-key-prompt requires an interactive terminal.")
+                supplied_key = getpass.getpass("Routtener API key: ")
+                key_source = "the prompt"
+            elif EVAL_KEY_ENV_VAR in os.environ:
+                supplied_key = os.environ[EVAL_KEY_ENV_VAR]
+                key_source = f"${EVAL_KEY_ENV_VAR}"
+            else:
+                supplied_key = os.environ.get(LEGACY_EVAL_KEY_ENV_VAR, "")
+                key_source = f"${LEGACY_EVAL_KEY_ENV_VAR}"
+            if supplied_key and not re.fullmatch(r"rk_[A-Za-z0-9_-]+", supplied_key):
+                raise SystemExit("FATAL: the supplied eval API key is malformed; use a Routtener rk_ key without whitespace.")
+            if not supplied_key:
+                print(
+                    "ROUTTENER_EVAL_API_KEY is not set: minting a throwaway key. "
+                    "A throwaway key owns no provider keys; set your dashboard key "
+                    "for a real run (see docs/running-the-live-eval.md).",
+                    flush=True,
+                )
             import httpx
 
             async def _live() -> dict:
                 async with httpx.AsyncClient(
                     base_url=args.base_url, timeout=30.0
                 ) as client:
-                    report = await collect_preflight(client, args.n)
-                    print_preflight(report, args.base_url)
+                    minted_key = None
 
-                    if args.dry_run:
-                        # A dry run reports EVERY gate before it decides. The
-                        # T0 report was a bare "configured: none" that hid its
-                        # own reasoning; printing the whole picture first is
-                        # what makes the failure diagnosable.
-                        print(
-                            "DRY RUN: no /api/v1/route call was sent, so no "
-                            "provider quota was spent."
-                        )
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
-                        if not report.ok:
-                            # Exit nonzero only AFTER the full report and the
-                            # revoke: an unrevoked key is worse than a clear
-                            # failure.
-                            raise SystemExit(f"FATAL: {report.blocker}")
-                        return {
-                            "scenario": "provider_down",
-                            "dry_run": True,
-                            "requests_sent": 0,
-                        }
-
-                    if not report.ok:
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
-                        raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+                    def remember_minted(key: str) -> None:
+                        nonlocal minted_key
+                        minted_key = key
 
                     try:
-                        return await run_scenario_live(
-                            client, report.api_key, args.n
+                        report = await collect_preflight(
+                            client, args.n, supplied_key=supplied_key,
+                            on_minted=remember_minted,
                         )
+                        print_preflight(report, args.base_url, key_source=key_source)
+                        if args.dry_run:
+                            print(
+                                "DRY RUN: no /api/v1/route call was sent, so no "
+                                "provider quota was spent."
+                            )
+                            if not report.ok:
+                                raise SystemExit(f"FATAL: {report.blocker}")
+                            return {"scenario": "provider_down", "dry_run": True, "requests_sent": 0}
+                        if not report.ok:
+                            raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+                        return await run_scenario_live(client, report.api_key, args.n)
                     finally:
-                        # Revoke even when the scenario blew up half-way: a
-                        # transient key must not outlive the run that made it.
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
+                        if minted_key and not await revoke_transient_key(client, minted_key, minted=True):
+                            raise SystemExit(1) from None
 
             result = asyncio.run(_live())
             results = [result]
@@ -836,8 +851,7 @@ def _run_main_with_a_civil_sigint() -> None:
         main()
     except KeyboardInterrupt:
         print(
-            "\nInterrupted. Chaos injections were cleared and any key minted for "
-            "this run was revoked by the cleanup blocks that just ran.",
+            "\nInterrupted.",
             file=sys.stderr,
         )
         raise SystemExit(130) from None
