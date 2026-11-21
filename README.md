@@ -350,6 +350,10 @@ writes **`docs/eval-results.md`** with a `MODE: LIVE` header (date, commit,
 providers actually called) — **commit that file after a live resilience
 run**.
 
+For the recommended hidden-key prompt and step-by-step instructions, see the
+[live-eval runbook](docs/running-the-live-eval.md). A saved key is not proof
+that its provider answers; use the dashboard Test control first.
+
 **Provider keys belong to the Routtener key that saved them.** If the eval
 reports `configured: none` while your dashboard shows saved keys, the cause
 is almost always this: a live run mints a fresh key, and a new key owns no
