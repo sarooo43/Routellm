@@ -85,7 +85,7 @@ describe('ProviderKeys', () => {
     })))
     const { container } = renderPage()
     expect(await screen.findByText('owns 2 provider keys', { exact: false })).toBeInTheDocument()
-    expect(screen.getByLabelText('Routtener key')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Routtener key' })).toBeInTheDocument()
     expect(container.textContent).toContain('rk_abcde')
     expect(container.textContent).not.toContain(generated.api_key)
     expect(container.innerHTML).not.toContain(generated.api_key)
