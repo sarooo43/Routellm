@@ -299,24 +299,19 @@ def git_commit_hash() -> str:
         return "unknown"
 
 
-async def revoke_transient_key(client, api_key: str, *, minted: bool) -> None:
-    """Delete the key this run minted, so repeated live runs do not accumulate.
-
-    Best-effort by design: revocation happens on an exit path, and failing to
-    clean up must never turn a successful eval into a crash. A key we did NOT
-    mint (reused from the env) is never touched - it is not ours to delete.
-    """
+async def revoke_transient_key(client, api_key: str, *, minted: bool) -> bool:
+    """Revoke a minted key; never revoke an owner's key, and report failure."""
     if not minted or not api_key:
-        return
+        return True
     try:
         resp = await client.delete("/api/v1/keys/me", headers={"X-API-Key": api_key})
-    except Exception as exc:  # noqa: BLE001 - cleanup is never fatal
-        print(f"note: could not revoke the transient eval key ({type(exc).__name__})")
-        return
-    if 200 <= resp.status_code < 300:
-        print("API key: revoked (the secret was never printed)")
-    else:
-        print(f"note: could not revoke the transient eval key ({response_detail(resp)})")
+        if 200 <= resp.status_code < 300:
+            print("API key: revoked (the secret was never printed)")
+            return True
+    except Exception:  # noqa: BLE001 - do not expose a credential in an exception
+        pass
+    print(f"FATAL: could not revoke transient API key {api_key[:8]}…; revoke it in the dashboard.", file=sys.stderr)
+    return False
 
 
 class PreflightReport:
@@ -428,7 +423,7 @@ async def detect_providers(client, api_key: str) -> list[str]:
     return [row["provider_name"] for row in rows if row.get("configured")]
 
 
-async def collect_preflight(client, n: int, *, supplied_key: str | None = None) -> PreflightReport:
+async def collect_preflight(client, n: int, *, supplied_key: str | None = None, on_minted=None) -> PreflightReport:
     """Gather every gate's result WITHOUT deciding to exit.
 
     Never raises for a gate failure; the caller inspects ``blocker``. Raises
@@ -443,6 +438,8 @@ async def collect_preflight(client, n: int, *, supplied_key: str | None = None) 
         )
         require_success(resp, "key generation")
         api_key = resp.json()["api_key"]
+        if on_minted is not None:
+            on_minted(api_key)
 
     configured = await detect_providers(client, api_key)
 
@@ -778,48 +775,32 @@ def main() -> None:
                 async with httpx.AsyncClient(
                     base_url=args.base_url, timeout=30.0
                 ) as client:
-                    report = await collect_preflight(client, args.n, supplied_key=supplied_key)
-                    print_preflight(report, args.base_url, key_source=key_source)
+                    minted_key = None
 
-                    if args.dry_run:
-                        # A dry run reports EVERY gate before it decides. The
-                        # T0 report was a bare "configured: none" that hid its
-                        # own reasoning; printing the whole picture first is
-                        # what makes the failure diagnosable.
-                        print(
-                            "DRY RUN: no /api/v1/route call was sent, so no "
-                            "provider quota was spent."
-                        )
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
-                        if not report.ok:
-                            # Exit nonzero only AFTER the full report and the
-                            # revoke: an unrevoked key is worse than a clear
-                            # failure.
-                            raise SystemExit(f"FATAL: {report.blocker}")
-                        return {
-                            "scenario": "provider_down",
-                            "dry_run": True,
-                            "requests_sent": 0,
-                        }
-
-                    if not report.ok:
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
-                        raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+                    def remember_minted(key: str) -> None:
+                        nonlocal minted_key
+                        minted_key = key
 
                     try:
-                        return await run_scenario_live(
-                            client, report.api_key, args.n
+                        report = await collect_preflight(
+                            client, args.n, supplied_key=supplied_key,
+                            on_minted=remember_minted,
                         )
+                        print_preflight(report, args.base_url, key_source=key_source)
+                        if args.dry_run:
+                            print(
+                                "DRY RUN: no /api/v1/route call was sent, so no "
+                                "provider quota was spent."
+                            )
+                            if not report.ok:
+                                raise SystemExit(f"FATAL: {report.blocker}")
+                            return {"scenario": "provider_down", "dry_run": True, "requests_sent": 0}
+                        if not report.ok:
+                            raise SystemExit(f"FATAL: refusing to run --live: {report.blocker}")
+                        return await run_scenario_live(client, report.api_key, args.n)
                     finally:
-                        # Revoke even when the scenario blew up half-way: a
-                        # transient key must not outlive the run that made it.
-                        await revoke_transient_key(
-                            client, report.api_key, minted=report.minted
-                        )
+                        if minted_key and not await revoke_transient_key(client, minted_key, minted=True):
+                            raise SystemExit(1) from None
 
             result = asyncio.run(_live())
             results = [result]
@@ -870,8 +851,7 @@ def _run_main_with_a_civil_sigint() -> None:
         main()
     except KeyboardInterrupt:
         print(
-            "\nInterrupted. Chaos injections were cleared and any key minted for "
-            "this run was revoked by the cleanup blocks that just ran.",
+            "\nInterrupted.",
             file=sys.stderr,
         )
         raise SystemExit(130) from None
